@@ -90,7 +90,7 @@ export default function Home() {
 
           <p className="font-inter animate-fade-rise-delay">
             Watch strategy agents scan markets, map technical structure, check
-            news confluence, and build simulated trading records in real time.
+            news confluence, and build trading records in real time.
           </p>
 
           <div className="aethera-brand font-instrument animate-fade-rise-delay-2">

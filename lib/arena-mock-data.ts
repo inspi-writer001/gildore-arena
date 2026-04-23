@@ -7,7 +7,7 @@ import type {
   TradeIdea,
   VisualTrace,
   WatchlistItem,
-} from "@/lib/arena-types";
+} from "./arena-types";
 
 export const agents: Agent[] = [
   {

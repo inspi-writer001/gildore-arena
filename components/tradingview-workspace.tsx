@@ -28,6 +28,11 @@ import type {
   VisualGeometry,
   VisualTrace,
 } from "@/lib/arena-types";
+import {
+  getPythHistoryParams,
+  getPythHistorySymbol,
+  timeframeMinutesMap,
+} from "@/lib/pyth-history";
 
 type TradingViewWorkspaceProps = {
   marketSymbol: string;
@@ -46,15 +51,7 @@ type CandlePoint = {
   close: number;
 };
 
-type PythHistoryResponse = {
-  candles: CandlePoint[];
-};
-
-const timeframeMinutesMap: Record<TradingViewWorkspaceProps["timeframe"], number> = {
-  "15m": 15,
-  "1h": 60,
-  "4h": 240,
-};
+const PYTH_HISTORY_BASE_URL = "https://history.pyth-lazer.dourolabs.app/v1";
 
 function buildMockCandles(
   anchorPrice: number,
@@ -110,8 +107,17 @@ export default function TradingViewWorkspace({
     buildMockCandles(anchorPrice, timeframe),
   );
   const [dataSourceLabel, setDataSourceLabel] = useState("Mock data");
+  const [dataSourceTone, setDataSourceTone] = useState<
+    "neutral" | "live" | "error"
+  >("neutral");
   const [livePrice, setLivePrice] = useState<number | null>(null);
   const [liveDeltaPercent, setLiveDeltaPercent] = useState<number | null>(null);
+  const [lastCandleTimestamp, setLastCandleTimestamp] = useState<number | null>(
+    null,
+  );
+  const [lastFetchTimestamp, setLastFetchTimestamp] = useState<number | null>(
+    null,
+  );
   const annotationSummary = trace?.annotations ?? [];
   const replaySteps = Math.max(
     1,
@@ -130,44 +136,71 @@ export default function TradingViewWorkspace({
   useEffect(() => {
     setCandles(buildMockCandles(anchorPrice, timeframe));
     setDataSourceLabel("Mock data");
+    setDataSourceTone("neutral");
     setLivePrice(null);
     setLiveDeltaPercent(null);
+    setLastCandleTimestamp(null);
+    setLastFetchTimestamp(null);
   }, [anchorPrice, timeframe]);
 
   useEffect(() => {
-    const resolutionMap = {
-      "15m": "15",
-      "1h": "60",
-      "4h": "240",
-    } as const;
-
-    const now = Math.floor(Date.now() / 1000);
-    const lookbackSecondsMap = {
-      "15m": 15 * 60 * 80,
-      "1h": 60 * 60 * 80,
-      "4h": 4 * 60 * 60 * 80,
-    } as const;
-
     let disposed = false;
 
     async function loadPythCandles() {
       try {
-        const params = new URLSearchParams({
-          symbol: marketSymbol,
-          resolution: resolutionMap[timeframe],
-          from: String(now - lookbackSecondsMap[timeframe]),
-          to: String(now),
-        });
+        if (!getPythHistorySymbol(marketSymbol)) {
+          setDataSourceLabel("Pyth unavailable");
+          setDataSourceTone("error");
+          return;
+        }
 
-        const response = await fetch(`/api/pyth/history?${params.toString()}`);
+        const params = getPythHistoryParams(marketSymbol, timeframe);
+        if (!params) {
+          setDataSourceLabel("Pyth unavailable");
+          setDataSourceTone("error");
+          return;
+        }
 
-        if (!response.ok) return;
+        const response = await fetch(
+          `${PYTH_HISTORY_BASE_URL}/fixed_rate@200ms/history?${params.toString()}`,
+        );
 
-        const payload = (await response.json()) as PythHistoryResponse;
+        if (!response.ok) {
+          setDataSourceLabel("Pyth unavailable");
+          setDataSourceTone("error");
+          return;
+        }
 
-        if (!payload.candles?.length) return;
+        const payload = (await response.json()) as {
+          s?: string;
+          t?: number[];
+          o?: number[];
+          h?: number[];
+          l?: number[];
+          c?: number[];
+        };
 
-        const normalizedCandles = payload.candles
+        if (
+          payload.s !== "ok" ||
+          !payload.t ||
+          !payload.o ||
+          !payload.h ||
+          !payload.l ||
+          !payload.c
+        ) {
+          setDataSourceLabel("Pyth unavailable");
+          setDataSourceTone("error");
+          return;
+        }
+
+        const normalizedCandles = payload.t
+          .map((time, index) => ({
+            time: time as UTCTimestamp,
+            open: payload.o?.[index],
+            high: payload.h?.[index],
+            low: payload.l?.[index],
+            close: payload.c?.[index],
+          }))
           .filter(
             (candle) =>
               Number.isFinite(candle.time) &&
@@ -184,7 +217,13 @@ export default function TradingViewWorkspace({
             close: Number(candle.close),
           }));
 
-        if (!normalizedCandles.length || disposed) return;
+        if (!normalizedCandles.length || disposed) {
+          if (!disposed) {
+            setDataSourceLabel("Pyth unavailable");
+            setDataSourceTone("error");
+          }
+          return;
+        }
 
         const latestCandle = normalizedCandles[normalizedCandles.length - 1];
         const previousCandle =
@@ -198,9 +237,15 @@ export default function TradingViewWorkspace({
         setCandles(normalizedCandles);
         setLivePrice(latestCandle.close);
         setLiveDeltaPercent(deltaPercent);
+        setLastCandleTimestamp(latestCandle.time);
+        setLastFetchTimestamp(Date.now());
         setDataSourceLabel("Pyth live");
+        setDataSourceTone("live");
       } catch {
-        // Keep mock fallback if Pyth is unavailable.
+        if (!disposed) {
+          setDataSourceLabel("Pyth unavailable");
+          setDataSourceTone("error");
+        }
       }
     }
 
@@ -354,6 +399,17 @@ export default function TradingViewWorkspace({
     return true;
   });
   const activeEvent = events[Math.max(0, Math.min(replayStep - 1, events.length - 1))];
+  const dataAgeLabel =
+    lastFetchTimestamp !== null
+      ? `${Math.max(0, Math.floor((Date.now() - lastFetchTimestamp) / 1000))}s ago`
+      : "Awaiting live fetch";
+  const candleTimeLabel =
+    lastCandleTimestamp !== null
+      ? new Date(lastCandleTimestamp * 1000).toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : null;
 
   const toggleLayer = (layer: keyof typeof visibleLayers) => {
     setVisibleLayers((current) => ({
@@ -372,7 +428,9 @@ export default function TradingViewWorkspace({
         <div className="arena-workspace-meta">
           <span className="arena-chip font-barlow">{marketSymbol}</span>
           <span className="arena-chip font-barlow">{timeframe}</span>
-          <span className="arena-chip font-barlow">{dataSourceLabel}</span>
+          <span className={`arena-chip font-barlow tone-${dataSourceTone}`}>
+            {dataSourceLabel}
+          </span>
           {livePrice !== null ? (
             <span className="arena-chip font-barlow">
               {livePrice.toFixed(marketSymbol === "EUR/USD" ? 4 : 2)}
@@ -433,6 +491,15 @@ export default function TradingViewWorkspace({
           <Eye aria-hidden="true" size={14} />
           Levels
         </button>
+      </div>
+
+      <div className="arena-workspace-data-age">
+        <span className="font-barlow">Feed status</span>
+        <span className="font-inter">
+          {candleTimeLabel
+            ? `Last candle ${candleTimeLabel} · refreshed ${dataAgeLabel}`
+            : `No confirmed Pyth candle yet · ${dataAgeLabel}`}
+        </span>
       </div>
 
       <div className="arena-replay-bar">

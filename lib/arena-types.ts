@@ -34,6 +34,9 @@ export type Market = {
   changePercent: number;
   dailyRange: string;
   sessionBias: "bullish" | "bearish" | "mixed";
+  newsState?: ConfluenceState;
+  newsRationale?: string;
+  newsUpdatedAt?: number;
 };
 
 export type NewsContext = {

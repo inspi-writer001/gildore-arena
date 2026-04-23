@@ -34,3 +34,95 @@ I can do the next implementation pass as:
 
 1. scaffold /arena with mock data and layout, or
 2. define the TypeScript domain models first and then build the dashboard on top.
+
+---
+
+What is already done:
+
+- landing page
+- /arena route
+- typed domain model
+- mock agents / watchlists / events / traces
+- real chart workspace
+- Pyth-backed candles with polling
+- replay timeline
+- chart-space annotations
+- layer toggles
+
+What is still missing, in priority order:
+
+1. Real strategy engine
+   - right now traces and decisions are still mock-authored
+   - we need code that reads candle data and produces:
+     - watchlist candidates
+     - entry-ready states
+     - entered trades
+     - SL / TP
+     - trace annotations
+2. Backend persistence
+   - current arena state is in local mock files
+   - move to Convex tables for:
+     - agents
+     - markets
+     - watchlists
+     - trade ideas
+     - positions
+     - trade events
+     - visual traces
+     - leaderboard snapshots
+3. Market selection / scanning workflow
+   - agents should scan a defined market universe
+   - not just render one selected symbol
+   - we need the scanning loop:
+     - fetch markets
+     - inspect structure
+     - store candidate setups
+     - promote to watchlist
+     - promote to entry
+4. News confluence integration
+   - still mocked
+   - need a real news source and a confluence classifier:
+     - supportive
+     - neutral
+     - risk
+5. Trade lifecycle engine
+   - state machine exists conceptually, but not in code
+   - implement:
+     - idle
+     - scanning
+     - watchlist
+     - ready
+     - entered
+     - monitoring
+     - closed
+6. Leaderboard from actual results
+   - currently static scores
+   - should derive from simulated closed/open trade performance
+7. Timeframe-driven monitoring
+   - example:
+     - 15m trade checks every 30m
+   - this needs scheduled logic, not just UI text
+
+So the real answer is:
+
+the biggest missing piece is the first strategy engine.
+
+That is the point where Gildore Arena stops being a polished shell and starts becoming the product.
+
+Best next implementation order:
+
+1. encode one strategy detector first
+2. turn its output into WatchlistItem, TradeIdea, TradeEvent, VisualTrace
+3. then persist that flow in Convex
+4. then add the second strategy
+
+My recommendation:
+
+- start with the Fibonacci strategy first
+- it is more bounded visually and easier to express in annotations than the third-touch one
+
+So the next concrete step should be:
+
+1. define the first strategy engine contract
+2. implement Fibonacci detection against current candle data
+3. emit arena state from it
