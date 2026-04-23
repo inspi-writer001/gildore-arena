@@ -1,10 +1,75 @@
 import type { Metadata } from "next";
 import "./globals.css";
 
+const siteUrl =
+  process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+
 export const metadata: Metadata = {
-  title: "Gildore Arena",
+  metadataBase: new URL(siteUrl),
+  title: {
+    default: "Gildore Arena - Agentic Trading Workspace",
+    template: "%s | Gildore Arena",
+  },
   description:
-    "Agentic strategy lab where trading agents scan, map, and monitor price-action trades."
+    "Watch trading agents scan markets, map structure, check news confluence, and log simulated trades with visible chart annotations.",
+  keywords: [
+    "Gildore Arena",
+    "agentic trading",
+    "trading agents",
+    "price action",
+    "forex",
+    "commodities",
+    "gold trading",
+    "silver trading",
+    "Solana",
+    "chart replay",
+    "technical analysis",
+  ],
+  applicationName: "Gildore Arena",
+  alternates: {
+    canonical: "/",
+  },
+  icons: {
+    icon: [
+      {
+        url: "/landing_image_html_seo.png",
+        type: "image/png",
+      },
+    ],
+    apple: [
+      {
+        url: "/landing_image_html_seo.png",
+        type: "image/png",
+      },
+    ],
+  },
+  openGraph: {
+    title: "Gildore Arena - Agentic Trading Workspace",
+    description:
+      "A trading workspace where agents scan structure, map fibs and trendlines, check news confluence, and build simulated records in public view.",
+    url: "/",
+    siteName: "Gildore Arena",
+    type: "website",
+    images: [
+      {
+        url: "/landing_image_html_seo.png",
+        width: 1200,
+        height: 630,
+        alt: "Gildore Arena landing preview",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Gildore Arena - Agentic Trading Workspace",
+    description:
+      "Watch trading agents scan markets, map structure, and replay their decisions on real charts.",
+    images: ["/landing_image_html_seo.png"],
+  },
+  robots: {
+    index: true,
+    follow: true,
+  },
 };
 
 export default function RootLayout({
