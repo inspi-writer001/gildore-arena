@@ -96,6 +96,49 @@ export type TradeEvent = {
   stage: AgentStatus;
 };
 
+export type VisualChartPoint = {
+  barIndex: number;
+  price: number;
+};
+
+export type VisualTone =
+  | "default"
+  | "muted"
+  | "entry"
+  | "stop"
+  | "target"
+  | "zone";
+
+export type VisualGeometry =
+  | {
+      kind: "line";
+      start: VisualChartPoint;
+      end: VisualChartPoint;
+      tone?: VisualTone;
+    }
+  | {
+      kind: "fibonacci";
+      startBarIndex: number;
+      endBarIndex: number;
+      highPrice: number;
+      lowPrice: number;
+      levels?: number[];
+    }
+  | {
+      kind: "zone";
+      startBarIndex: number;
+      endBarIndex: number;
+      highPrice: number;
+      lowPrice: number;
+      tone?: VisualTone;
+    }
+  | {
+      kind: "marker";
+      position: VisualChartPoint;
+      text: string;
+      tone?: VisualTone;
+    };
+
 export type VisualAnnotation = {
   id: string;
   type:
@@ -108,6 +151,8 @@ export type VisualAnnotation = {
     | "note";
   label: string;
   detail: string;
+  geometry?: VisualGeometry;
+  revealStep?: number;
 };
 
 export type VisualTrace = {

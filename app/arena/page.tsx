@@ -319,6 +319,7 @@ export default async function ArenaPage({ searchParams }: ArenaPageProps) {
               trace={selectedTrace}
               tradeIdea={selectedTradeIdea}
               position={selectedPosition}
+              events={selectedEvents}
             />
           </article>
 

@@ -875,6 +875,110 @@ a:focus-visible {
   text-transform: uppercase;
 }
 
+.arena-tool-chip.is-active {
+  border-color: rgba(18, 18, 18, 0.14);
+  background: rgba(18, 18, 18, 0.08);
+  color: #111111;
+}
+
+.arena-tool-chip.is-static {
+  cursor: default;
+}
+
+.arena-replay-bar {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid rgba(18, 18, 18, 0.08);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.arena-replay-controls,
+.arena-replay-track,
+.arena-replay-node {
+  display: flex;
+  align-items: center;
+}
+
+.arena-replay-controls {
+  gap: 10px;
+}
+
+.arena-replay-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid rgba(18, 18, 18, 0.08);
+  border-radius: 999px;
+  background: rgba(250, 250, 247, 0.92);
+  color: rgba(18, 18, 18, 0.78);
+}
+
+.arena-replay-button.is-primary {
+  background: #111111;
+  color: #f7f7f3;
+}
+
+.arena-replay-track {
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.arena-replay-node {
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid rgba(18, 18, 18, 0.08);
+  border-radius: 999px;
+  background: rgba(250, 250, 247, 0.9);
+  color: rgba(18, 18, 18, 0.44);
+}
+
+.arena-replay-node.is-visible {
+  color: rgba(18, 18, 18, 0.76);
+}
+
+.arena-replay-node.is-active {
+  border-color: rgba(18, 18, 18, 0.16);
+  background: rgba(18, 18, 18, 0.06);
+}
+
+.arena-replay-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(18, 18, 18, 0.2);
+}
+
+.arena-replay-node.is-visible .arena-replay-dot {
+  background: rgba(18, 18, 18, 0.58);
+}
+
+.arena-replay-node.is-active .arena-replay-dot {
+  background: #111111;
+}
+
+.arena-replay-summary {
+  display: grid;
+  gap: 4px;
+}
+
+.arena-replay-summary strong {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.arena-replay-summary span {
+  color: rgba(18, 18, 18, 0.62);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
 .arena-workspace-frame {
   position: relative;
   min-height: 560px;
@@ -950,53 +1054,36 @@ a:focus-visible {
   transform-origin: left center;
 }
 
-.arena-overlay-line.is-primary {
-  left: 12%;
-  top: 66%;
-  width: 52%;
+.arena-overlay-line.tone-default {
   background: rgba(17, 17, 17, 0.82);
-  transform: rotate(-12deg);
 }
 
-.arena-overlay-line.is-secondary {
-  left: 18%;
-  top: 30%;
-  width: 38%;
+.arena-overlay-line.tone-muted {
   background: rgba(17, 17, 17, 0.32);
-  transform: rotate(10deg);
 }
 
 .arena-overlay-fib {
-  left: 45%;
-  top: 24%;
-  width: 20%;
-  height: 48%;
-  border-top: 1px dashed rgba(17, 17, 17, 0.16);
-  border-bottom: 1px dashed rgba(17, 17, 17, 0.16);
-  background:
-    linear-gradient(
-      180deg,
-      rgba(17, 17, 17, 0.04) 0%,
-      rgba(17, 17, 17, 0.04) 20%,
-      transparent 20%,
-      transparent 38%,
-      rgba(17, 17, 17, 0.06) 38%,
-      rgba(17, 17, 17, 0.06) 62%,
-      transparent 62%,
-      transparent 78%,
-      rgba(17, 17, 17, 0.04) 78%,
-      rgba(17, 17, 17, 0.04) 100%
-    );
+  overflow: hidden;
+  border-top: 1px dashed rgba(17, 17, 17, 0.18);
+  border-bottom: 1px dashed rgba(17, 17, 17, 0.18);
   border-radius: 18px;
+  background: rgba(17, 17, 17, 0.03);
+}
+
+.arena-overlay-fib-level {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  border-top: 1px dashed rgba(17, 17, 17, 0.18);
 }
 
 .arena-overlay-zone {
-  left: 46%;
-  top: 44%;
-  width: 18%;
-  height: 14%;
   border: 1px dashed rgba(17, 17, 17, 0.28);
   border-radius: 16px;
+}
+
+.arena-overlay-zone.tone-zone {
   background: rgba(17, 17, 17, 0.05);
 }
 
@@ -1010,25 +1097,20 @@ a:focus-visible {
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
+  transform: translate(-50%, -50%);
 }
 
-.arena-overlay-tag.is-entry {
-  left: 49%;
-  top: 54%;
+.arena-overlay-tag.tone-entry {
   background: rgba(17, 17, 17, 0.92);
   color: #f7f7f3;
 }
 
-.arena-overlay-tag.is-stop {
-  left: 35%;
-  top: 74%;
+.arena-overlay-tag.tone-stop {
   background: rgba(163, 48, 48, 0.12);
   color: #a33030;
 }
 
-.arena-overlay-tag.is-target {
-  right: 12%;
-  top: 24%;
+.arena-overlay-tag.tone-target {
   background: rgba(26, 127, 70, 0.12);
   color: #1a7f46;
 }
