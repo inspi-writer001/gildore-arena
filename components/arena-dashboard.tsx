@@ -78,6 +78,15 @@ function formatRelativeMinutes(timestamp: number | null) {
   return `${Math.floor(deltaSeconds / 3600)}h ago`;
 }
 
+function formatNewsFreshness(timestamp: number | null) {
+  if (!timestamp) return "news stale";
+
+  const deltaSeconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+  if (deltaSeconds < 3600) return `${Math.max(1, Math.floor(deltaSeconds / 60))}m`;
+  if (deltaSeconds < 86400) return `${Math.floor(deltaSeconds / 3600)}h`;
+  return `${Math.floor(deltaSeconds / 86400)}d`;
+}
+
 export default function ArenaDashboard() {
   const searchParams = useSearchParams();
   const snapshot = useQuery(api.arena.getArenaSnapshot, {});
@@ -113,6 +122,9 @@ export default function ArenaDashboard() {
       changePercent: market.changePercent,
       dailyRange: market.dailyRange,
       sessionBias: market.sessionBias,
+      newsState: market.newsState ?? "neutral",
+      newsRationale: market.newsRationale ?? "",
+      newsUpdatedAt: market.newsUpdatedAt ?? null,
     }));
 
     const watchlistItems: WatchlistItem[] = snapshot.watchlistItems.map((item) => ({
@@ -344,6 +356,9 @@ export default function ArenaDashboard() {
     selectedNewsRationale,
     lastScanAt,
   } = derived;
+  const selectedMarket = trackedMarkets.find(
+    (market) => market.symbol === selectedMarketSymbol,
+  );
 
   return (
     <main className="arena-dashboard">
@@ -476,7 +491,7 @@ export default function ArenaDashboard() {
                     href={`/arena?agent=${selectedAgent.id}&market=${encodeURIComponent(
                       market.symbol,
                     )}`}
-                    className={`arena-market-row${
+                    className={`arena-market-row arena-market-row-tone-${market.newsState}${
                       market.symbol === selectedMarketSymbol ? " is-selected" : ""
                     }`}
                   >
@@ -488,6 +503,14 @@ export default function ArenaDashboard() {
                       </span>
                     </div>
                     <div>
+                      <div className="arena-market-meta-top">
+                        <span className={`arena-pill is-${market.newsState} font-barlow`}>
+                          {confluenceToneMap[market.newsState]}
+                        </span>
+                        <span className="arena-market-freshness font-barlow">
+                          {formatNewsFreshness(market.newsUpdatedAt)}
+                        </span>
+                      </div>
                       <strong className="font-barlow">{market.price}</strong>
                       <span
                         className={`font-inter ${
@@ -577,6 +600,16 @@ export default function ArenaDashboard() {
                 <span className="arena-chip font-barlow">
                   {selectedMarketSymbol}
                 </span>
+                {selectedMarket ? (
+                  <>
+                    <span className={`arena-pill is-${selectedMarket.newsState} font-barlow`}>
+                      {confluenceToneMap[selectedMarket.newsState]}
+                    </span>
+                    <span className="arena-chip font-barlow">
+                      News {formatNewsFreshness(selectedMarket.newsUpdatedAt)}
+                    </span>
+                  </>
+                ) : null}
                 <span className="arena-chip font-barlow">
                   {statusLabelMap[selectedAgent.status]}
                 </span>
@@ -608,13 +641,23 @@ export default function ArenaDashboard() {
                     href={`/arena?agent=${selectedAgent.id}&market=${encodeURIComponent(
                       market.symbol,
                     )}`}
-                    className={`arena-market-pill${isActive ? " is-active" : ""}`}
+                    className={`arena-market-pill arena-market-pill-tone-${market.newsState}${
+                      isActive ? " is-active" : ""
+                    }`}
                   >
                     <strong className="font-barlow">{market.symbol}</strong>
                     <span className="font-inter">
                       {market.displayName}
                       {roleLabels.length ? ` · ${roleLabels.join(" · ")}` : ""}
                     </span>
+                    <div className="arena-market-pill-meta">
+                      <span className={`arena-pill is-${market.newsState} font-barlow`}>
+                        {confluenceToneMap[market.newsState]}
+                      </span>
+                      <span className="arena-market-freshness font-barlow">
+                        {formatNewsFreshness(market.newsUpdatedAt)}
+                      </span>
+                    </div>
                   </Link>
                 );
               })}

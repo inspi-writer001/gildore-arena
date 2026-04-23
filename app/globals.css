@@ -780,6 +780,18 @@ a:focus-visible {
   background: rgba(18, 18, 18, 0.04);
 }
 
+.arena-market-row-tone-supportive {
+  background: rgba(231, 248, 237, 0.92);
+}
+
+.arena-market-row-tone-neutral {
+  background: rgba(250, 250, 247, 0.92);
+}
+
+.arena-market-row-tone-risk {
+  background: rgba(251, 238, 236, 0.92);
+}
+
 .arena-agent-rank {
   width: 40px;
   height: 40px;
@@ -800,6 +812,21 @@ a:focus-visible {
 .arena-position-row > div {
   display: grid;
   gap: 4px;
+}
+
+.arena-market-meta-top {
+  display: inline-flex;
+  align-items: center;
+  justify-content: end;
+  gap: 8px;
+}
+
+.arena-market-freshness {
+  color: rgba(18, 18, 18, 0.42);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 
 .arena-agent-main strong,
@@ -941,6 +968,18 @@ a:focus-visible {
   text-decoration: none;
 }
 
+.arena-market-pill-tone-supportive {
+  background: rgba(231, 248, 237, 0.84);
+}
+
+.arena-market-pill-tone-neutral {
+  background: rgba(250, 250, 247, 0.92);
+}
+
+.arena-market-pill-tone-risk {
+  background: rgba(251, 238, 236, 0.84);
+}
+
 .arena-market-pill.is-active {
   border-color: rgba(18, 18, 18, 0.14);
   background: rgba(18, 18, 18, 0.06);
@@ -955,6 +994,12 @@ a:focus-visible {
   color: rgba(18, 18, 18, 0.58);
   font-size: 13px;
   line-height: 1.4;
+}
+
+.arena-market-pill-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .arena-stat-grid,
