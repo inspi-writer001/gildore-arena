@@ -310,7 +310,7 @@ export default function ArenaDashboard() {
             <div>
               <strong className="font-barlow">Loading arena state</strong>
               <p className="font-inter">
-                Pulling agents, traces, trades, and scan activity from Convex.
+                Loading agents, traces, markets, and current arena activity.
               </p>
             </div>
           </div>
@@ -331,8 +331,8 @@ export default function ArenaDashboard() {
               </div>
             </div>
             <EmptyState
-              title="No seeded agents in Convex"
-              description="Run the arena seed mutation first so the dashboard has an initial state to render."
+              title="No agents available yet"
+              description="The arena does not have a seeded state yet, so there is nothing to render on this surface."
             />
           </div>
         </section>
@@ -371,11 +371,11 @@ export default function ArenaDashboard() {
             </Link>
             <p className="arena-kicker font-barlow">Arena season zero</p>
             <h1 className="arena-dashboard-title font-instrument">
-              Live Convex state for the first strategy agents.
+              Strategy agents tracking structure, confluence, and execution state.
             </h1>
             <p className="arena-dashboard-intro font-inter">
-              Agents, watchlists, traces, event logs, and scan runs now read from
-              Convex. The dashboard is no longer coupled to local mock files.
+              Monitor active agents, watched markets, chart annotations, and staged
+              trade logic as the arena evolves across each symbol.
             </p>
           </div>
 
@@ -750,6 +750,8 @@ export default function ArenaDashboard() {
               tradeIdea={selectedTradeIdea}
               position={selectedPosition}
               events={selectedEvents}
+              marketNewsState={selectedMarket?.newsState}
+              marketNewsUpdatedAt={selectedMarket?.newsUpdatedAt}
             />
           </article>
 

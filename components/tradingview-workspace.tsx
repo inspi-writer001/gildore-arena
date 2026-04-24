@@ -21,6 +21,7 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 import type {
+  ConfluenceState,
   Position,
   TradeEvent,
   TradeIdea,
@@ -41,6 +42,8 @@ type TradingViewWorkspaceProps = {
   tradeIdea: TradeIdea | undefined;
   position: Position | undefined;
   events: TradeEvent[];
+  marketNewsState?: ConfluenceState;
+  marketNewsUpdatedAt?: number | null;
 };
 
 type CandlePoint = {
@@ -92,6 +95,8 @@ export default function TradingViewWorkspace({
   tradeIdea,
   position,
   events,
+  marketNewsState = "neutral",
+  marketNewsUpdatedAt = null,
 }: TradingViewWorkspaceProps) {
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -410,6 +415,13 @@ export default function TradingViewWorkspace({
           minute: "2-digit",
         })
       : null;
+  const newsFreshnessLabel =
+    marketNewsUpdatedAt !== null
+      ? `${Math.max(
+          1,
+          Math.floor((Date.now() - marketNewsUpdatedAt) / 1000 / 60),
+        )}m`
+      : "stale";
 
   const toggleLayer = (layer: keyof typeof visibleLayers) => {
     setVisibleLayers((current) => ({
@@ -428,6 +440,10 @@ export default function TradingViewWorkspace({
         <div className="arena-workspace-meta">
           <span className="arena-chip font-barlow">{marketSymbol}</span>
           <span className="arena-chip font-barlow">{timeframe}</span>
+          <span className={`arena-pill is-${marketNewsState} font-barlow`}>
+            {marketNewsState}
+          </span>
+          <span className="arena-chip font-barlow">News {newsFreshnessLabel}</span>
           <span className={`arena-chip font-barlow tone-${dataSourceTone}`}>
             {dataSourceLabel}
           </span>
