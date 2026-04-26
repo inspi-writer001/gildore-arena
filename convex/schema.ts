@@ -3,6 +3,7 @@ import { v } from "convex/values";
 
 const visualPoint = v.object({
   barIndex: v.number(),
+  timeSec: v.optional(v.number()),
   price: v.number(),
 });
 
@@ -26,6 +27,8 @@ const visualGeometry = v.union(
     kind: v.literal("fibonacci"),
     startBarIndex: v.number(),
     endBarIndex: v.number(),
+    startTimeSec: v.optional(v.number()),
+    endTimeSec: v.optional(v.number()),
     highPrice: v.number(),
     lowPrice: v.number(),
     levels: v.optional(v.array(v.number())),
@@ -34,6 +37,8 @@ const visualGeometry = v.union(
     kind: v.literal("zone"),
     startBarIndex: v.number(),
     endBarIndex: v.number(),
+    startTimeSec: v.optional(v.number()),
+    endTimeSec: v.optional(v.number()),
     highPrice: v.number(),
     lowPrice: v.number(),
     tone: v.optional(
@@ -194,6 +199,7 @@ export default defineSchema({
     agentSlug: v.string(),
     marketSymbol: v.string(),
     timestampLabel: v.string(),
+    eventTimeSec: v.optional(v.number()),
     title: v.string(),
     detail: v.string(),
     stage: v.union(
@@ -204,6 +210,7 @@ export default defineSchema({
       v.literal("monitoring"),
       v.literal("closed"),
     ),
+    focusKind: v.optional(v.union(v.literal("point"), v.literal("area"))),
     source: v.union(v.literal("mock"), v.literal("engine")),
   })
     .index("by_agentSlug", ["agentSlug"])
@@ -259,4 +266,47 @@ export default defineSchema({
   })
     .index("by_startedAt", ["startedAt"])
     .index("by_agentSlug_startedAt", ["agentSlug", "startedAt"]),
+
+  browserSessions: defineTable({
+    agentSlug: v.string(),
+    marketSymbol: v.string(),
+    timeframe: v.union(v.literal("15m"), v.literal("1h"), v.literal("4h")),
+    browserTargetSymbol: v.optional(v.string()),
+    browserTargetTimeframe: v.optional(v.string()),
+    inspectedOn: v.literal("deriv"),
+    targetUrl: v.string(),
+    status: v.union(
+      v.literal("starting"),
+      v.literal("loading_chart"),
+      v.literal("switching_symbol"),
+      v.literal("switching_timeframe"),
+      v.literal("ready"),
+      v.literal("failed"),
+      v.literal("completed"),
+    ),
+    currentStepLabel: v.string(),
+    currentStepIndex: v.number(),
+    totalSteps: v.number(),
+    startedAt: v.number(),
+    updatedAt: v.number(),
+    completedAt: v.optional(v.number()),
+    error: v.optional(v.string()),
+  })
+    .index("by_startedAt", ["startedAt"])
+    .index("by_agentSlug_and_marketSymbol", ["agentSlug", "marketSymbol"]),
+
+  browserSessionEvents: defineTable({
+    sessionId: v.id("browserSessions"),
+    sequence: v.number(),
+    label: v.string(),
+    detail: v.string(),
+    status: v.union(
+      v.literal("queued"),
+      v.literal("running"),
+      v.literal("completed"),
+      v.literal("failed"),
+    ),
+  })
+    .index("by_sessionId", ["sessionId"])
+    .index("by_sessionId_and_sequence", ["sessionId", "sequence"]),
 });

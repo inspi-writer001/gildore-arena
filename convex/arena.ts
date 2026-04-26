@@ -1,6 +1,7 @@
 import { cronJobs } from "convex/server";
 import { v } from "convex/values";
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import {
   action,
   internalAction,
@@ -15,6 +16,7 @@ import {
   newsContexts as mockNewsContexts,
   watchlistItems as mockWatchlistItems,
 } from "../lib/arena-mock-data";
+import { fetchMarketCalendar } from "../lib/economic-calendar";
 import { deriveFibonacciArenaState } from "../lib/fibonacci-engine";
 import { fetchMarketNews } from "../lib/news-ingestion";
 import { fetchPythHistory } from "../lib/pyth-history";
@@ -44,6 +46,35 @@ function latestByKey<T>(
   }
 
   return Array.from(latest.values());
+}
+
+function latestTradeEventBatches<
+  T extends {
+    agentSlug: string;
+    marketSymbol: string;
+    _creationTime: number;
+    eventTimeSec?: number;
+  },
+>(rows: T[], batchSize = 3) {
+  const grouped = new Map<string, T[]>();
+
+  for (const row of rows) {
+    const key = `${row.agentSlug}:${row.marketSymbol}`;
+    const bucket = grouped.get(key) ?? [];
+    bucket.push(row);
+    grouped.set(key, bucket);
+  }
+
+  return Array.from(grouped.values())
+    .flatMap((bucket) =>
+      bucket
+        .sort((a, b) => a._creationTime - b._creationTime)
+        .slice(-batchSize)
+        .sort((a, b) => {
+          const timeDelta = (a.eventTimeSec ?? 0) - (b.eventTimeSec ?? 0);
+          return timeDelta !== 0 ? timeDelta : a._creationTime - b._creationTime;
+        }),
+    );
 }
 
 function deriveAgentStatus(args: {
@@ -102,6 +133,81 @@ function deriveSessionBias(close: number, previousClose: number) {
   return "mixed" as const;
 }
 
+function mergeMarketConfluence(args: {
+  news: {
+    overallState: "supportive" | "neutral" | "risk";
+    overallReason: string;
+    items: Array<{
+      headline: string;
+      state: "supportive" | "neutral" | "risk";
+      sourceLabel: string;
+      publishedAtLabel: string;
+      note: string;
+      url?: string;
+    }>;
+  };
+  calendar: {
+    overallState: "supportive" | "neutral" | "risk";
+    overallReason: string;
+    items: Array<{
+      headline: string;
+      state: "supportive" | "neutral" | "risk";
+      sourceLabel: string;
+      publishedAtLabel: string;
+      note: string;
+      url?: string;
+    }>;
+  };
+}) {
+  const overallState =
+    args.calendar.overallState === "risk"
+      ? "risk"
+      : args.news.overallState;
+
+  let overallReason = args.news.overallReason;
+
+  if (args.calendar.overallState === "risk") {
+    overallReason =
+      args.news.overallState === "supportive"
+        ? `${args.calendar.overallReason} Headline flow is constructive, but scheduled macro risk still overrides execution.`
+        : args.calendar.overallReason;
+  } else if (args.news.overallState === "neutral" && args.calendar.items.length) {
+    overallReason = args.calendar.overallReason;
+  }
+
+  return {
+    overallState,
+    overallReason,
+    items: [...args.calendar.items, ...args.news.items].slice(0, 10),
+  };
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+type BrowserEventStatus = "queued" | "running" | "completed" | "failed";
+
+function resolveBrowserReviewTarget(args: {
+  marketSymbol: string;
+  timeframe: "15m" | "1h" | "4h";
+}) {
+  if (args.marketSymbol === "XAG/USD" || args.marketSymbol === "XAU/USD" || args.marketSymbol === "EUR/USD") {
+    return {
+      browserTargetSymbol: "Volatility 10 (1s) Index",
+      browserTargetTimeframe: "4h",
+      reason:
+        "Weekend browser review is pinned to a public derived volatility chart until metals and FX sessions reopen.",
+    };
+  }
+
+  return {
+    browserTargetSymbol: args.marketSymbol,
+    browserTargetTimeframe: args.timeframe,
+    reason: "Browser review targets the same market and timeframe as the arena state.",
+  };
+}
+
 export const getArenaSnapshot = query({
   args: {},
   handler: async (ctx) => {
@@ -114,6 +220,8 @@ export const getArenaSnapshot = query({
       positions,
       tradeEvents,
       visualTraces,
+      browserSessions,
+      browserSessionEvents,
       leaderboardSnapshots,
       scanRuns,
     ] = await Promise.all([
@@ -125,6 +233,8 @@ export const getArenaSnapshot = query({
       ctx.db.query("positions").collect(),
       ctx.db.query("tradeEvents").collect(),
       ctx.db.query("visualTraces").collect(),
+      ctx.db.query("browserSessions").collect(),
+      ctx.db.query("browserSessionEvents").collect(),
       ctx.db.query("leaderboardSnapshots").collect(),
       ctx.db.query("scanRuns").collect(),
     ]);
@@ -152,11 +262,20 @@ export const getArenaSnapshot = query({
         (row) => `${row.agentSlug}:${row.marketSymbol}`,
         (row) => row._creationTime,
       ),
-      tradeEvents: tradeEvents.sort((a, b) => a._creationTime - b._creationTime),
+      tradeEvents: latestTradeEventBatches(tradeEvents),
       visualTraces: latestByKey(
         visualTraces,
         (row) => `${row.agentSlug}:${row.marketSymbol}`,
         (row) => row._creationTime,
+      ),
+      browserSessions: latestByKey(
+        browserSessions,
+        (row) => `${row.agentSlug}:${row.marketSymbol}`,
+        (row) => row._creationTime,
+      ),
+      browserSessionEvents: browserSessionEvents.sort(
+        (a, b) =>
+          a._creationTime - b._creationTime || a.sequence - b.sequence,
       ),
       leaderboardSnapshots: leaderboardSnapshots.sort(
         (a, b) => b.capturedAt - a.capturedAt,
@@ -244,6 +363,189 @@ export const seedArena = mutation({
   },
 });
 
+export const createBrowserSession = internalMutation({
+  args: {
+    agentSlug: v.string(),
+    marketSymbol: v.string(),
+    timeframe: v.union(v.literal("15m"), v.literal("1h"), v.literal("4h")),
+    browserTargetSymbol: v.optional(v.string()),
+    browserTargetTimeframe: v.optional(v.string()),
+    inspectedOn: v.literal("deriv"),
+    targetUrl: v.string(),
+    totalSteps: v.number(),
+    currentStepLabel: v.string(),
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db.insert("browserSessions", {
+      agentSlug: args.agentSlug,
+      marketSymbol: args.marketSymbol,
+      timeframe: args.timeframe,
+      browserTargetSymbol: args.browserTargetSymbol,
+      browserTargetTimeframe: args.browserTargetTimeframe,
+      inspectedOn: args.inspectedOn,
+      targetUrl: args.targetUrl,
+      status: "starting",
+      currentStepLabel: args.currentStepLabel,
+      currentStepIndex: 0,
+      totalSteps: args.totalSteps,
+      startedAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+export const setBrowserSessionState = internalMutation({
+  args: {
+    sessionId: v.id("browserSessions"),
+    status: v.union(
+      v.literal("starting"),
+      v.literal("loading_chart"),
+      v.literal("switching_symbol"),
+      v.literal("switching_timeframe"),
+      v.literal("ready"),
+      v.literal("failed"),
+      v.literal("completed"),
+    ),
+    currentStepLabel: v.string(),
+    currentStepIndex: v.number(),
+    completedAt: v.optional(v.number()),
+    error: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.sessionId, {
+      status: args.status,
+      currentStepLabel: args.currentStepLabel,
+      currentStepIndex: args.currentStepIndex,
+      updatedAt: Date.now(),
+      completedAt: args.completedAt,
+      error: args.error,
+    });
+  },
+});
+
+export const updateBrowserSessionState = mutation({
+  args: {
+    sessionId: v.id("browserSessions"),
+    status: v.union(
+      v.literal("starting"),
+      v.literal("loading_chart"),
+      v.literal("switching_symbol"),
+      v.literal("switching_timeframe"),
+      v.literal("ready"),
+      v.literal("failed"),
+      v.literal("completed"),
+    ),
+    currentStepLabel: v.string(),
+    currentStepIndex: v.number(),
+    completedAt: v.optional(v.number()),
+    error: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.sessionId, {
+      status: args.status,
+      currentStepLabel: args.currentStepLabel,
+      currentStepIndex: args.currentStepIndex,
+      updatedAt: Date.now(),
+      completedAt: args.completedAt,
+      error: args.error,
+    });
+  },
+});
+
+export const clearBrowserSessionEvents = internalMutation({
+  args: {
+    sessionId: v.id("browserSessions"),
+  },
+  handler: async (ctx, args) => {
+    const rows = await ctx.db
+      .query("browserSessionEvents")
+      .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
+      .collect();
+
+    for (const row of rows) {
+      await ctx.db.delete(row._id);
+    }
+  },
+});
+
+export const upsertBrowserSessionEvents = internalMutation({
+  args: {
+    sessionId: v.id("browserSessions"),
+    events: v.array(
+      v.object({
+        sequence: v.number(),
+        label: v.string(),
+        detail: v.string(),
+        status: v.union(
+          v.literal("queued"),
+          v.literal("running"),
+          v.literal("completed"),
+          v.literal("failed"),
+        ),
+      }),
+  ),
+  },
+  handler: async (ctx, args) => {
+    const existingRows = await ctx.db
+      .query("browserSessionEvents")
+      .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
+      .collect();
+
+    for (const row of existingRows) {
+      await ctx.db.delete(row._id);
+    }
+
+    for (const event of args.events) {
+      await ctx.db.insert("browserSessionEvents", {
+        sessionId: args.sessionId,
+        sequence: event.sequence,
+        label: event.label,
+        detail: event.detail,
+        status: event.status,
+      });
+    }
+  },
+});
+
+export const replaceBrowserSessionEvents = mutation({
+  args: {
+    sessionId: v.id("browserSessions"),
+    events: v.array(
+      v.object({
+        sequence: v.number(),
+        label: v.string(),
+        detail: v.string(),
+        status: v.union(
+          v.literal("queued"),
+          v.literal("running"),
+          v.literal("completed"),
+          v.literal("failed"),
+        ),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const existingRows = await ctx.db
+      .query("browserSessionEvents")
+      .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
+      .collect();
+
+    for (const row of existingRows) {
+      await ctx.db.delete(row._id);
+    }
+
+    for (const event of args.events) {
+      await ctx.db.insert("browserSessionEvents", {
+        sessionId: args.sessionId,
+        sequence: event.sequence,
+        label: event.label,
+        detail: event.detail,
+        status: event.status,
+      });
+    }
+  },
+});
+
 export const recordScanRun = internalMutation({
   args: {
     agentSlug: v.string(),
@@ -318,9 +620,11 @@ export const persistFibonacciDerivedState = internalMutation({
         agentSlug: args.agentSlug,
         marketSymbol: args.marketSymbol,
         timestampLabel: event.timestamp,
+        eventTimeSec: event.eventTimeSec,
         title: event.title,
         detail: event.detail,
         stage: event.stage,
+        focusKind: event.focusKind,
         source: "engine",
       });
     }
@@ -536,6 +840,88 @@ export const syncAgentRuntimeState = internalMutation({
   },
 });
 
+export const purgeEngineDerivedState = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const [
+      tradeIdeas,
+      watchlistItems,
+      positions,
+      tradeEvents,
+      visualTraces,
+      leaderboardSnapshots,
+      agents,
+    ] = await Promise.all([
+      ctx.db.query("tradeIdeas").collect(),
+      ctx.db.query("watchlistItems").collect(),
+      ctx.db.query("positions").collect(),
+      ctx.db.query("tradeEvents").collect(),
+      ctx.db.query("visualTraces").collect(),
+      ctx.db.query("leaderboardSnapshots").collect(),
+      ctx.db.query("agents").collect(),
+    ]);
+
+    let deleted = 0;
+
+    for (const row of tradeIdeas) {
+      if (row.source === "engine") {
+        await ctx.db.delete(row._id);
+        deleted += 1;
+      }
+    }
+
+    for (const row of watchlistItems) {
+      if (row.source === "engine") {
+        await ctx.db.delete(row._id);
+        deleted += 1;
+      }
+    }
+
+    for (const row of positions) {
+      if (row.source === "engine") {
+        await ctx.db.delete(row._id);
+        deleted += 1;
+      }
+    }
+
+    for (const row of tradeEvents) {
+      if (row.source === "engine") {
+        await ctx.db.delete(row._id);
+        deleted += 1;
+      }
+    }
+
+    for (const row of visualTraces) {
+      if (row.source === "engine") {
+        await ctx.db.delete(row._id);
+        deleted += 1;
+      }
+    }
+
+    for (const row of leaderboardSnapshots) {
+      await ctx.db.delete(row._id);
+      deleted += 1;
+    }
+
+    for (const agent of agents) {
+      await ctx.db.patch(agent._id, {
+        status: "scanning",
+        pnlPercent: 0,
+        openPositions: 0,
+        score: 1000,
+        lastAction: "Engine state purged. Awaiting next scan output.",
+      });
+    }
+
+    return {
+      ok: true,
+      deleted,
+      agentsReset: agents.length,
+      purgedAt: Date.now(),
+    };
+  },
+});
+
 export const runArenaScanCycle = internalAction({
   args: {},
   handler: async (ctx) => {
@@ -567,22 +953,10 @@ export const runArenaScanCycle = internalAction({
           const candles = await fetchPythHistory(marketSymbol, agent.timeframe);
           if (!newsByMarket.has(marketSymbol)) {
             const newsPayload = await fetchMarketNews(marketSymbol);
-            newsByMarket.set(marketSymbol, {
-              overallState: newsPayload.overallState,
-              overallReason: newsPayload.overallReason,
-              items: newsPayload.items.map((item) => ({
-                headline: item.headline,
-                state: item.state,
-                sourceLabel: item.sourceLabel,
-                publishedAtLabel: item.publishedAtLabel,
-                note: item.note,
-                url: item.url,
-              })),
-            });
-
-            if (newsPayload.items.length) {
-              await ctx.runMutation(internal.arena.persistNewsContexts, {
-                marketSymbol,
+            const calendarPayload = await fetchMarketCalendar(marketSymbol);
+            const mergedConfluence = mergeMarketConfluence({
+              news: {
+                overallState: newsPayload.overallState,
                 overallReason: newsPayload.overallReason,
                 items: newsPayload.items.map((item) => ({
                   headline: item.headline,
@@ -592,6 +966,32 @@ export const runArenaScanCycle = internalAction({
                   note: item.note,
                   url: item.url,
                 })),
+              },
+              calendar: {
+                overallState: calendarPayload.overallState,
+                overallReason: calendarPayload.overallReason,
+                items: calendarPayload.items.map((item) => ({
+                  headline: item.headline,
+                  state: item.state,
+                  sourceLabel: item.sourceLabel,
+                  publishedAtLabel: item.publishedAtLabel,
+                  note: item.note,
+                  url: item.url,
+                })),
+              },
+            });
+
+            newsByMarket.set(marketSymbol, {
+              overallState: mergedConfluence.overallState,
+              overallReason: mergedConfluence.overallReason,
+              items: mergedConfluence.items,
+            });
+
+            if (mergedConfluence.items.length) {
+              await ctx.runMutation(internal.arena.persistNewsContexts, {
+                marketSymbol,
+                overallReason: mergedConfluence.overallReason,
+                items: mergedConfluence.items,
               });
             }
           }
@@ -742,6 +1142,128 @@ export const runArenaScanCycleNow = action({
       ok: boolean;
       startedAt: number;
       finishedAt: number;
+    };
+  },
+});
+
+export const purgeEngineDerivedStateNow = action({
+  args: {},
+  handler: async (ctx): Promise<{
+    ok: boolean;
+    deleted: number;
+    agentsReset: number;
+    purgedAt: number;
+  }> => {
+    return await ctx.runMutation(internal.arena.purgeEngineDerivedState, {});
+  },
+});
+
+export const startBrowserReviewSession = action({
+  args: {
+    agentSlug: v.string(),
+    marketSymbol: v.string(),
+    timeframe: v.union(v.literal("15m"), v.literal("1h"), v.literal("4h")),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    ok: boolean;
+    sessionId: Id<"browserSessions">;
+    browserTargetSymbol: string;
+    browserTargetTimeframe: string;
+  }> => {
+    const reviewTarget = resolveBrowserReviewTarget({
+      marketSymbol: args.marketSymbol,
+      timeframe: args.timeframe,
+    });
+    const sessionId: Id<"browserSessions"> = await ctx.runMutation(
+      internal.arena.createBrowserSession,
+      {
+      agentSlug: args.agentSlug,
+      marketSymbol: args.marketSymbol,
+      timeframe: args.timeframe,
+      browserTargetSymbol: reviewTarget.browserTargetSymbol,
+      browserTargetTimeframe: reviewTarget.browserTargetTimeframe,
+      inspectedOn: "deriv",
+      targetUrl: "https://charts.deriv.com/deriv",
+      totalSteps: 4,
+      currentStepLabel: "Starting remote browser session",
+      },
+    );
+
+    const steps = [
+      {
+        status: "loading_chart" as const,
+        label: "Open Deriv chart",
+        detail: "Load the Deriv TradingView chart surface in the remote session.",
+      },
+      {
+        status: "switching_symbol" as const,
+        label: `Switch symbol to ${reviewTarget.browserTargetSymbol}`,
+        detail: reviewTarget.reason,
+      },
+      {
+        status: "switching_timeframe" as const,
+        label: `Switch timeframe to ${reviewTarget.browserTargetTimeframe}`,
+        detail: `Set the working chart interval to ${reviewTarget.browserTargetTimeframe}.`,
+      },
+      {
+        status: "ready" as const,
+        label: "Hold chart for review",
+        detail:
+          "Keep the live session open on the target market so the browser agent can inspect structure.",
+      },
+    ];
+
+    await ctx.runMutation(internal.arena.upsertBrowserSessionEvents, {
+      sessionId,
+      events: steps.map((step, index) => ({
+        sequence: index + 1,
+        label: step.label,
+        detail: step.detail,
+        status: (index === 0 ? "running" : "queued") as BrowserEventStatus,
+      })),
+    });
+
+    for (const [index, step] of steps.entries()) {
+      await ctx.runMutation(internal.arena.setBrowserSessionState, {
+        sessionId,
+        status: step.status,
+        currentStepLabel: step.label,
+        currentStepIndex: index + 1,
+        completedAt: step.status === "ready" ? Date.now() : undefined,
+        error: undefined,
+      });
+
+      await ctx.runMutation(internal.arena.upsertBrowserSessionEvents, {
+        sessionId,
+        events: steps.map((entry, entryIndex) => ({
+          sequence: entryIndex + 1,
+          label: entry.label,
+          detail: entry.detail,
+          status: (
+            entryIndex < index
+              ? "completed"
+              : entryIndex === index
+                ? step.status === "ready"
+                  ? "completed"
+                  : "running"
+                : "queued"
+          ) as BrowserEventStatus,
+        })),
+      });
+
+      if (step.status !== "ready") {
+        await sleep(900);
+      }
+    }
+
+    return {
+      ok: true,
+      sessionId,
+      browserTargetSymbol: reviewTarget.browserTargetSymbol,
+      browserTargetTimeframe: reviewTarget.browserTargetTimeframe,
     };
   },
 });

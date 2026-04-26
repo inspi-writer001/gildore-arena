@@ -1,4 +1,12 @@
 export type TradeTimeframe = "15m" | "1h" | "4h";
+export type BrowserSessionStatus =
+  | "starting"
+  | "loading_chart"
+  | "switching_symbol"
+  | "switching_timeframe"
+  | "ready"
+  | "failed"
+  | "completed";
 
 export type AgentStatus =
   | "scanning"
@@ -94,13 +102,16 @@ export type TradeEvent = {
   agentId: string;
   marketSymbol: string;
   timestamp: string;
+  eventTimeSec?: number;
   title: string;
   detail: string;
   stage: AgentStatus;
+  focusKind?: "point" | "area";
 };
 
 export type VisualChartPoint = {
   barIndex: number;
+  timeSec?: number;
   price: number;
 };
 
@@ -123,6 +134,8 @@ export type VisualGeometry =
       kind: "fibonacci";
       startBarIndex: number;
       endBarIndex: number;
+      startTimeSec?: number;
+      endTimeSec?: number;
       highPrice: number;
       lowPrice: number;
       levels?: number[];
@@ -131,6 +144,8 @@ export type VisualGeometry =
       kind: "zone";
       startBarIndex: number;
       endBarIndex: number;
+      startTimeSec?: number;
+      endTimeSec?: number;
       highPrice: number;
       lowPrice: number;
       tone?: VisualTone;
@@ -165,4 +180,32 @@ export type VisualTrace = {
   timeframe: TradeTimeframe;
   updatedAt: string;
   annotations: VisualAnnotation[];
+};
+
+export type BrowserSession = {
+  id: string;
+  agentId: string;
+  marketSymbol: string;
+  timeframe: TradeTimeframe;
+  browserTargetSymbol?: string;
+  browserTargetTimeframe?: string;
+  inspectedOn: "deriv";
+  targetUrl: string;
+  status: BrowserSessionStatus;
+  currentStepLabel: string;
+  currentStepIndex: number;
+  totalSteps: number;
+  startedAt: number;
+  updatedAt: number;
+  completedAt?: number;
+  error?: string;
+};
+
+export type BrowserSessionEvent = {
+  id: string;
+  sessionId: string;
+  sequence: number;
+  label: string;
+  detail: string;
+  status: "queued" | "running" | "completed" | "failed";
 };

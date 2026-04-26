@@ -680,6 +680,14 @@ a:focus-visible {
   grid-template-columns: minmax(0, 1.6fr) minmax(320px, 0.9fr);
 }
 
+.arena-detail-layout.is-workspace-wide {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.arena-detail-layout.is-workspace-wide .arena-detail-sidebar {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .arena-detail-sidebar {
   display: grid;
   gap: 18px;
@@ -894,6 +902,21 @@ a:focus-visible {
   gap: 12px;
 }
 
+.arena-news-row-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.arena-news-row.is-calendar {
+  background: rgba(247, 240, 231, 0.96);
+}
+
+.arena-news-row.is-headline {
+  background: rgba(250, 250, 247, 0.92);
+}
+
 .arena-news-link {
   display: inline-flex;
   align-items: center;
@@ -1002,6 +1025,52 @@ a:focus-visible {
   gap: 8px;
 }
 
+.arena-disclosure {
+  display: grid;
+  gap: 0;
+}
+
+.arena-disclosure[open] {
+  gap: 14px;
+}
+
+.arena-disclosure-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.arena-disclosure-summary::-webkit-details-marker {
+  display: none;
+}
+
+.arena-disclosure-summary--compact {
+  min-height: 40px;
+}
+
+.arena-disclosure-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.arena-disclosure-chevron {
+  color: rgba(18, 18, 18, 0.48);
+  transition: transform 160ms ease;
+}
+
+.arena-disclosure[open] .arena-disclosure-chevron {
+  transform: rotate(180deg);
+}
+
+.arena-disclosure-body {
+  display: grid;
+  gap: 14px;
+}
+
 .arena-stat-grid,
 .arena-level-grid {
   display: grid;
@@ -1015,6 +1084,162 @@ a:focus-visible {
 .arena-level-grid {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   margin-top: 18px;
+}
+
+.arena-browser-session-card {
+  display: grid;
+  gap: 16px;
+  padding: 24px;
+  border-radius: 24px;
+  border: 1px solid rgba(18, 18, 18, 0.08);
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.arena-browser-session-header-meta {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: end;
+  gap: 10px;
+}
+
+.arena-browser-session-status {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(250, 250, 247, 0.92);
+}
+
+.arena-browser-session-status strong {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.arena-browser-session-status span {
+  color: rgba(18, 18, 18, 0.62);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.arena-browser-session-viewport {
+  position: relative;
+  overflow: hidden;
+  border-radius: 20px;
+  border: 1px solid rgba(18, 18, 18, 0.1);
+  background: rgba(17, 17, 17, 0.04);
+}
+
+.arena-browser-session-frame {
+  display: block;
+  width: 100%;
+  min-height: 560px;
+  border: 0;
+  background: #ffffff;
+  object-fit: cover;
+}
+
+.arena-browser-session-canvas {
+  display: none;
+}
+
+.arena-browser-session-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(8px);
+}
+
+.arena-browser-session-overlay strong {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.arena-browser-session-overlay span {
+  max-width: 28rem;
+  color: rgba(18, 18, 18, 0.62);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.arena-browser-session-pointer {
+  position: absolute;
+  z-index: 2;
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+
+.arena-browser-session-pointer-core {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  border: 2px solid rgba(18, 18, 18, 0.9);
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.45);
+}
+
+.arena-browser-session-pointer-pulse {
+  position: absolute;
+  inset: -10px;
+  border-radius: 999px;
+  border: 2px solid rgba(214, 102, 37, 0.78);
+  animation: arena-browser-pointer-pulse 0.65s ease-out forwards;
+}
+
+@keyframes arena-browser-pointer-pulse {
+  0% {
+    opacity: 0.92;
+    transform: scale(0.55);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2.2);
+  }
+}
+
+.arena-browser-session-events {
+  display: grid;
+  gap: 12px;
+}
+
+.arena-browser-step {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(250, 250, 247, 0.9);
+}
+
+.arena-browser-step strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.arena-browser-step span {
+  color: rgba(18, 18, 18, 0.62);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.arena-browser-step-running {
+  border: 1px solid rgba(18, 18, 18, 0.12);
+}
+
+.arena-browser-step-completed {
+  background: rgba(236, 248, 239, 0.92);
+}
+
+.arena-browser-step-failed {
+  background: rgba(251, 238, 236, 0.92);
 }
 
 .arena-stat-card {
@@ -1216,6 +1441,157 @@ a:focus-visible {
   pointer-events: none;
 }
 
+@keyframes arena-focus-pulse {
+  0% {
+    transform: translate(-50%, -50%) scale(0.82);
+    box-shadow:
+      0 0 0 0 rgba(17, 17, 17, 0.22),
+      0 0 0 0 rgba(17, 17, 17, 0.1);
+  }
+
+  55% {
+    transform: translate(-50%, -50%) scale(1.12);
+    box-shadow:
+      0 0 0 8px rgba(17, 17, 17, 0.14),
+      0 0 0 16px rgba(17, 17, 17, 0.04);
+  }
+
+  100% {
+    transform: translate(-50%, -50%) scale(1);
+    box-shadow:
+      0 0 0 5px rgba(17, 17, 17, 0.12),
+      0 0 0 10px rgba(17, 17, 17, 0.05);
+  }
+}
+
+.arena-overlay-focus {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.arena-overlay-focus-band {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 64px;
+  background: linear-gradient(
+    180deg,
+    rgba(17, 17, 17, 0) 0%,
+    rgba(17, 17, 17, 0.045) 50%,
+    rgba(17, 17, 17, 0) 100%
+  );
+  transform: translateY(-50%);
+}
+
+.arena-overlay-area-focus {
+  position: absolute;
+  z-index: 2;
+  border: 2px solid rgba(17, 17, 17, 0.26);
+  border-radius: 14px;
+  background: rgba(17, 17, 17, 0.04);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.24),
+    0 0 0 6px rgba(17, 17, 17, 0.05);
+  animation: arena-focus-pulse 520ms ease-out;
+}
+
+.arena-overlay-area-focus.tone-zone {
+  border-color: rgba(161, 107, 20, 0.48);
+  background: rgba(161, 107, 20, 0.08);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.28),
+    0 0 0 6px rgba(161, 107, 20, 0.08);
+}
+
+.arena-overlay-focus-x,
+.arena-overlay-focus-y {
+  position: absolute;
+  background: rgba(18, 18, 18, 0.18);
+}
+
+.arena-overlay-focus-x {
+  left: 0;
+  right: 0;
+  height: 1px;
+  border-top: 1px dashed rgba(18, 18, 18, 0.18);
+}
+
+.arena-overlay-focus-y {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  border-left: 1px dashed rgba(18, 18, 18, 0.18);
+}
+
+.arena-overlay-focus-label {
+  position: absolute;
+  z-index: 3;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(17, 17, 17, 0.92);
+  color: #f7f7f3;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  transform: translate(12px, -30px);
+  white-space: nowrap;
+}
+
+.arena-overlay-focus-label.tone-entry {
+  background: rgba(26, 127, 70, 0.94);
+}
+
+.arena-overlay-focus-label.tone-stop {
+  background: rgba(163, 48, 48, 0.94);
+}
+
+.arena-overlay-focus-label.tone-target {
+  background: rgba(26, 127, 70, 0.94);
+}
+
+.arena-overlay-focus-label.tone-zone {
+  background: rgba(161, 107, 20, 0.94);
+}
+
+.arena-overlay-focus-point {
+  position: absolute;
+  z-index: 4;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(17, 17, 17, 0.72);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 0 0 4px rgba(17, 17, 17, 0.08);
+  transform: translate(-50%, -50%);
+}
+
+.arena-overlay-focus-point.is-active {
+  width: 16px;
+  height: 16px;
+  box-shadow:
+    0 0 0 5px rgba(17, 17, 17, 0.12),
+    0 0 0 10px rgba(17, 17, 17, 0.05);
+  animation: arena-focus-pulse 520ms ease-out;
+}
+
+.arena-overlay-focus-point.tone-entry {
+  border-color: #1a7f46;
+}
+
+.arena-overlay-focus-point.tone-stop {
+  border-color: #a33030;
+}
+
+.arena-overlay-focus-point.tone-target {
+  border-color: #1a7f46;
+}
+
+.arena-overlay-focus-point.tone-zone {
+  border-color: #a16b14;
+}
+
 .arena-workspace-panel {
   display: grid;
   gap: 12px;
@@ -1322,6 +1698,17 @@ a:focus-visible {
 .arena-overlay-tag.tone-target {
   background: rgba(26, 127, 70, 0.12);
   color: #1a7f46;
+}
+
+.arena-overlay-tag.is-structural {
+  z-index: 5;
+  min-height: 30px;
+  padding: 0 11px;
+  background: rgba(17, 17, 17, 0.92);
+  color: #f7f7f3;
+  box-shadow:
+    0 8px 20px rgba(17, 17, 17, 0.12),
+    0 0 0 4px rgba(255, 255, 255, 0.66);
 }
 
 .arena-trace-canvas {

@@ -4,9 +4,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   CandlestickChart,
   Eye,
   Layers3,
+  Maximize2,
+  Minimize2,
   Pause,
   Play,
   Route,
@@ -18,6 +21,7 @@ import {
   createChart,
   type IChartApi,
   type ISeriesApi,
+  type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
 import type {
@@ -44,6 +48,8 @@ type TradingViewWorkspaceProps = {
   events: TradeEvent[];
   marketNewsState?: ConfluenceState;
   marketNewsUpdatedAt?: number | null;
+  isWideLayout: boolean;
+  onToggleLayout: () => void;
 };
 
 type CandlePoint = {
@@ -53,6 +59,48 @@ type CandlePoint = {
   low: number;
   close: number;
 };
+
+type OverlayFocusPoint = {
+  barIndex: number;
+  timeSec?: number;
+  price: number;
+  label: string;
+  tone: "default" | "muted" | "entry" | "stop" | "target" | "zone";
+};
+
+type OverlayAreaFocus = {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+  label: string;
+  tone: "default" | "muted" | "entry" | "stop" | "target" | "zone";
+};
+
+type CoordinateContext = {
+  chart: IChartApi | null;
+  series: ISeriesApi<"Candlestick"> | null;
+};
+
+function sameAnchor(
+  left: {
+    barIndex: number;
+    timeSec?: number;
+    price: number;
+  },
+  right: {
+    barIndex: number;
+    timeSec?: number;
+    price: number;
+  },
+) {
+  const sameTime =
+    left.timeSec !== undefined && right.timeSec !== undefined
+      ? left.timeSec === right.timeSec
+      : left.barIndex === right.barIndex;
+
+  return sameTime && Math.abs(left.price - right.price) < 0.0001;
+}
 
 const PYTH_HISTORY_BASE_URL = "https://history.pyth-lazer.dourolabs.app/v1";
 
@@ -88,6 +136,154 @@ function buildMockCandles(
   return candles;
 }
 
+function extractFocusPoints(annotation: VisualAnnotation): OverlayFocusPoint[] {
+  const geometry = annotation.geometry;
+  if (!geometry) return [];
+
+  if (geometry.kind === "line") {
+    const tone = geometry.tone ?? "default";
+    return [
+      {
+        barIndex: geometry.start.barIndex,
+        timeSec: geometry.start.timeSec,
+        price: geometry.start.price,
+        label: `${annotation.label} start`,
+        tone,
+      },
+      {
+        barIndex: geometry.end.barIndex,
+        timeSec: geometry.end.timeSec,
+        price: geometry.end.price,
+        label: `${annotation.label} end`,
+        tone,
+      },
+    ];
+  }
+
+  if (geometry.kind === "fibonacci") {
+    return [
+      {
+        barIndex: geometry.startBarIndex,
+        timeSec: geometry.startTimeSec,
+        price: geometry.highPrice,
+        label: `${annotation.label} high`,
+        tone: "zone",
+      },
+      {
+        barIndex: geometry.endBarIndex,
+        timeSec: geometry.endTimeSec,
+        price: geometry.lowPrice,
+        label: `${annotation.label} low`,
+        tone: "zone",
+      },
+    ];
+  }
+
+  if (geometry.kind === "zone") {
+    const tone = geometry.tone ?? "zone";
+    return [
+      {
+        barIndex: geometry.startBarIndex,
+        timeSec: geometry.startTimeSec,
+        price: geometry.highPrice,
+        label: `${annotation.label} upper`,
+        tone,
+      },
+      {
+        barIndex: geometry.endBarIndex,
+        timeSec: geometry.endTimeSec,
+        price: geometry.lowPrice,
+        label: `${annotation.label} lower`,
+        tone,
+      },
+    ];
+  }
+
+  return [
+    {
+      barIndex: geometry.position.barIndex,
+      timeSec: geometry.position.timeSec,
+      price: geometry.position.price,
+      label: geometry.text,
+      tone: geometry.tone ?? "default",
+    },
+  ];
+}
+
+function extractAreaFocus(
+  annotation: VisualAnnotation,
+  coordinates: CoordinateContext,
+): OverlayAreaFocus | null {
+  const geometry = annotation.geometry;
+  if (!geometry) return null;
+
+  if (geometry.kind === "fibonacci") {
+    const left = xCoordinateFromAnchor(
+      {
+        barIndex: geometry.startBarIndex,
+        timeSec: geometry.startTimeSec,
+      },
+      coordinates,
+    );
+    const right = xCoordinateFromAnchor(
+      {
+        barIndex: geometry.endBarIndex,
+        timeSec: geometry.endTimeSec,
+      },
+      coordinates,
+    );
+    const top = yCoordinateFromPrice(geometry.highPrice, coordinates);
+    const bottom = yCoordinateFromPrice(geometry.lowPrice, coordinates);
+
+    if (left === null || right === null || top === null || bottom === null) {
+      return null;
+    }
+
+    return {
+      left: Math.min(left, right),
+      right: Math.max(left, right),
+      top: Math.min(top, bottom),
+      bottom: Math.max(top, bottom),
+      label: annotation.label,
+      tone: "zone",
+    };
+  }
+
+  if (geometry.kind === "zone") {
+    const left = xCoordinateFromAnchor(
+      {
+        barIndex: geometry.startBarIndex,
+        timeSec: geometry.startTimeSec,
+      },
+      coordinates,
+    );
+    const right = xCoordinateFromAnchor(
+      {
+        barIndex: geometry.endBarIndex,
+        timeSec: geometry.endTimeSec,
+      },
+      coordinates,
+    );
+    const top = yCoordinateFromPrice(geometry.highPrice, coordinates);
+    const bottom = yCoordinateFromPrice(geometry.lowPrice, coordinates);
+
+    if (left === null || right === null || top === null || bottom === null) {
+      return null;
+    }
+
+    return {
+      left: Math.min(left, right),
+      right: Math.max(left, right),
+      top: Math.min(top, bottom),
+      bottom: Math.max(top, bottom),
+      label: annotation.label,
+      tone: geometry.tone ?? "zone",
+    };
+  }
+
+  return null;
+}
+
 export default function TradingViewWorkspace({
   marketSymbol,
   timeframe,
@@ -97,16 +293,19 @@ export default function TradingViewWorkspace({
   events,
   marketNewsState = "neutral",
   marketNewsUpdatedAt = null,
+  isWideLayout,
+  onToggleLayout,
 }: TradingViewWorkspaceProps) {
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
 
   const anchorPrice = tradeIdea?.entry ?? position?.entry ?? 100;
-  const entry = tradeIdea?.entry ?? position?.entry ?? anchorPrice;
-  const stopLoss = tradeIdea?.stopLoss ?? position?.stopLoss ?? anchorPrice * 0.994;
-  const takeProfit =
-    tradeIdea?.takeProfit ?? position?.takeProfit ?? anchorPrice * 1.012;
+  const entry = tradeIdea?.entry ?? position?.entry ?? null;
+  const stopLoss = tradeIdea?.stopLoss ?? position?.stopLoss ?? null;
+  const takeProfit = tradeIdea?.takeProfit ?? position?.takeProfit ?? null;
+  const hasTradeLevels =
+    entry !== null && stopLoss !== null && takeProfit !== null;
 
   const [candles, setCandles] = useState<CandlePoint[]>(() =>
     buildMockCandles(anchorPrice, timeframe),
@@ -137,6 +336,9 @@ export default function TradingViewWorkspace({
   });
   const [replayStep, setReplayStep] = useState(replaySteps);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [focusPulseKey, setFocusPulseKey] = useState(0);
+  const [, setViewportVersion] = useState(0);
+  const isReplayInspecting = isPlaying || replayStep !== replaySteps;
 
   useEffect(() => {
     setCandles(buildMockCandles(anchorPrice, timeframe));
@@ -254,6 +456,12 @@ export default function TradingViewWorkspace({
       }
     }
 
+    if (isReplayInspecting) {
+      return () => {
+        disposed = true;
+      };
+    }
+
     void loadPythCandles();
 
     const intervalId = window.setInterval(() => {
@@ -264,7 +472,7 @@ export default function TradingViewWorkspace({
       disposed = true;
       window.clearInterval(intervalId);
     };
-  }, [marketSymbol, timeframe]);
+  }, [isReplayInspecting, marketSymbol, timeframe]);
 
   useEffect(() => {
     const container = chartContainerRef.current;
@@ -311,7 +519,7 @@ export default function TradingViewWorkspace({
     series.setData(candles);
     chart.timeScale().fitContent();
 
-    if (visibleLayers.levels) {
+    if (visibleLayers.levels && hasTradeLevels) {
       series.createPriceLine({
         price: entry,
         color: "#111111",
@@ -343,12 +551,23 @@ export default function TradingViewWorkspace({
     chartRef.current = chart;
     seriesRef.current = series;
 
+    const syncOverlayViewport = () => {
+      setViewportVersion((current) => current + 1);
+    };
+
+    chart.timeScale().subscribeVisibleLogicalRangeChange(syncOverlayViewport);
+    chart.timeScale().subscribeVisibleTimeRangeChange(syncOverlayViewport);
+
     return () => {
+      chart
+        .timeScale()
+        .unsubscribeVisibleLogicalRangeChange(syncOverlayViewport);
+      chart.timeScale().unsubscribeVisibleTimeRangeChange(syncOverlayViewport);
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
     };
-  }, [candles, entry, stopLoss, takeProfit, visibleLayers.levels]);
+  }, [candles, entry, hasTradeLevels, stopLoss, takeProfit, visibleLayers.levels]);
 
   useEffect(() => {
     setReplayStep(replaySteps);
@@ -380,8 +599,8 @@ export default function TradingViewWorkspace({
     const highs = candles.map((candle) => candle.high);
 
     return {
-      min: Math.min(...lows, stopLoss),
-      max: Math.max(...highs, takeProfit),
+      min: Math.min(...lows, stopLoss ?? Number.POSITIVE_INFINITY),
+      max: Math.max(...highs, takeProfit ?? Number.NEGATIVE_INFINITY),
     };
   }, [candles, stopLoss, takeProfit]);
 
@@ -403,7 +622,83 @@ export default function TradingViewWorkspace({
 
     return true;
   });
+  const replayStepAnnotations = overlayAnnotations.filter(
+    (annotation) => (annotation.revealStep ?? 1) === replayStep,
+  );
+  const replayFocusPoints = replayStepAnnotations.flatMap(extractFocusPoints);
+  const coordinateContext = {
+    chart: chartRef.current,
+    series: seriesRef.current,
+  } satisfies CoordinateContext;
   const activeEvent = events[Math.max(0, Math.min(replayStep - 1, events.length - 1))];
+  const activeAreaAnnotation =
+    activeEvent?.focusKind === "area"
+      ? replayStepAnnotations.find((annotation) => {
+          const geometry = annotation.geometry;
+          return geometry?.kind === "fibonacci" || geometry?.kind === "zone";
+        }) ??
+        overlayAnnotations
+          .slice()
+          .reverse()
+          .find((annotation) => {
+            const geometry = annotation.geometry;
+            return geometry?.kind === "fibonacci" || geometry?.kind === "zone";
+          }) ??
+        null
+      : null;
+  const activeAreaFocus =
+    activeAreaAnnotation !== null
+      ? extractAreaFocus(activeAreaAnnotation, coordinateContext)
+      : null;
+  const activeFocusPoint =
+    activeAreaFocus === null
+      ? replayFocusPoints[replayFocusPoints.length - 1] ??
+        overlayAnnotations
+          .slice()
+          .reverse()
+          .flatMap(extractFocusPoints)[0] ??
+        null
+      : null;
+  const structuralMarkerAnchors = overlayAnnotations.flatMap((annotation) => {
+    if (
+      annotation.type !== "note" ||
+      annotation.geometry?.kind !== "marker" ||
+      !annotation.geometry.text.startsWith("T")
+    ) {
+      return [];
+    }
+
+    return [
+      {
+        barIndex: annotation.geometry.position.barIndex,
+        timeSec: annotation.geometry.position.timeSec,
+        price: annotation.geometry.position.price,
+      },
+    ];
+  });
+  const visibleReplayFocusPoints = replayFocusPoints.filter(
+    (point) =>
+      !structuralMarkerAnchors.some((anchor) => sameAnchor(point, anchor)),
+  );
+  const visibleActiveFocusPoint =
+    activeFocusPoint &&
+    structuralMarkerAnchors.some((anchor) => sameAnchor(activeFocusPoint, anchor))
+      ? null
+      : activeFocusPoint;
+
+  useEffect(() => {
+    if (!visibleActiveFocusPoint && !activeAreaFocus) return;
+    setFocusPulseKey((current) => current + 1);
+  }, [
+    visibleActiveFocusPoint?.barIndex,
+    visibleActiveFocusPoint?.price,
+    visibleActiveFocusPoint?.label,
+    activeAreaFocus?.left,
+    activeAreaFocus?.right,
+    activeAreaFocus?.top,
+    activeAreaFocus?.bottom,
+    activeAreaFocus?.label,
+  ]);
   const dataAgeLabel =
     lastFetchTimestamp !== null
       ? `${Math.max(0, Math.floor((Date.now() - lastFetchTimestamp) / 1000))}s ago`
@@ -430,6 +725,134 @@ export default function TradingViewWorkspace({
     }));
   };
 
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || candles.length <= 1) return;
+
+    const timeScale = chart.timeScale();
+    const visibleRange = timeScale.getVisibleLogicalRange();
+    const fallbackSpan = Math.min(Math.max(candles.length * 0.28, 36), candles.length);
+    const span =
+      visibleRange && Number.isFinite(visibleRange.from) && Number.isFinite(visibleRange.to)
+        ? Math.max(visibleRange.to - visibleRange.from, 24)
+        : fallbackSpan;
+
+    let center = Math.floor(candles.length / 2);
+    let targetFrom: number | null = null;
+    let targetTo: number | null = null;
+
+    const fitIndicesWithPadding = (indices: number[]) => {
+      if (!indices.length) return false;
+      const anchorStart = Math.min(...indices);
+      const anchorEnd = Math.max(...indices);
+      const padding = Math.max(6, Math.round((anchorEnd - anchorStart) * 0.12));
+
+      targetFrom = Math.max(-2, anchorStart - padding);
+      targetTo = Math.min(candles.length + 2, anchorEnd + padding);
+      return true;
+    };
+
+    if (replayStepAnnotations.some((annotation) => annotation.type === "trendline")) {
+      const structuralPoints = replayStepAnnotations.flatMap(extractFocusPoints);
+      const structuralIndices = structuralPoints.map((point) =>
+        resolveCandleIndex({
+          barIndex: point.barIndex,
+          timeSec: point.timeSec,
+          candles,
+        }),
+      );
+
+      if (fitIndicesWithPadding(structuralIndices)) {
+        // Step 1 should fit the whole trendline structure, not center on one point.
+      }
+    }
+
+    if (targetFrom === null && activeAreaAnnotation?.geometry) {
+      const primaryTrendline = overlayAnnotations.find(
+        (annotation) => annotation.type === "trendline",
+      );
+      const geometry = activeAreaAnnotation.geometry;
+      if (geometry.kind === "fibonacci" || geometry.kind === "zone") {
+        const startIndex = resolveCandleIndex({
+          barIndex: geometry.startBarIndex,
+          timeSec: geometry.startTimeSec,
+          candles,
+        });
+        const endIndex = resolveCandleIndex({
+          barIndex: geometry.endBarIndex,
+          timeSec: geometry.endTimeSec,
+          candles,
+        });
+
+        let anchorStart = Math.min(startIndex, endIndex);
+        let anchorEnd = Math.max(startIndex, endIndex);
+
+        if (
+          primaryTrendline?.geometry &&
+          primaryTrendline.geometry.kind === "line"
+        ) {
+          const trendStartIndex = resolveCandleIndex({
+            barIndex: primaryTrendline.geometry.start.barIndex,
+            timeSec: primaryTrendline.geometry.start.timeSec,
+            candles,
+          });
+          const trendEndIndex = resolveCandleIndex({
+            barIndex: primaryTrendline.geometry.end.barIndex,
+            timeSec: primaryTrendline.geometry.end.timeSec,
+            candles,
+          });
+
+          anchorStart = Math.min(anchorStart, trendStartIndex, trendEndIndex);
+          anchorEnd = Math.max(anchorEnd, trendStartIndex, trendEndIndex);
+        }
+
+        fitIndicesWithPadding([anchorStart, anchorEnd]);
+      }
+    }
+
+    if (activeFocusPoint && targetFrom === null) {
+      center = resolveCandleIndex({
+        barIndex: activeFocusPoint.barIndex,
+        timeSec: activeFocusPoint.timeSec,
+        candles,
+      });
+    } else if (activeAreaAnnotation?.geometry && targetFrom === null) {
+      const geometry = activeAreaAnnotation.geometry;
+      if (geometry.kind === "fibonacci" || geometry.kind === "zone") {
+        const startIndex = resolveCandleIndex({
+          barIndex: geometry.startBarIndex,
+          timeSec: geometry.startTimeSec,
+          candles,
+        });
+        const endIndex = resolveCandleIndex({
+          barIndex: geometry.endBarIndex,
+          timeSec: geometry.endTimeSec,
+          candles,
+        });
+        center = Math.round((startIndex + endIndex) / 2);
+      }
+    } else {
+      return;
+    }
+
+    if (targetFrom === null || targetTo === null) {
+      targetFrom = Math.max(-2, center - span / 2);
+      targetTo = Math.min(candles.length + 2, center + span / 2);
+    }
+
+    timeScale.setVisibleLogicalRange({
+      from: targetFrom,
+      to: targetTo,
+    });
+  }, [
+    activeAreaAnnotation,
+    activeFocusPoint,
+    candles,
+    overlayAnnotations,
+    replayStep,
+    replayStepAnnotations,
+  ]);
+
   return (
     <section className="arena-workspace-card">
       <div className="arena-surface-header">
@@ -438,6 +861,19 @@ export default function TradingViewWorkspace({
           <h3 className="font-barlow">Chart workspace</h3>
         </div>
         <div className="arena-workspace-meta">
+          <button
+            className="arena-tool-chip font-barlow"
+            type="button"
+            onClick={onToggleLayout}
+            aria-label={isWideLayout ? "Reduce chart width" : "Expand chart width"}
+          >
+            {isWideLayout ? (
+              <Minimize2 aria-hidden="true" size={14} />
+            ) : (
+              <Maximize2 aria-hidden="true" size={14} />
+            )}
+            {isWideLayout ? "Compact view" : "Full width"}
+          </button>
           <span className="arena-chip font-barlow">{marketSymbol}</span>
           <span className="arena-chip font-barlow">{timeframe}</span>
           <span className={`arena-pill is-${marketNewsState} font-barlow`}>
@@ -603,13 +1039,37 @@ export default function TradingViewWorkspace({
         <div ref={chartContainerRef} className="arena-tradingview-root" />
 
         <div className="arena-lightweight-overlay" aria-hidden="true">
+          {activeAreaFocus ? (
+            <ReplayAreaFocusOverlay
+              key={`focus-area-${focusPulseKey}`}
+              area={activeAreaFocus}
+            />
+          ) : null}
+          {visibleActiveFocusPoint ? (
+            <ReplayFocusOverlay
+              key={`focus-${focusPulseKey}`}
+              point={visibleActiveFocusPoint}
+              coordinates={coordinateContext}
+            />
+          ) : null}
           {overlayAnnotations.map((annotation) => (
             <OverlayAnnotation
               key={annotation.id}
               annotation={annotation}
-              candleCount={candles.length}
-              minPrice={priceRange.min}
-              maxPrice={priceRange.max}
+              coordinates={coordinateContext}
+            />
+          ))}
+          {visibleReplayFocusPoints.map((point, index) => (
+            <ReplayFocusPoint
+              key={`${point.label}-${point.barIndex}-${point.price}-${index}`}
+              point={point}
+              coordinates={coordinateContext}
+              isActive={
+                visibleActiveFocusPoint !== null &&
+                point.barIndex === visibleActiveFocusPoint.barIndex &&
+                point.price === visibleActiveFocusPoint.price &&
+                point.label === visibleActiveFocusPoint.label
+              }
             />
           ))}
         </div>
@@ -617,61 +1077,128 @@ export default function TradingViewWorkspace({
 
       <div className="arena-workspace-lower">
         <div className="arena-workspace-panel">
-          <div className="arena-workspace-panel-title">
-            <Sparkles aria-hidden="true" size={16} />
-            <h4 className="font-barlow">Trace annotations</h4>
-          </div>
-          <div className="arena-annotation-list">
-            {overlayAnnotations.map((annotation) => (
-              <div key={annotation.id} className="arena-annotation-row">
-                <strong className="font-barlow">{annotation.label}</strong>
-                <span className="font-inter">{annotation.detail}</span>
+          <details className="arena-disclosure">
+            <summary className="arena-disclosure-summary arena-disclosure-summary--compact">
+              <div className="arena-workspace-panel-title">
+                <Sparkles aria-hidden="true" size={16} />
+                <h4 className="font-barlow">Trace annotations</h4>
               </div>
-            ))}
-          </div>
+              <div className="arena-disclosure-meta">
+                <span className="arena-chip font-barlow">
+                  {overlayAnnotations.length} items
+                </span>
+                <ChevronDown
+                  aria-hidden="true"
+                  size={16}
+                  className="arena-disclosure-chevron"
+                />
+              </div>
+            </summary>
+            <div className="arena-disclosure-body">
+              <div className="arena-annotation-list">
+                {overlayAnnotations.map((annotation) => (
+                  <div key={annotation.id} className="arena-annotation-row">
+                    <strong className="font-barlow">{annotation.label}</strong>
+                    <span className="font-inter">{annotation.detail}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </details>
         </div>
 
         <div className="arena-workspace-panel">
-          <div className="arena-workspace-panel-title">
-            <CandlestickChart aria-hidden="true" size={16} />
-            <h4 className="font-barlow">Chart stack</h4>
-          </div>
-          <div className="arena-workspace-note-list">
-            <div className="arena-watch-row">
-              <strong className="font-barlow">Current layer</strong>
-              <span className="font-inter">
-                Lightweight Charts renders the actual candles and price levels.
-              </span>
+          <details className="arena-disclosure">
+            <summary className="arena-disclosure-summary arena-disclosure-summary--compact">
+              <div className="arena-workspace-panel-title">
+                <CandlestickChart aria-hidden="true" size={16} />
+                <h4 className="font-barlow">Chart stack</h4>
+              </div>
+              <div className="arena-disclosure-meta">
+                <ChevronDown
+                  aria-hidden="true"
+                  size={16}
+                  className="arena-disclosure-chevron"
+                />
+              </div>
+            </summary>
+            <div className="arena-disclosure-body">
+              <div className="arena-workspace-note-list">
+                <div className="arena-watch-row">
+                  <strong className="font-barlow">Current layer</strong>
+                  <span className="font-inter">
+                    Lightweight Charts renders the actual candles and price levels.
+                  </span>
+                </div>
+                <div className="arena-watch-row">
+                  <strong className="font-barlow">Annotation model</strong>
+                  <span className="font-inter">
+                    Fibs, trendlines, zones, and markers now reveal by replay step from trace data.
+                  </span>
+                </div>
+                <div className="arena-watch-row">
+                  <strong className="font-barlow">Upgrade path</strong>
+                  <span className="font-inter">
+                    Swap to TradingView Advanced Charts later when the official files arrive.
+                  </span>
+                </div>
+              </div>
             </div>
-            <div className="arena-watch-row">
-              <strong className="font-barlow">Annotation model</strong>
-              <span className="font-inter">
-                Fibs, trendlines, zones, and markers now reveal by replay step from trace data.
-              </span>
-            </div>
-            <div className="arena-watch-row">
-              <strong className="font-barlow">Upgrade path</strong>
-              <span className="font-inter">
-                Swap to TradingView Advanced Charts later when the official files arrive.
-              </span>
-            </div>
-          </div>
+          </details>
         </div>
       </div>
     </section>
   );
 }
 
-function xPercentFromBarIndex(barIndex: number, candleCount: number) {
-  if (candleCount <= 1) return 50;
-  const boundedIndex = Math.max(0, Math.min(candleCount - 1, barIndex));
-  return (boundedIndex / (candleCount - 1)) * 100;
+function resolveCandleIndex(args: {
+  barIndex: number;
+  timeSec?: number;
+  candles: CandlePoint[];
+}) {
+  const { barIndex, timeSec, candles } = args;
+
+  if (timeSec !== undefined) {
+    const exactIndex = candles.findIndex((candle) => Number(candle.time) === timeSec);
+    if (exactIndex >= 0) return exactIndex;
+
+    let closestIndex = 0;
+    let closestDelta = Number.POSITIVE_INFINITY;
+    for (let index = 0; index < candles.length; index += 1) {
+      const delta = Math.abs(Number(candles[index].time) - timeSec);
+      if (delta < closestDelta) {
+        closestDelta = delta;
+        closestIndex = index;
+      }
+    }
+    return closestIndex;
+  }
+
+  return barIndex;
 }
 
-function yPercentFromPrice(price: number, minPrice: number, maxPrice: number) {
-  if (maxPrice <= minPrice) return 50;
-  const boundedPrice = Math.max(minPrice, Math.min(maxPrice, price));
-  return ((maxPrice - boundedPrice) / (maxPrice - minPrice)) * 100;
+function xCoordinateFromAnchor(
+  args: {
+  barIndex: number;
+  timeSec?: number;
+  },
+  coordinates: CoordinateContext,
+) {
+  const { chart } = coordinates;
+  if (!chart) return null;
+
+  if (args.timeSec !== undefined) {
+    const exact = chart.timeScale().timeToCoordinate(args.timeSec as Time);
+    if (exact !== null) return exact;
+  }
+
+  return chart.timeScale().logicalToCoordinate(args.barIndex as never);
+}
+
+function yCoordinateFromPrice(price: number, coordinates: CoordinateContext) {
+  const { series } = coordinates;
+  if (!series) return null;
+  return series.priceToCoordinate(price);
 }
 
 function geometryTone(geometry: VisualGeometry) {
@@ -684,24 +1211,35 @@ function geometryTone(geometry: VisualGeometry) {
 
 function OverlayAnnotation({
   annotation,
-  candleCount,
-  minPrice,
-  maxPrice,
+  coordinates,
 }: {
   annotation: VisualAnnotation;
-  candleCount: number;
-  minPrice: number;
-  maxPrice: number;
+  coordinates: CoordinateContext;
 }) {
   const geometry = annotation.geometry;
 
   if (!geometry) return null;
 
   if (geometry.kind === "line") {
-    const left = xPercentFromBarIndex(geometry.start.barIndex, candleCount);
-    const top = yPercentFromPrice(geometry.start.price, minPrice, maxPrice);
-    const endLeft = xPercentFromBarIndex(geometry.end.barIndex, candleCount);
-    const endTop = yPercentFromPrice(geometry.end.price, minPrice, maxPrice);
+    const left = xCoordinateFromAnchor(
+      {
+        barIndex: geometry.start.barIndex,
+        timeSec: geometry.start.timeSec,
+      },
+      coordinates,
+    );
+    const top = yCoordinateFromPrice(geometry.start.price, coordinates);
+    const endLeft = xCoordinateFromAnchor(
+      {
+        barIndex: geometry.end.barIndex,
+        timeSec: geometry.end.timeSec,
+      },
+      coordinates,
+    );
+    const endTop = yCoordinateFromPrice(geometry.end.price, coordinates);
+    if (left === null || top === null || endLeft === null || endTop === null) {
+      return null;
+    }
     const dx = endLeft - left;
     const dy = endTop - top;
     const length = Math.sqrt(dx * dx + dy * dy);
@@ -711,9 +1249,9 @@ function OverlayAnnotation({
       <div
         className={`arena-overlay-line tone-${geometryTone(geometry)}`}
         style={{
-          left: `${left}%`,
-          top: `${top}%`,
-          width: `${length}%`,
+          left: `${left}px`,
+          top: `${top}px`,
+          width: `${length}px`,
           transform: `rotate(${angle}deg)`,
         }}
       />
@@ -721,19 +1259,34 @@ function OverlayAnnotation({
   }
 
   if (geometry.kind === "fibonacci") {
-    const left = xPercentFromBarIndex(geometry.startBarIndex, candleCount);
-    const right = xPercentFromBarIndex(geometry.endBarIndex, candleCount);
-    const top = yPercentFromPrice(geometry.highPrice, minPrice, maxPrice);
-    const bottom = yPercentFromPrice(geometry.lowPrice, minPrice, maxPrice);
+    const left = xCoordinateFromAnchor(
+      {
+        barIndex: geometry.startBarIndex,
+        timeSec: geometry.startTimeSec,
+      },
+      coordinates,
+    );
+    const right = xCoordinateFromAnchor(
+      {
+        barIndex: geometry.endBarIndex,
+        timeSec: geometry.endTimeSec,
+      },
+      coordinates,
+    );
+    const top = yCoordinateFromPrice(geometry.highPrice, coordinates);
+    const bottom = yCoordinateFromPrice(geometry.lowPrice, coordinates);
+    if (left === null || right === null || top === null || bottom === null) {
+      return null;
+    }
 
     return (
       <div
         className="arena-overlay-fib"
         style={{
-          left: `${Math.min(left, right)}%`,
-          top: `${Math.min(top, bottom)}%`,
-          width: `${Math.abs(right - left)}%`,
-          height: `${Math.abs(bottom - top)}%`,
+          left: `${Math.min(left, right)}px`,
+          top: `${Math.min(top, bottom)}px`,
+          width: `${Math.abs(right - left)}px`,
+          height: `${Math.abs(bottom - top)}px`,
         }}
       >
         {(geometry.levels ?? [0, 0.5, 0.618, 0.7, 1]).map((level) => (
@@ -748,33 +1301,174 @@ function OverlayAnnotation({
   }
 
   if (geometry.kind === "zone") {
-    const left = xPercentFromBarIndex(geometry.startBarIndex, candleCount);
-    const right = xPercentFromBarIndex(geometry.endBarIndex, candleCount);
-    const top = yPercentFromPrice(geometry.highPrice, minPrice, maxPrice);
-    const bottom = yPercentFromPrice(geometry.lowPrice, minPrice, maxPrice);
+    const left = xCoordinateFromAnchor(
+      {
+        barIndex: geometry.startBarIndex,
+        timeSec: geometry.startTimeSec,
+      },
+      coordinates,
+    );
+    const right = xCoordinateFromAnchor(
+      {
+        barIndex: geometry.endBarIndex,
+        timeSec: geometry.endTimeSec,
+      },
+      coordinates,
+    );
+    const top = yCoordinateFromPrice(geometry.highPrice, coordinates);
+    const bottom = yCoordinateFromPrice(geometry.lowPrice, coordinates);
+    if (left === null || right === null || top === null || bottom === null) {
+      return null;
+    }
 
     return (
       <div
         className={`arena-overlay-zone tone-${geometryTone(geometry)}`}
         style={{
-          left: `${Math.min(left, right)}%`,
-          top: `${Math.min(top, bottom)}%`,
-          width: `${Math.abs(right - left)}%`,
-          height: `${Math.abs(bottom - top)}%`,
+          left: `${Math.min(left, right)}px`,
+          top: `${Math.min(top, bottom)}px`,
+          width: `${Math.abs(right - left)}px`,
+          height: `${Math.abs(bottom - top)}px`,
         }}
       />
     );
   }
 
+  const left = xCoordinateFromAnchor(
+    {
+      barIndex: geometry.position.barIndex,
+      timeSec: geometry.position.timeSec,
+    },
+    coordinates,
+  );
+  const top = yCoordinateFromPrice(geometry.position.price, coordinates);
+  if (left === null || top === null) {
+    return null;
+  }
+
   return (
     <div
-      className={`arena-overlay-tag tone-${geometryTone(geometry)}`}
+      className={`arena-overlay-tag tone-${geometryTone(geometry)}${annotation.type === "note" ? " is-structural" : ""}`}
       style={{
-        left: `${xPercentFromBarIndex(geometry.position.barIndex, candleCount)}%`,
-        top: `${yPercentFromPrice(geometry.position.price, minPrice, maxPrice)}%`,
+        left: `${left}px`,
+        top: `${top}px`,
       }}
     >
       {geometry.text}
+    </div>
+  );
+}
+
+function ReplayFocusPoint({
+  point,
+  coordinates,
+  isActive,
+}: {
+  point: OverlayFocusPoint;
+  coordinates: CoordinateContext;
+  isActive: boolean;
+}) {
+  const left = xCoordinateFromAnchor(
+    {
+      barIndex: point.barIndex,
+      timeSec: point.timeSec,
+    },
+    coordinates,
+  );
+  const top = yCoordinateFromPrice(point.price, coordinates);
+  if (left === null || top === null) {
+    return null;
+  }
+
+  return (
+    <div
+      className={`arena-overlay-focus-point tone-${point.tone}${isActive ? " is-active" : ""}`}
+      style={{
+        left: `${left}px`,
+        top: `${top}px`,
+      }}
+      title={point.label}
+    />
+  );
+}
+
+function ReplayFocusOverlay({
+  point,
+  coordinates,
+}: {
+  point: OverlayFocusPoint;
+  coordinates: CoordinateContext;
+}) {
+  const left = xCoordinateFromAnchor(
+    {
+      barIndex: point.barIndex,
+      timeSec: point.timeSec,
+    },
+    coordinates,
+  );
+  const top = yCoordinateFromPrice(point.price, coordinates);
+  if (left === null || top === null) {
+    return null;
+  }
+
+  return (
+    <div className="arena-overlay-focus">
+      <div
+        className="arena-overlay-focus-band"
+        style={{
+          top: `${top}px`,
+        }}
+      />
+      <div
+        className="arena-overlay-focus-x"
+        style={{
+          top: `${top}px`,
+        }}
+      />
+      <div
+        className="arena-overlay-focus-y"
+        style={{
+          left: `${left}px`,
+        }}
+      />
+      <div
+        className={`arena-overlay-focus-label tone-${point.tone}`}
+        style={{
+          left: `${left}px`,
+          top: `${top}px`,
+        }}
+      >
+        {point.label}
+      </div>
+    </div>
+  );
+}
+
+function ReplayAreaFocusOverlay({
+  area,
+}: {
+  area: OverlayAreaFocus;
+}) {
+  return (
+    <div className="arena-overlay-focus">
+      <div
+        className={`arena-overlay-area-focus tone-${area.tone}`}
+        style={{
+          left: `${area.left}px`,
+          top: `${area.top}px`,
+          width: `${Math.abs(area.right - area.left)}px`,
+          height: `${Math.abs(area.bottom - area.top)}px`,
+        }}
+      />
+      <div
+        className={`arena-overlay-focus-label tone-${area.tone}`}
+        style={{
+          left: `${(area.left + area.right) / 2}px`,
+          top: `${area.top}px`,
+        }}
+      >
+        {area.label}
+      </div>
     </div>
   );
 }

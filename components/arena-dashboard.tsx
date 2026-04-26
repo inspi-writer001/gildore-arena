@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useAction, useQuery } from "convex/react";
 import {
   Activity,
   ArrowLeft,
+  ChevronDown,
   Eye,
   ExternalLink,
   LineChart,
@@ -19,12 +20,151 @@ import {
 import { api } from "@/convex/_generated/api";
 import TradingViewWorkspace from "@/components/tradingview-workspace";
 import type {
+  BrowserSession,
+  BrowserSessionEvent,
+  ConfluenceState,
   Position,
   TradeEvent,
   TradeIdea,
+  TradeTimeframe,
   VisualTrace,
   WatchlistItem,
 } from "@/lib/arena-types";
+
+type ArenaSnapshot = {
+  agents: Array<{
+    _id: string;
+    slug: string;
+    name: string;
+    strategyLabel: string;
+    status: keyof typeof statusLabelMap;
+    primaryMarket: string;
+    timeframe: TradeTimeframe;
+    winRate: number;
+    pnlPercent: number;
+    openPositions: number;
+    score: number;
+    lastAction: string;
+    trackedMarkets: string[];
+  }>;
+  markets: Array<{
+    _id: string;
+    symbol: string;
+    displayName: string;
+    assetClass: "commodity" | "forex";
+    price: number;
+    changePercent: number;
+    dailyRange: string;
+    sessionBias: "bullish" | "bearish" | "mixed";
+    newsState?: ConfluenceState;
+    newsRationale?: string;
+    newsUpdatedAt?: number | null;
+  }>;
+  watchlistItems: Array<{
+    _id: string;
+    agentSlug: string;
+    marketSymbol: string;
+    setupLabel: string;
+    timeframe: TradeTimeframe;
+    status: "watching" | "armed";
+    triggerNote: string;
+    confluenceState: ConfluenceState;
+  }>;
+  tradeIdeas: Array<{
+    _id: string;
+    agentSlug: string;
+    marketSymbol: string;
+    direction: "long" | "short";
+    status: "watchlist" | "ready" | "entered" | "closed";
+    entry: number;
+    stopLoss: number;
+    takeProfit: number;
+    confidence: number;
+    confluenceState: ConfluenceState;
+    thesis: string;
+  }>;
+  positions: Array<{
+    _id: string;
+    agentSlug: string;
+    marketSymbol: string;
+    direction: "long" | "short";
+    timeframe: TradeTimeframe;
+    entry: number;
+    markPrice: number;
+    stopLoss: number;
+    takeProfit: number;
+    pnlPercent: number;
+    progressLabel: string;
+    nextCheckIn: string;
+  }>;
+  tradeEvents: Array<{
+    _id: string;
+    agentSlug: string;
+    marketSymbol: string;
+    timestampLabel: string;
+    eventTimeSec?: number;
+    title: string;
+    detail: string;
+    stage: TradeEvent["stage"];
+    focusKind?: TradeEvent["focusKind"];
+  }>;
+  visualTraces: Array<{
+    _id: string;
+    agentSlug: string;
+    marketSymbol: string;
+    timeframe: TradeTimeframe;
+    updatedAtLabel: string;
+    annotations: Array<{
+      annotationId: string;
+      type: VisualTrace["annotations"][number]["type"];
+      label: string;
+      detail: string;
+      revealStep?: number;
+      geometry?: VisualTrace["annotations"][number]["geometry"];
+    }>;
+  }>;
+  newsContexts: Array<{
+    _id: string;
+    marketSymbol: string;
+    headline: string;
+    state: ConfluenceState;
+    sourceLabel: string;
+    publishedAtLabel: string;
+    note: string;
+    rationale?: string;
+    url?: string;
+    agentSlug?: string | null;
+  }>;
+  browserSessions: Array<{
+    _id: string;
+    agentSlug: string;
+    marketSymbol: string;
+    timeframe: TradeTimeframe;
+    browserTargetSymbol?: string;
+    browserTargetTimeframe?: string;
+    inspectedOn: "deriv";
+    targetUrl: string;
+    status: BrowserSession["status"];
+    currentStepLabel: string;
+    currentStepIndex: number;
+    totalSteps: number;
+    startedAt: number;
+    updatedAt: number;
+    completedAt?: number;
+    error?: string;
+  }>;
+  browserSessionEvents: Array<{
+    _id: string;
+    sessionId: string;
+    sequence: number;
+    label: string;
+    detail: string;
+    status: BrowserSessionEvent["status"];
+  }>;
+  scanRuns: Array<{
+    startedAt: number;
+  }>;
+};
 
 const statusLabelMap = {
   scanning: "Scanning",
@@ -39,6 +179,16 @@ const confluenceToneMap = {
   supportive: "Supportive",
   neutral: "Neutral",
   risk: "Risk",
+} as const;
+
+const browserSessionStatusLabelMap = {
+  starting: "Starting",
+  loading_chart: "Loading chart",
+  switching_symbol: "Switching symbol",
+  switching_timeframe: "Switching timeframe",
+  ready: "Ready",
+  failed: "Failed",
+  completed: "Completed",
 } as const;
 
 function getMarketRoles(args: {
@@ -69,6 +219,36 @@ function EmptyState({
   );
 }
 
+function DisclosureSection({
+  title,
+  icon,
+  badge,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  icon: React.ReactNode;
+  badge?: React.ReactNode;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <details className="arena-disclosure" open={defaultOpen}>
+      <summary className="arena-disclosure-summary">
+        <div className="arena-surface-title">
+          {icon}
+          <h2 className="font-barlow">{title}</h2>
+        </div>
+        <div className="arena-disclosure-meta">
+          {badge}
+          <ChevronDown aria-hidden="true" size={16} className="arena-disclosure-chevron" />
+        </div>
+      </summary>
+      <div className="arena-disclosure-body">{children}</div>
+    </details>
+  );
+}
+
 function formatRelativeMinutes(timestamp: number | null) {
   if (!timestamp) return "Not yet run";
 
@@ -87,11 +267,214 @@ function formatNewsFreshness(timestamp: number | null) {
   return `${Math.floor(deltaSeconds / 86400)}d`;
 }
 
+function formatEventTimeLabel(timestampSec?: number) {
+  if (!timestampSec) return "";
+
+  return new Date(timestampSec * 1000).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function BrowserSessionViewport({ sessionId }: { sessionId: string }) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [pointerOverlay, setPointerOverlay] = useState<{
+    leftPercent: number;
+    topPercent: number;
+    pulseId: number;
+    clicked: boolean;
+  } | null>(null);
+  const [isStreamReady, setIsStreamReady] = useState(false);
+  const [hasStreamError, setHasStreamError] = useState(false);
+  const [fallbackVersion, setFallbackVersion] = useState(0);
+
+  useEffect(() => {
+    setIsStreamReady(false);
+    setHasStreamError(false);
+    setFallbackVersion(0);
+    setPointerOverlay(null);
+
+    const canvas = canvasRef.current;
+    const video = videoRef.current;
+    if (!canvas || !video) return;
+
+    canvas.width = 1440;
+    canvas.height = 900;
+
+    const context = canvas.getContext("2d");
+    if (!context) return;
+
+    const localPeer = new RTCPeerConnection();
+    const remotePeer = new RTCPeerConnection();
+    const captureStream = canvas.captureStream(12);
+    const eventSource = new EventSource(`/api/browser-session/${sessionId}/stream`);
+    let disposed = false;
+
+    const syncIce = (source: RTCPeerConnection, target: RTCPeerConnection) => {
+      source.onicecandidate = (event) => {
+        if (!event.candidate) return;
+        void target.addIceCandidate(event.candidate).catch(() => {});
+      };
+    };
+
+    syncIce(localPeer, remotePeer);
+    syncIce(remotePeer, localPeer);
+
+    remotePeer.ontrack = (event) => {
+      const [stream] = event.streams;
+      if (!stream) return;
+
+      video.srcObject = stream;
+      void video.play().catch(() => {});
+    };
+
+    for (const track of captureStream.getTracks()) {
+      localPeer.addTrack(track, captureStream);
+    }
+
+    void (async () => {
+      const offer = await localPeer.createOffer();
+      await localPeer.setLocalDescription(offer);
+      await remotePeer.setRemoteDescription(offer);
+      const answer = await remotePeer.createAnswer();
+      await remotePeer.setLocalDescription(answer);
+      await localPeer.setRemoteDescription(answer);
+    })().catch(() => {
+      if (disposed) return;
+      setHasStreamError(true);
+    });
+
+    eventSource.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data) as {
+          frame: string;
+          mimeType: string;
+          pointer?: {
+            x: number;
+            y: number;
+            viewportWidth: number;
+            viewportHeight: number;
+            pulseId: number;
+            clickAt?: number;
+          };
+        };
+
+        const image = new Image();
+        image.onload = () => {
+          if (disposed) return;
+
+          if (canvas.width !== image.width || canvas.height !== image.height) {
+            canvas.width = image.width;
+            canvas.height = image.height;
+          }
+
+          context.clearRect(0, 0, canvas.width, canvas.height);
+          context.drawImage(image, 0, 0, canvas.width, canvas.height);
+          if (payload.pointer) {
+            setPointerOverlay({
+              leftPercent: (payload.pointer.x / payload.pointer.viewportWidth) * 100,
+              topPercent: (payload.pointer.y / payload.pointer.viewportHeight) * 100,
+              pulseId: payload.pointer.pulseId,
+              clicked:
+                typeof payload.pointer.clickAt === "number" &&
+                Date.now() - payload.pointer.clickAt < 900,
+            });
+          }
+          setIsStreamReady(true);
+          setHasStreamError(false);
+        };
+        image.src = `data:${payload.mimeType};base64,${payload.frame}`;
+      } catch {
+        setHasStreamError(true);
+      }
+    };
+
+    eventSource.onerror = () => {
+      if (disposed) return;
+      setHasStreamError(true);
+    };
+
+    return () => {
+      disposed = true;
+      eventSource.close();
+      localPeer.close();
+      remotePeer.close();
+      captureStream.getTracks().forEach((track) => track.stop());
+    };
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!hasStreamError) return;
+
+    const intervalId = window.setInterval(() => {
+      setFallbackVersion((current) => current + 1);
+    }, 900);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [hasStreamError]);
+
+  const fallbackSnapshotUrl = `/api/browser-session/${sessionId}/snapshot?ts=${fallbackVersion}`;
+
+  return (
+    <div className="arena-browser-session-viewport">
+      {hasStreamError ? (
+        <img
+          src={fallbackSnapshotUrl}
+          alt="Controlled browser session snapshot fallback"
+          className="arena-browser-session-frame"
+        />
+      ) : (
+        <>
+          <video
+            ref={videoRef}
+            autoPlay
+            muted
+            playsInline
+            className="arena-browser-session-frame"
+          />
+          {pointerOverlay ? (
+            <div
+              key={`${pointerOverlay.pulseId}-${pointerOverlay.clicked ? "click" : "move"}`}
+              className={`arena-browser-session-pointer${pointerOverlay.clicked ? " is-clicking" : ""}`}
+              style={{
+                left: `${pointerOverlay.leftPercent}%`,
+                top: `${pointerOverlay.topPercent}%`,
+              }}
+            >
+              <span className="arena-browser-session-pointer-core" />
+              {pointerOverlay.clicked ? (
+                <span className="arena-browser-session-pointer-pulse" />
+              ) : null}
+            </div>
+          ) : null}
+          <canvas ref={canvasRef} className="arena-browser-session-canvas" />
+          {!isStreamReady ? (
+            <div className="arena-browser-session-overlay">
+              <strong className="font-barlow">Connecting live browser stream</strong>
+              <span className="font-inter">
+                Negotiating the remote Chromium viewport over WebRTC.
+              </span>
+            </div>
+          ) : null}
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function ArenaDashboard() {
   const searchParams = useSearchParams();
-  const snapshot = useQuery(api.arena.getArenaSnapshot, {});
+  const snapshot = useQuery(api.arena.getArenaSnapshot, {}) as
+    | ArenaSnapshot
+    | undefined;
   const runArenaScanCycleNow = useAction(api.arena.runArenaScanCycleNow);
+  const startBrowserReviewSession = useAction(api.arena.startBrowserReviewSession);
   const [isRunningScan, setIsRunningScan] = useState(false);
+  const [isStartingBrowserSession, setIsStartingBrowserSession] = useState(false);
+  const [isWideWorkspace, setIsWideWorkspace] = useState(true);
 
   const selectedAgentSlug = searchParams.get("agent");
   const selectedMarketParam = searchParams.get("market");
@@ -171,10 +554,12 @@ export default function ArenaDashboard() {
       id: String(event._id),
       agentId: event.agentSlug,
       marketSymbol: event.marketSymbol,
-      timestamp: event.timestampLabel,
+      timestamp: formatEventTimeLabel(event.eventTimeSec) || event.timestampLabel,
+      eventTimeSec: event.eventTimeSec ?? undefined,
       title: event.title,
       detail: event.detail,
       stage: event.stage,
+      focusKind: event.focusKind ?? undefined,
     }));
 
     const visualTraces: VisualTrace[] = snapshot.visualTraces.map((trace) => ({
@@ -205,6 +590,34 @@ export default function ArenaDashboard() {
       url: item.url ?? "",
       agentSlug: item.agentSlug ?? null,
     }));
+    const browserSessions: BrowserSession[] = snapshot.browserSessions.map((session) => ({
+      id: String(session._id),
+      agentId: session.agentSlug,
+      marketSymbol: session.marketSymbol,
+      timeframe: session.timeframe,
+      browserTargetSymbol: session.browserTargetSymbol,
+      browserTargetTimeframe: session.browserTargetTimeframe,
+      inspectedOn: session.inspectedOn,
+      targetUrl: session.targetUrl,
+      status: session.status,
+      currentStepLabel: session.currentStepLabel,
+      currentStepIndex: session.currentStepIndex,
+      totalSteps: session.totalSteps,
+      startedAt: session.startedAt,
+      updatedAt: session.updatedAt,
+      completedAt: session.completedAt ?? undefined,
+      error: session.error ?? undefined,
+    }));
+    const browserSessionEvents: BrowserSessionEvent[] = snapshot.browserSessionEvents.map(
+      (event) => ({
+        id: String(event._id),
+        sessionId: String(event.sessionId),
+        sequence: event.sequence,
+        label: event.label,
+        detail: event.detail,
+        status: event.status,
+      }),
+    );
 
     const selectedAgent = agents.find((agent) => agent.id === selectedAgentSlug) ?? agents[0];
     if (!selectedAgent) {
@@ -278,6 +691,16 @@ export default function ArenaDashboard() {
     const selectedAgentOpenPositions = positions.filter(
       (position) => position.agentId === selectedAgent.id,
     ).length;
+    const selectedBrowserSession = browserSessions.find(
+      (session) =>
+        session.agentId === selectedAgent.id &&
+        session.marketSymbol === selectedMarketSymbol,
+    );
+    const selectedBrowserSessionEvents = selectedBrowserSession
+      ? browserSessionEvents.filter(
+          (event) => event.sessionId === selectedBrowserSession.id,
+        )
+      : [];
 
     return {
       agents,
@@ -297,6 +720,8 @@ export default function ArenaDashboard() {
       selectedPosition,
       selectedNewsContexts,
       selectedNewsRationale,
+      selectedBrowserSession,
+      selectedBrowserSessionEvents,
       lastScanAt: snapshot.scanRuns[0]?.startedAt ?? null,
     };
   }, [selectedAgentSlug, selectedMarketParam, snapshot]);
@@ -344,16 +769,18 @@ export default function ArenaDashboard() {
     agents,
     positions,
     tradeEvents,
-    trackedMarkets,
+    trackedMarkets = [],
     selectedAgent,
     selectedMarketSymbol,
     selectedTradeIdea,
     selectedTrace,
-    selectedEvents,
-    selectedWatchlist,
+    selectedEvents = [],
+    selectedWatchlist = [],
     selectedPosition,
-    selectedNewsContexts,
+    selectedNewsContexts = [],
     selectedNewsRationale,
+    selectedBrowserSession,
+    selectedBrowserSessionEvents = [],
     lastScanAt,
   } = derived;
   const selectedMarket = trackedMarkets.find(
@@ -528,67 +955,70 @@ export default function ArenaDashboard() {
           </article>
 
           <article className="arena-surface">
-            <div className="arena-surface-header">
-              <div className="arena-surface-title">
-                <Activity aria-hidden="true" size={18} />
-                <h2 className="font-barlow">Open positions</h2>
+            <DisclosureSection
+              title="Open positions"
+              icon={<Activity aria-hidden="true" size={18} />}
+              badge={
+                <span className="arena-chip font-barlow">
+                  {positions.length} active
+                </span>
+              }
+            >
+              <div className="arena-position-list">
+                {positions.map((position) => (
+                  <div key={position.id} className="arena-position-row">
+                    <div>
+                      <strong className="font-barlow">
+                        {position.marketSymbol} · {position.direction}
+                      </strong>
+                      <span className="font-inter">
+                        Entry {position.entry} · Mark {position.markPrice}
+                      </span>
+                    </div>
+                    <div>
+                      <strong
+                        className={`font-barlow ${
+                          position.pnlPercent >= 0 ? "is-positive" : "is-negative"
+                        }`}
+                      >
+                        {position.pnlPercent >= 0 ? "+" : ""}
+                        {position.pnlPercent.toFixed(2)}%
+                      </strong>
+                      <span className="font-inter">{position.nextCheckIn}</span>
+                    </div>
+                  </div>
+                ))}
               </div>
-              <span className="arena-chip font-barlow">
-                {positions.length} active
-              </span>
-            </div>
-            <div className="arena-position-list">
-              {positions.map((position) => (
-                <div key={position.id} className="arena-position-row">
-                  <div>
-                    <strong className="font-barlow">
-                      {position.marketSymbol} · {position.direction}
-                    </strong>
-                    <span className="font-inter">
-                      Entry {position.entry} · Mark {position.markPrice}
-                    </span>
-                  </div>
-                  <div>
-                    <strong
-                      className={`font-barlow ${
-                        position.pnlPercent >= 0 ? "is-positive" : "is-negative"
-                      }`}
-                    >
-                      {position.pnlPercent >= 0 ? "+" : ""}
-                      {position.pnlPercent.toFixed(2)}%
-                    </strong>
-                    <span className="font-inter">{position.nextCheckIn}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
+            </DisclosureSection>
           </article>
 
           <article className="arena-surface">
-            <div className="arena-surface-header">
-              <div className="arena-surface-title">
-                <LineChart aria-hidden="true" size={18} />
-                <h2 className="font-barlow">Recent decisions</h2>
-              </div>
-              <span className="arena-chip font-barlow">{tradeEvents.length} logs</span>
-            </div>
-            <div className="arena-event-list">
-              {tradeEvents.slice(-4).reverse().map((event) => (
-                <div key={event.id} className="arena-event-row">
-                  <span className="arena-event-time font-barlow">
-                    {event.timestamp}
-                  </span>
-                  <div>
-                    <strong className="font-barlow">{event.title}</strong>
-                    <span className="font-inter">{event.detail}</span>
+            <DisclosureSection
+              title="Recent decisions"
+              icon={<LineChart aria-hidden="true" size={18} />}
+              badge={<span className="arena-chip font-barlow">{tradeEvents.length} logs</span>}
+            >
+              <div className="arena-event-list">
+                {tradeEvents.slice(-4).reverse().map((event) => (
+                  <div key={event.id} className="arena-event-row">
+                    <span className="arena-event-time font-barlow">
+                      {event.timestamp}
+                    </span>
+                    <div>
+                      <strong className="font-barlow">{event.title}</strong>
+                      <span className="font-inter">{event.detail}</span>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            </DisclosureSection>
           </article>
         </section>
 
-        <section className="arena-detail-layout" aria-label="Selected agent detail">
+        <section
+          className={`arena-detail-layout${isWideWorkspace ? " is-workspace-wide" : ""}`}
+          aria-label="Selected agent detail"
+        >
           <article className="arena-surface arena-detail-primary">
             <div className="arena-detail-header">
               <div>
@@ -743,6 +1173,107 @@ export default function ArenaDashboard() {
               </div>
             )}
 
+            <div className="arena-browser-session-card">
+              <div className="arena-surface-header">
+                <div className="arena-surface-title">
+                  <Activity aria-hidden="true" size={18} />
+                  <h3 className="font-barlow">Browser review session</h3>
+                </div>
+                <div className="arena-browser-session-header-meta">
+                  {selectedBrowserSession ? (
+                    <>
+                      <span className="arena-chip font-barlow">
+                        {browserSessionStatusLabelMap[selectedBrowserSession.status]}
+                      </span>
+                      <span className="arena-chip font-barlow">
+                        Step {selectedBrowserSession.currentStepIndex}/
+                        {selectedBrowserSession.totalSteps}
+                      </span>
+                    </>
+                  ) : null}
+                  <button
+                    className={`arena-tool-chip font-barlow${isStartingBrowserSession ? " is-active" : ""}`}
+                    type="button"
+                    onClick={async () => {
+                      setIsStartingBrowserSession(true);
+                      try {
+                        const result = await startBrowserReviewSession({
+                          agentSlug: selectedAgent.id,
+                          marketSymbol: selectedMarketSymbol,
+                          timeframe: selectedAgent.timeframe,
+                        });
+                        await fetch("/api/browser-session/start", {
+                          method: "POST",
+                          headers: {
+                            "Content-Type": "application/json",
+                          },
+                          body: JSON.stringify({
+                            sessionId: result.sessionId,
+                            marketSymbol: result.browserTargetSymbol,
+                            timeframe: result.browserTargetTimeframe,
+                            targetUrl: "https://charts.deriv.com/deriv",
+                          }),
+                        });
+                      } finally {
+                        setIsStartingBrowserSession(false);
+                      }
+                    }}
+                    disabled={isStartingBrowserSession}
+                  >
+                    {isStartingBrowserSession ? (
+                      <LoaderCircle aria-hidden="true" size={14} className="arena-spin" />
+                    ) : (
+                      <ExternalLink aria-hidden="true" size={14} />
+                    )}
+                    {selectedBrowserSession ? "Restart session" : "Start session"}
+                  </button>
+                </div>
+              </div>
+
+              {selectedBrowserSession ? (
+                <>
+                  <div className="arena-browser-session-status">
+                    <strong className="font-barlow">
+                      {selectedBrowserSession.currentStepLabel}
+                    </strong>
+                    <span className="font-inter">
+                      Live remote session target:{" "}
+                      {selectedBrowserSession.browserTargetSymbol ??
+                        selectedBrowserSession.marketSymbol}{" "}
+                      ·{" "}
+                      {selectedBrowserSession.browserTargetTimeframe ??
+                        selectedBrowserSession.timeframe}{" "}
+                      on Deriv.
+                    </span>
+                  </div>
+
+                  <BrowserSessionViewport sessionId={selectedBrowserSession.id} />
+
+                  <div className="arena-browser-session-events">
+                    {selectedBrowserSessionEvents.map((event) => (
+                      <div
+                        key={event.id}
+                        className={`arena-browser-step arena-browser-step-${event.status}`}
+                      >
+                        <span className="arena-chip font-barlow">
+                          {String(event.sequence).padStart(2, "0")}
+                        </span>
+                        <div>
+                          <strong className="font-barlow">{event.label}</strong>
+                          <span className="font-inter">{event.detail}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <EmptyState
+                  title="No live browser session yet"
+                  description="Start a Deriv review session to prove the remote browser lifecycle for this market and timeframe."
+                />
+              )}
+            </div>
+
             <TradingViewWorkspace
               marketSymbol={selectedMarketSymbol}
               timeframe={selectedAgent.timeframe}
@@ -752,113 +1283,139 @@ export default function ArenaDashboard() {
               events={selectedEvents}
               marketNewsState={selectedMarket?.newsState}
               marketNewsUpdatedAt={selectedMarket?.newsUpdatedAt}
+              isWideLayout={isWideWorkspace}
+              onToggleLayout={() => setIsWideWorkspace((current) => !current)}
             />
           </article>
 
           <aside className="arena-detail-sidebar">
             <article className="arena-surface">
-              <div className="arena-surface-header">
-                <div className="arena-surface-title">
-                  <Newspaper aria-hidden="true" size={18} />
-                  <h2 className="font-barlow">News confluence</h2>
+              <DisclosureSection
+                title="News confluence"
+                icon={<Newspaper aria-hidden="true" size={18} />}
+                badge={
+                  selectedNewsContexts.length ? (
+                    <span className="arena-chip font-barlow">{selectedNewsContexts.length} items</span>
+                  ) : undefined
+                }
+              >
+                {selectedNewsRationale ? (
+                  <div className="arena-news-rationale">
+                    <span className="font-barlow">Why this confluence</span>
+                    <p className="font-inter">{selectedNewsRationale}</p>
+                  </div>
+                ) : null}
+                <div className="arena-news-list">
+                  {selectedNewsContexts.length ? (
+                    selectedNewsContexts.map((item) => {
+                      const isCalendarRow = item.sourceLabel === "Economic Calendar";
+
+                      return (
+                        <div
+                          key={item.id}
+                          className={`arena-news-row${isCalendarRow ? " is-calendar" : " is-headline"}`}
+                        >
+                          <div className="arena-news-row-top">
+                            <div className="arena-news-row-badges">
+                              <span className={`arena-pill is-${item.state} font-barlow`}>
+                                {confluenceToneMap[item.state]}
+                              </span>
+                              <span className="arena-chip font-barlow">
+                                {isCalendarRow ? "Scheduled event" : "Headline flow"}
+                              </span>
+                            </div>
+                            {item.url ? (
+                              <a
+                                href={item.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="arena-news-link font-barlow"
+                              >
+                                Source
+                                <ExternalLink aria-hidden="true" size={12} />
+                              </a>
+                            ) : null}
+                          </div>
+                          <strong className="font-barlow">{item.headline}</strong>
+                          <span className="font-inter">
+                            {item.marketSymbol} · {item.sourceLabel} · {item.publishedAt}
+                          </span>
+                          <p className="font-inter">{item.note}</p>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <EmptyState
+                      title="No current news confluence"
+                      description="No mapped news context is attached to this market yet. The agent will rely on technical structure until a confluence signal is logged."
+                    />
+                  )}
                 </div>
-              </div>
-              {selectedNewsRationale ? (
-                <div className="arena-news-rationale">
-                  <span className="font-barlow">Why this confluence</span>
-                  <p className="font-inter">{selectedNewsRationale}</p>
-                </div>
-              ) : null}
-              <div className="arena-news-list">
-                {selectedNewsContexts.length ? (
-                  selectedNewsContexts.map((item) => (
-                    <div key={item.id} className="arena-news-row">
-                      <div className="arena-news-row-top">
-                        <span className={`arena-pill is-${item.state} font-barlow`}>
-                          {confluenceToneMap[item.state]}
+              </DisclosureSection>
+            </article>
+
+            <article className="arena-surface">
+              <DisclosureSection
+                title="Watchlist state"
+                icon={<Radar aria-hidden="true" size={18} />}
+                badge={
+                  selectedWatchlist.length ? (
+                    <span className="arena-chip font-barlow">{selectedWatchlist.length} active</span>
+                  ) : undefined
+                }
+              >
+                <div className="arena-watchlist">
+                  {selectedWatchlist.length ? (
+                    selectedWatchlist.map((item) => (
+                      <div key={item.id} className="arena-watch-row">
+                        <strong className="font-barlow">{item.setupLabel}</strong>
+                        <span className="font-inter">
+                          {item.marketSymbol} · {item.timeframe} · {item.status}
                         </span>
-                        {item.url ? (
-                          <a
-                            href={item.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="arena-news-link font-barlow"
-                          >
-                            Source
-                            <ExternalLink aria-hidden="true" size={12} />
-                          </a>
-                        ) : null}
+                        <p className="font-inter">{item.triggerNote}</p>
                       </div>
-                      <strong className="font-barlow">{item.headline}</strong>
-                      <span className="font-inter">
-                        {item.marketSymbol} · {item.sourceLabel} · {item.publishedAt}
-                      </span>
-                      <p className="font-inter">{item.note}</p>
-                    </div>
-                  ))
-                ) : (
-                  <EmptyState
-                    title="No current news confluence"
-                    description="No mapped news context is attached to this market yet. The agent will rely on technical structure until a confluence signal is logged."
-                  />
-                )}
-              </div>
+                    ))
+                  ) : (
+                    <EmptyState
+                      title="Nothing on watch here yet"
+                      description="This market is in the agent's orbit, but there is no active watchlist state recorded for the current timeframe."
+                    />
+                  )}
+                </div>
+              </DisclosureSection>
             </article>
 
             <article className="arena-surface">
-              <div className="arena-surface-header">
-                <div className="arena-surface-title">
-                  <Radar aria-hidden="true" size={18} />
-                  <h2 className="font-barlow">Watchlist state</h2>
-                </div>
-              </div>
-              <div className="arena-watchlist">
-                {selectedWatchlist.length ? (
-                  selectedWatchlist.map((item) => (
-                    <div key={item.id} className="arena-watch-row">
-                      <strong className="font-barlow">{item.setupLabel}</strong>
-                      <span className="font-inter">
-                        {item.marketSymbol} · {item.timeframe} · {item.status}
-                      </span>
-                      <p className="font-inter">{item.triggerNote}</p>
-                    </div>
-                  ))
-                ) : (
-                  <EmptyState
-                    title="Nothing on watch here yet"
-                    description="This market is in the agent's orbit, but there is no active watchlist state recorded for the current timeframe."
-                  />
-                )}
-              </div>
-            </article>
-
-            <article className="arena-surface">
-              <div className="arena-surface-header">
-                <div className="arena-surface-title">
-                  <Activity aria-hidden="true" size={18} />
-                  <h2 className="font-barlow">Agent event log</h2>
-                </div>
-              </div>
-              <div className="arena-event-list is-detailed">
-                {selectedEvents.length ? (
-                  selectedEvents.map((event) => (
-                    <div key={event.id} className="arena-event-row">
-                      <span className="arena-event-time font-barlow">
-                        {event.timestamp}
-                      </span>
-                      <div>
-                        <strong className="font-barlow">{event.title}</strong>
-                        <span className="font-inter">{event.detail}</span>
+              <DisclosureSection
+                title="Agent event log"
+                icon={<Activity aria-hidden="true" size={18} />}
+                badge={
+                  selectedEvents.length ? (
+                    <span className="arena-chip font-barlow">{selectedEvents.length} steps</span>
+                  ) : undefined
+                }
+              >
+                <div className="arena-event-list is-detailed">
+                  {selectedEvents.length ? (
+                    selectedEvents.map((event) => (
+                      <div key={event.id} className="arena-event-row">
+                        <span className="arena-event-time font-barlow">
+                          {event.timestamp}
+                        </span>
+                        <div>
+                          <strong className="font-barlow">{event.title}</strong>
+                          <span className="font-inter">{event.detail}</span>
+                        </div>
                       </div>
-                    </div>
-                  ))
-                ) : (
-                  <EmptyState
-                    title="No event history for this market"
-                    description="The selected agent has not yet logged market-specific events for this symbol."
-                  />
-                )}
-              </div>
+                    ))
+                  ) : (
+                    <EmptyState
+                      title="No event history for this market"
+                      description="The selected agent has not yet logged market-specific events for this symbol."
+                    />
+                  )}
+                </div>
+              </DisclosureSection>
             </article>
           </aside>
         </section>

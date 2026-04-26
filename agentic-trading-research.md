@@ -77,19 +77,31 @@ Core behavior:
 
 Source: `strategies/third-touch.md`
 
-The agent looks for bullish continuation trades where price returns to a projected trendline for a third touch.
+The agent looks for **trend-aligned third-touch reactions**, not only bullish continuations.
 
 Core behavior:
 
 - Parse OHLCV data.
-- Confirm bullish market structure through higher highs and higher lows.
-- Build a trendline from two validated swing lows.
-- Watch for price approaching the projected third touch.
-- Accept valid touches, wick fake-outs, or tight proximity touches.
-- Invalidate if candle bodies close aggressively below the trendline.
-- Enter only after bullish candlestick confirmation at the third touch.
+- Use a **wide context window** before drawing anything meaningful.
+- Detect **regime first**:
+  - bullish
+  - bearish
+  - mixed
+- In bullish regime:
+  - build ascending support from swing lows
+  - seek long third-touch continuation
+- In bearish regime:
+  - build descending resistance from swing highs
+  - seek short third-touch continuation
+- In mixed regime:
+  - skip the setup instead of forcing a line
+- Use **broader structural swings**, not tiny local pivots.
+- Treat the third touch as a **zone around the projected line**, not a single price.
+- Invalidate on **candle body** failure, not wick noise alone.
+- If the line is invalidated after `T2`, promote the **first invalidating candle body** into the new `T2`, redraw the line, and re-project the next touch zone.
+- Enter only after direction-appropriate candlestick confirmation at the third touch.
 - Use 1:3 minimum risk/reward.
-- Place stop loss below the previous significant turning point.
+- Keep staged if risk/reward is blocked or headline risk is elevated.
 
 ## Agent News Confluence
 
