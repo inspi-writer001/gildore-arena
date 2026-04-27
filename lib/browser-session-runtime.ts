@@ -3,7 +3,8 @@ import "server-only";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Buffer } from "node:buffer";
-import { chromium, type Browser, type Frame, type Locator, type Page } from "playwright";
+import bundledChromium from "@sparticuz/chromium";
+import { chromium, type Browser, type Frame, type Locator, type Page } from "playwright-core";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "@/convex/_generated/api";
 import { analyzeChartWithVision, type ChartVisionDecision } from "./chart-vision-analysis";
@@ -46,6 +47,28 @@ type SessionRuntime = {
 
 const runtimeSessions = new Map<string, SessionRuntime>();
 const SCREENSHOT_ROOT = "/tmp/gildore-browser-sessions";
+
+function isServerlessRuntime() {
+  return Boolean(
+    process.env.VERCEL ||
+      process.env.AWS_REGION ||
+      process.env.AWS_EXECUTION_ENV,
+  );
+}
+
+async function launchBrowser() {
+  if (isServerlessRuntime()) {
+    const executablePath = await bundledChromium.executablePath();
+    return chromium.launch({
+      args: bundledChromium.args,
+      executablePath,
+      headless: true,
+    });
+  }
+
+  const playwright = await import("playwright");
+  return playwright.chromium.launch({ headless: true });
+}
 
 function getConvexClient() {
   const url = process.env.NEXT_PUBLIC_CONVEX_URL;
@@ -808,7 +831,7 @@ export async function startControlledBrowserSession(args: {
   console.log("[browser-session-runtime] launching chromium", {
     sessionId: args.sessionId,
   });
-  const browser = await chromium.launch({ headless: true });
+  const browser = await launchBrowser();
   console.log("[browser-session-runtime] chromium launched", {
     sessionId: args.sessionId,
   });

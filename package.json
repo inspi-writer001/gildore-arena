@@ -4,12 +4,13 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "pnpm exec playwright install chromium && next build",
+    "build": "next build",
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@sparticuz/chromium": "^138.0.2",
     "@anthropic-ai/sdk": "^0.91.1",
     "@paper-design/shaders-react": "^0.0.76",
     "clsx": "^2.1.1",
@@ -18,6 +19,7 @@
     "lucide-react": "^0.501.0",
     "next": "^16.0.0",
     "playwright": "^1.59.1",
+    "playwright-core": "^1.59.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "shaders": "2.4",
