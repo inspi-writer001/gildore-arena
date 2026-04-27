@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "postinstall": "pnpm exec playwright install chromium"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
