@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
-import { useAction, useQuery } from "convex/react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useAction, useMutation, useQuery } from "convex/react";
 import {
   Activity,
   ArrowLeft,
@@ -18,7 +18,9 @@ import {
   Trophy,
 } from "lucide-react";
 import { api } from "@/convex/_generated/api";
-import TradingViewWorkspace from "@/components/tradingview-workspace";
+import { ImageDithering, LiquidMetal } from "@paper-design/shaders-react";
+import type { SwingPointsForBrowser } from "@/lib/browser-session-runtime";
+import { cn } from "@/lib/utils";
 import type {
   BrowserSession,
   BrowserSessionEvent,
@@ -164,6 +166,24 @@ type ArenaSnapshot = {
   scanRuns: Array<{
     startedAt: number;
   }>;
+  visionDecisions: Array<{
+    agentSlug: string;
+    marketSymbol: string;
+    regime: "bullish" | "bearish" | "mixed";
+    verdict: "valid" | "staged" | "invalid" | "reject";
+    direction: "long" | "short" | "none";
+    confidence: number;
+    correctedT1?: { price: number; note: string } | null;
+    correctedT2?: { price: number; note: string } | null;
+    correctedZone?: {
+      low: number;
+      high: number;
+      projectedPrice: number;
+    } | null;
+    rationale: string;
+    issues: string[];
+    capturedAt: number;
+  }>;
 };
 
 const statusLabelMap = {
@@ -212,9 +232,11 @@ function EmptyState({
   description: string;
 }) {
   return (
-    <div className="arena-empty-state">
-      <strong className="font-barlow">{title}</strong>
-      <span className="font-inter">{description}</span>
+    <div className="grid gap-[6px] p-[16px] border border-dashed border-[rgba(18,18,18,0.12)] rounded-[16px] bg-[rgba(250,250,247,0.72)]">
+      <strong className="font-barlow text-[14px] font-semibold">{title}</strong>
+      <span className="font-inter text-[rgba(18,18,18,0.58)] text-[14px] leading-[1.6]">
+        {description}
+      </span>
     </div>
   );
 }
@@ -233,18 +255,24 @@ function DisclosureSection({
   children: React.ReactNode;
 }) {
   return (
-    <details className="arena-disclosure" open={defaultOpen}>
-      <summary className="arena-disclosure-summary">
-        <div className="arena-surface-title">
+    <details className="group grid gap-0 open:gap-[14px]" open={defaultOpen}>
+      <summary className="flex items-center justify-between gap-3 list-none cursor-pointer [&::-webkit-details-marker]:hidden">
+        <div className="flex items-center gap-[10px]">
           {icon}
-          <h2 className="font-barlow">{title}</h2>
+          <h2 className="font-barlow m-0 text-[14px] font-semibold tracking-[0.06em] uppercase">
+            {title}
+          </h2>
         </div>
-        <div className="arena-disclosure-meta">
+        <div className="inline-flex items-center gap-[10px]">
           {badge}
-          <ChevronDown aria-hidden="true" size={16} className="arena-disclosure-chevron" />
+          <ChevronDown
+            aria-hidden="true"
+            size={16}
+            className="text-[rgba(18,18,18,0.48)] transition-transform duration-[160ms] group-open:rotate-180"
+          />
         </div>
       </summary>
-      <div className="arena-disclosure-body">{children}</div>
+      <div className="grid gap-[14px]">{children}</div>
     </details>
   );
 }
@@ -262,7 +290,8 @@ function formatNewsFreshness(timestamp: number | null) {
   if (!timestamp) return "news stale";
 
   const deltaSeconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
-  if (deltaSeconds < 3600) return `${Math.max(1, Math.floor(deltaSeconds / 60))}m`;
+  if (deltaSeconds < 3600)
+    return `${Math.max(1, Math.floor(deltaSeconds / 60))}m`;
   if (deltaSeconds < 86400) return `${Math.floor(deltaSeconds / 3600)}h`;
   return `${Math.floor(deltaSeconds / 86400)}d`;
 }
@@ -276,80 +305,105 @@ function formatEventTimeLabel(timestampSec?: number) {
   });
 }
 
-function BrowserSessionViewport({ sessionId }: { sessionId: string }) {
+function BrowserSessionViewport({
+  sessionId,
+  sessionStatus,
+  onRestart,
+  onStartupExhausted,
+}: {
+  sessionId: string;
+  sessionStatus: string;
+  onRestart?: () => Promise<void>;
+  onStartupExhausted?: () => void;
+}) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
   const [pointerOverlay, setPointerOverlay] = useState<{
     leftPercent: number;
     topPercent: number;
     pulseId: number;
     clicked: boolean;
+    dragging: boolean;
+    trail: Array<{
+      leftPercent: number;
+      topPercent: number;
+    }>;
   } | null>(null);
   const [isStreamReady, setIsStreamReady] = useState(false);
   const [hasStreamError, setHasStreamError] = useState(false);
-  const [fallbackVersion, setFallbackVersion] = useState(0);
+  const [streamRetryAttempt, setStreamRetryAttempt] = useState(0);
+  const [currentActionLabel, setCurrentActionLabel] = useState<
+    string | undefined
+  >();
+  const [ditheringSize, setDitheringSize] = useState(2);
+  const [isRestarting, setIsRestarting] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const lastMoveSendRef = useRef(0);
+  const isDraggingRef = useRef(false);
+  const ditheringRafRef = useRef<number | null>(null);
+  const ditheringStartRef = useRef<number | null>(null);
+  const reconnectTimeoutRef = useRef<number | null>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const hasEverConnectedRef = useRef(false);
+  const startupExhaustedRef = useRef(onStartupExhausted);
+  const maxStreamRetries = 3;
+
+  useEffect(() => {
+    startupExhaustedRef.current = onStartupExhausted;
+  }, [onStartupExhausted]);
+
+  useEffect(() => {
+    function tick(ts: number) {
+      if (ditheringStartRef.current === null) ditheringStartRef.current = ts;
+      const elapsed = (ts - ditheringStartRef.current) / 1000;
+      setDitheringSize(2 + 1.5 * Math.sin(elapsed * 0.7));
+      ditheringRafRef.current = requestAnimationFrame(tick);
+    }
+    ditheringRafRef.current = requestAnimationFrame(tick);
+    return () => {
+      if (ditheringRafRef.current !== null)
+        cancelAnimationFrame(ditheringRafRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     setIsStreamReady(false);
     setHasStreamError(false);
-    setFallbackVersion(0);
     setPointerOverlay(null);
+    setCurrentActionLabel(undefined);
+    setStreamRetryAttempt(0);
+    hasEverConnectedRef.current = false;
 
     const canvas = canvasRef.current;
-    const video = videoRef.current;
-    if (!canvas || !video) return;
+    if (!canvas) return;
 
     canvas.width = 1440;
     canvas.height = 900;
 
     const context = canvas.getContext("2d");
     if (!context) return;
+    const drawingCanvas = canvas;
+    const drawingContext = context;
 
-    const localPeer = new RTCPeerConnection();
-    const remotePeer = new RTCPeerConnection();
-    const captureStream = canvas.captureStream(12);
-    const eventSource = new EventSource(`/api/browser-session/${sessionId}/stream`);
     let disposed = false;
 
-    const syncIce = (source: RTCPeerConnection, target: RTCPeerConnection) => {
-      source.onicecandidate = (event) => {
-        if (!event.candidate) return;
-        void target.addIceCandidate(event.candidate).catch(() => {});
-      };
-    };
-
-    syncIce(localPeer, remotePeer);
-    syncIce(remotePeer, localPeer);
-
-    remotePeer.ontrack = (event) => {
-      const [stream] = event.streams;
-      if (!stream) return;
-
-      video.srcObject = stream;
-      void video.play().catch(() => {});
-    };
-
-    for (const track of captureStream.getTracks()) {
-      localPeer.addTrack(track, captureStream);
+    function clearReconnectTimer() {
+      if (reconnectTimeoutRef.current !== null) {
+        window.clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
     }
 
-    void (async () => {
-      const offer = await localPeer.createOffer();
-      await localPeer.setLocalDescription(offer);
-      await remotePeer.setRemoteDescription(offer);
-      const answer = await remotePeer.createAnswer();
-      await remotePeer.setLocalDescription(answer);
-      await localPeer.setRemoteDescription(answer);
-    })().catch(() => {
-      if (disposed) return;
-      setHasStreamError(true);
-    });
+    function closeEventSource() {
+      eventSourceRef.current?.close();
+      eventSourceRef.current = null;
+    }
 
-    eventSource.onmessage = (event) => {
+    function handlePayload(event: MessageEvent<string>) {
       try {
         const payload = JSON.parse(event.data) as {
           frame: string;
           mimeType: string;
+          actionLabel?: string;
           pointer?: {
             x: number;
             y: number;
@@ -357,106 +411,313 @@ function BrowserSessionViewport({ sessionId }: { sessionId: string }) {
             viewportHeight: number;
             pulseId: number;
             clickAt?: number;
+            dragging?: boolean;
+            trail?: Array<{
+              x: number;
+              y: number;
+            }>;
           };
         };
+
+        setCurrentActionLabel(payload.actionLabel ?? undefined);
 
         const image = new Image();
         image.onload = () => {
           if (disposed) return;
 
-          if (canvas.width !== image.width || canvas.height !== image.height) {
-            canvas.width = image.width;
-            canvas.height = image.height;
+          if (
+            drawingCanvas.width !== image.width ||
+            drawingCanvas.height !== image.height
+          ) {
+            drawingCanvas.width = image.width;
+            drawingCanvas.height = image.height;
           }
 
-          context.clearRect(0, 0, canvas.width, canvas.height);
-          context.drawImage(image, 0, 0, canvas.width, canvas.height);
+          drawingContext.clearRect(
+            0,
+            0,
+            drawingCanvas.width,
+            drawingCanvas.height,
+          );
+          drawingContext.drawImage(
+            image,
+            0,
+            0,
+            drawingCanvas.width,
+            drawingCanvas.height,
+          );
           if (payload.pointer) {
             setPointerOverlay({
-              leftPercent: (payload.pointer.x / payload.pointer.viewportWidth) * 100,
-              topPercent: (payload.pointer.y / payload.pointer.viewportHeight) * 100,
+              leftPercent:
+                (payload.pointer.x / payload.pointer.viewportWidth) * 100,
+              topPercent:
+                (payload.pointer.y / payload.pointer.viewportHeight) * 100,
               pulseId: payload.pointer.pulseId,
               clicked:
                 typeof payload.pointer.clickAt === "number" &&
                 Date.now() - payload.pointer.clickAt < 900,
+              dragging: payload.pointer.dragging ?? false,
+              trail: (payload.pointer.trail ?? []).map(
+                (point: { x: number; y: number }) => ({
+                  leftPercent: (point.x / payload.pointer!.viewportWidth) * 100,
+                  topPercent: (point.y / payload.pointer!.viewportHeight) * 100,
+                }),
+              ),
             });
           }
           setIsStreamReady(true);
           setHasStreamError(false);
+          setStreamRetryAttempt(0);
+          hasEverConnectedRef.current = true;
         };
         image.src = `data:${payload.mimeType};base64,${payload.frame}`;
       } catch {
-        setHasStreamError(true);
+        if (!disposed) {
+          setHasStreamError(true);
+        }
       }
-    };
+    }
 
-    eventSource.onerror = () => {
+    function connect(attempt: number) {
       if (disposed) return;
-      setHasStreamError(true);
-    };
+
+      clearReconnectTimer();
+      closeEventSource();
+
+      const eventSource = new EventSource(
+        `/api/browser-session/${sessionId}/stream`,
+      );
+      eventSourceRef.current = eventSource;
+      eventSource.onmessage = handlePayload;
+      eventSource.onerror = () => {
+        if (disposed) return;
+
+        closeEventSource();
+
+        if (!hasEverConnectedRef.current) {
+          startupExhaustedRef.current?.();
+          return;
+        }
+
+        if (attempt < maxStreamRetries) {
+          const nextAttempt = attempt + 1;
+          const retryDelayMs = 500 * 2 ** attempt;
+          setStreamRetryAttempt(nextAttempt);
+          reconnectTimeoutRef.current = window.setTimeout(() => {
+            connect(nextAttempt);
+          }, retryDelayMs);
+          return;
+        }
+
+        setHasStreamError(true);
+      };
+    }
+
+    connect(0);
 
     return () => {
       disposed = true;
-      eventSource.close();
-      localPeer.close();
-      remotePeer.close();
-      captureStream.getTracks().forEach((track) => track.stop());
+      clearReconnectTimer();
+      closeEventSource();
     };
   }, [sessionId]);
 
-  useEffect(() => {
-    if (!hasStreamError) return;
+  // Interaction is enabled once the agent finishes (status=ready, no active action label)
+  const isInteractive =
+    isStreamReady && !currentActionLabel && sessionStatus === "ready";
 
-    const intervalId = window.setInterval(() => {
-      setFallbackVersion((current) => current + 1);
-    }, 900);
-
-    return () => {
-      window.clearInterval(intervalId);
+  function canvasCoords(e: React.MouseEvent<HTMLCanvasElement>) {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: Math.round((e.clientX - rect.left) * (canvas.width / rect.width)),
+      y: Math.round((e.clientY - rect.top) * (canvas.height / rect.height)),
     };
-  }, [hasStreamError]);
+  }
 
-  const fallbackSnapshotUrl = `/api/browser-session/${sessionId}/snapshot?ts=${fallbackVersion}`;
+  function sendInteraction(event: {
+    type: string;
+    x: number;
+    y: number;
+    deltaX?: number;
+    deltaY?: number;
+  }) {
+    void fetch(`/api/browser-session/${sessionId}/interact`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(event),
+    }).catch(() => {});
+  }
+
+  function handleCanvasMouseDown(e: React.MouseEvent<HTMLCanvasElement>) {
+    if (!isInteractive) return;
+    isDraggingRef.current = true;
+    setIsDragging(true);
+    sendInteraction({ ...canvasCoords(e), type: "mousedown" });
+  }
+
+  function handleCanvasMouseMove(e: React.MouseEvent<HTMLCanvasElement>) {
+    if (!isInteractive || !isDraggingRef.current) return;
+    const now = Date.now();
+    if (now - lastMoveSendRef.current < 40) return; // throttle to ~25 events/s
+    lastMoveSendRef.current = now;
+    sendInteraction({ ...canvasCoords(e), type: "mousemove" });
+  }
+
+  function handleCanvasMouseUp(e: React.MouseEvent<HTMLCanvasElement>) {
+    if (!isInteractive) return;
+    isDraggingRef.current = false;
+    setIsDragging(false);
+    sendInteraction({ ...canvasCoords(e), type: "mouseup" });
+  }
+
+  function handleCanvasWheel(e: React.WheelEvent<HTMLCanvasElement>) {
+    if (!isInteractive) return;
+    e.preventDefault();
+    sendInteraction({
+      ...canvasCoords(e),
+      type: "wheel",
+      deltaX: e.deltaX,
+      deltaY: e.deltaY,
+    });
+  }
 
   return (
-    <div className="arena-browser-session-viewport">
+    <div className="relative overflow-hidden rounded-[20px] border border-[rgba(18,18,18,0.1)] bg-[rgba(17,17,17,0.04)] h-full">
       {hasStreamError ? (
-        <img
-          src={fallbackSnapshotUrl}
-          alt="Controlled browser session snapshot fallback"
-          className="arena-browser-session-frame"
-        />
+        <button
+          type="button"
+          className={cn(
+            "block w-full h-full p-0 border-0 bg-transparent cursor-pointer",
+            isRestarting && "cursor-wait pointer-events-none",
+          )}
+          disabled={isRestarting || !onRestart}
+          onClick={async () => {
+            if (!onRestart) return;
+            setIsRestarting(true);
+            try {
+              await onRestart();
+            } finally {
+              setIsRestarting(false);
+              setHasStreamError(false);
+            }
+          }}
+        >
+          <ImageDithering
+            image="https://res.cloudinary.com/ddlz0zesx/image/upload/v1777216792/enter_the_arena_smth_qazlcz.png"
+            colorBack="#000c38"
+            colorFront="#94ffaf"
+            colorHighlight="#eaff94"
+            originalColors={false}
+            inverted={false}
+            type="8x8"
+            size={ditheringSize}
+            colorSteps={2}
+            fit="cover"
+            width="100%"
+            height="100%"
+          />
+        </button>
       ) : (
         <>
-          <video
-            ref={videoRef}
-            autoPlay
-            muted
-            playsInline
-            className="arena-browser-session-frame"
+          <canvas
+            ref={canvasRef}
+            className={cn(
+              "block w-full h-full border-0 bg-[#111]",
+              isInteractive && "cursor-grab",
+              isDragging && "cursor-grabbing select-none",
+            )}
+            onMouseDown={handleCanvasMouseDown}
+            onMouseMove={handleCanvasMouseMove}
+            onMouseUp={handleCanvasMouseUp}
+            onMouseLeave={handleCanvasMouseUp}
+            onWheel={handleCanvasWheel}
           />
           {pointerOverlay ? (
             <div
               key={`${pointerOverlay.pulseId}-${pointerOverlay.clicked ? "click" : "move"}`}
-              className={`arena-browser-session-pointer${pointerOverlay.clicked ? " is-clicking" : ""}`}
-              style={{
-                left: `${pointerOverlay.leftPercent}%`,
-                top: `${pointerOverlay.topPercent}%`,
-              }}
+              className="absolute inset-0 z-[2] pointer-events-none"
             >
-              <span className="arena-browser-session-pointer-core" />
-              {pointerOverlay.clicked ? (
-                <span className="arena-browser-session-pointer-pulse" />
+              {pointerOverlay.trail.length > 1 ? (
+                <svg
+                  className="absolute inset-0 overflow-visible"
+                  viewBox="0 0 100 100"
+                  preserveAspectRatio="none"
+                >
+                  <polyline
+                    points={pointerOverlay.trail
+                      .map(
+                        (point) => `${point.leftPercent},${point.topPercent}`,
+                      )
+                      .join(" ")}
+                    fill="none"
+                    stroke={
+                      pointerOverlay.dragging
+                        ? "rgba(214,102,37,0.82)"
+                        : "rgba(18,18,18,0.55)"
+                    }
+                    strokeWidth={pointerOverlay.dragging ? "0.45" : "0.35"}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeDasharray={
+                      pointerOverlay.dragging ? "none" : "1.5 1.2"
+                    }
+                  />
+                </svg>
               ) : null}
+              <div
+                className={cn(
+                  "absolute z-[2] w-[18px] h-[18px] pointer-events-none -translate-x-1/2 -translate-y-1/2",
+                )}
+                style={{
+                  left: `${pointerOverlay.leftPercent}%`,
+                  top: `${pointerOverlay.topPercent}%`,
+                }}
+              >
+                <span
+                  className={cn(
+                    "absolute inset-0 rounded-full border-2 border-[rgba(18,18,18,0.9)] bg-[rgba(255,255,255,0.82)] shadow-[0_0_0_3px_rgba(255,255,255,0.45)]",
+                    pointerOverlay.dragging &&
+                      "!border-[rgba(214,102,37,0.92)] ![box-shadow:0_0_0_3px_rgba(214,102,37,0.18)]",
+                  )}
+                />
+                {pointerOverlay.clicked ? (
+                  <span className="absolute -inset-[10px] rounded-full border-2 border-[rgba(214,102,37,0.78)] animate-pointer-pulse" />
+                ) : null}
+              </div>
             </div>
           ) : null}
-          <canvas ref={canvasRef} className="arena-browser-session-canvas" />
           {!isStreamReady ? (
-            <div className="arena-browser-session-overlay">
-              <strong className="font-barlow">Connecting live browser stream</strong>
-              <span className="font-inter">
-                Negotiating the remote Chromium viewport over WebRTC.
-              </span>
+            <div className="absolute inset-0 block">
+              <ImageDithering
+                image="https://res.cloudinary.com/ddlz0zesx/image/upload/v1777216792/enter_the_arena_smth_qazlcz.png"
+                colorBack="#000c38"
+                colorFront="#94ffaf"
+                colorHighlight="#eaff94"
+                originalColors={false}
+                inverted={false}
+                type="8x8"
+                size={ditheringSize}
+                colorSteps={2}
+                fit="cover"
+                width="100%"
+                height="100%"
+              />
+              <div className="absolute inset-0 flex items-end justify-start p-4 pointer-events-none">
+                <div className="rounded-[12px] bg-[rgba(0,12,56,0.72)] px-3 py-2 text-[#94ffaf] shadow-[0_10px_24px_rgba(0,0,0,0.18)] backdrop-blur-[8px]">
+                  <span className="block font-barlow text-[11px] font-semibold uppercase tracking-[0.14em]">
+                    {streamRetryAttempt > 0
+                      ? `Retrying stream (${streamRetryAttempt}/${maxStreamRetries})`
+                      : "Connecting stream"}
+                  </span>
+                </div>
+              </div>
+            </div>
+          ) : null}
+          {isStreamReady && currentActionLabel ? (
+            <div className="absolute bottom-[14px] left-[14px] px-[10px] py-[5px] rounded-[6px] bg-[rgba(0,12,56,0.72)] backdrop-blur-[6px] text-[#94ffaf] text-[12px] font-medium tracking-[0.01em] pointer-events-none font-barlow">
+              {currentActionLabel}
             </div>
           ) : null}
         </>
@@ -465,16 +726,152 @@ function BrowserSessionViewport({ sessionId }: { sessionId: string }) {
   );
 }
 
+const CANDLE_SECONDS: Record<string, number> = {
+  "15m": 900,
+  "1h": 3600,
+  "4h": 14400,
+};
+
+function extractSwingPoints(
+  trace: VisualTrace | undefined,
+  timeframe: string,
+): SwingPointsForBrowser | undefined {
+  if (!trace) return undefined;
+
+  let t1Price: number | undefined;
+  let t1TimeSec: number | undefined;
+  let t2Price: number | undefined;
+  let t2TimeSec: number | undefined;
+  let projectedPrice: number | undefined;
+  let t3TimeSec: number | undefined;
+  let zoneLow: number | undefined;
+  let zoneHigh: number | undefined;
+
+  for (const annotation of trace.annotations) {
+    const g = annotation.geometry;
+    if (!g) continue;
+    if (g.kind === "marker" && g.text === "T1") {
+      t1Price = g.position.price;
+      t1TimeSec = g.position.timeSec;
+    }
+    if (g.kind === "marker" && g.text === "T2") {
+      t2Price = g.position.price;
+      t2TimeSec = g.position.timeSec;
+    }
+    if (g.kind === "line") {
+      projectedPrice = g.end.price;
+      t3TimeSec = g.end.timeSec;
+    }
+    if (g.kind === "zone") {
+      zoneLow = g.lowPrice;
+      zoneHigh = g.highPrice;
+    }
+  }
+
+  if (
+    t1Price === undefined ||
+    t2Price === undefined ||
+    projectedPrice === undefined ||
+    zoneLow === undefined ||
+    zoneHigh === undefined
+  ) {
+    return undefined;
+  }
+
+  const allPrices = [t1Price, t2Price, projectedPrice, zoneLow, zoneHigh];
+  const rawLow = Math.min(...allPrices);
+  const rawHigh = Math.max(...allPrices);
+  const padding = (rawHigh - rawLow) * 0.2;
+
+  return {
+    t1Price,
+    t1TimeSec,
+    t2Price,
+    t2TimeSec,
+    projectedPrice,
+    t3TimeSec,
+    zoneLow,
+    zoneHigh,
+    direction: t2Price > t1Price ? "long" : "short",
+    visiblePriceLow: rawLow - padding,
+    visiblePriceHigh: rawHigh + padding,
+    candleSeconds: CANDLE_SECONDS[timeframe] ?? 3600,
+  };
+}
+
+// Shared Tailwind class strings for reuse
+const surfaceCard =
+  "border border-[rgba(18,18,18,0.08)] rounded-[18px] bg-[rgba(255,255,255,0.78)] shadow-[0_18px_40px_rgba(0,0,0,0.05)] backdrop-blur-[16px]";
+
+const chipClass =
+  "inline-flex items-center min-h-[32px] px-3 rounded-full border border-[rgba(18,18,18,0.08)] bg-[rgba(255,255,255,0.88)] text-[rgba(18,18,18,0.48)] text-[11px] font-semibold tracking-[0.14em] uppercase";
+
+const skelBase =
+  "rounded-[6px] bg-gradient-to-r from-[rgba(18,18,18,0.07)] via-[rgba(18,18,18,0.13)] to-[rgba(18,18,18,0.07)] bg-[length:200%_100%] animate-skel-sweep";
+
+function pillClass(state: ConfluenceState) {
+  return cn(
+    "inline-flex items-center justify-center w-fit min-h-[28px] px-[10px] rounded-full text-[11px] font-semibold tracking-[0.14em] uppercase",
+    state === "supportive" && "bg-[rgba(26,127,70,0.12)] text-[#1a7f46]",
+    state === "neutral" &&
+      "bg-[rgba(18,18,18,0.06)] text-[rgba(18,18,18,0.64)]",
+    state === "risk" && "bg-[rgba(163,48,48,0.12)] text-[#a33030]",
+  );
+}
+
 export default function ArenaDashboard() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const snapshot = useQuery(api.arena.getArenaSnapshot, {}) as
     | ArenaSnapshot
     | undefined;
   const runArenaScanCycleNow = useAction(api.arena.runArenaScanCycleNow);
-  const startBrowserReviewSession = useAction(api.arena.startBrowserReviewSession);
+  const updateAgentDisplayNames = useMutation(
+    api.arena.updateAgentDisplayNames,
+  );
+  const startBrowserReviewSession = useAction(
+    api.arena.startBrowserReviewSession,
+  );
   const [isRunningScan, setIsRunningScan] = useState(false);
-  const [isStartingBrowserSession, setIsStartingBrowserSession] = useState(false);
-  const [isWideWorkspace, setIsWideWorkspace] = useState(true);
+  const [isStartingBrowserSession, setIsStartingBrowserSession] =
+    useState(false);
+  const [revealedConjureSelectionKey, setRevealedConjureSelectionKey] =
+    useState<string | null>(null);
+  const [autoRestartedConjureSelectionKey, setAutoRestartedConjureSelectionKey] =
+    useState<string | null>(null);
+  const isWideWorkspace = true;
+  const [conjureDitheringSize, setConjureDitheringSize] = useState(2);
+  const conjureRafRef = useRef<number | null>(null);
+  const conjureStartRef = useRef<number | null>(null);
+  const didRenameRef = useRef(false);
+
+  // One-time migration: rename agents to mythical names if they still have old names
+  useEffect(() => {
+    if (didRenameRef.current || !snapshot) return;
+    const needsRename = snapshot.agents.some(
+      (a) => a.name === "Fibonacci Trend" || a.name === "Third Touch",
+    );
+    if (!needsRename) {
+      didRenameRef.current = true;
+      return;
+    }
+    didRenameRef.current = true;
+    void updateAgentDisplayNames({});
+  }, [snapshot, updateAgentDisplayNames]);
+
+  useEffect(() => {
+    function tick(ts: number) {
+      if (conjureStartRef.current === null) conjureStartRef.current = ts;
+      const elapsed = (ts - conjureStartRef.current) / 1000;
+      setConjureDitheringSize(2 + 1.5 * Math.sin(elapsed * 0.7));
+      conjureRafRef.current = requestAnimationFrame(tick);
+    }
+    conjureRafRef.current = requestAnimationFrame(tick);
+    return () => {
+      if (conjureRafRef.current !== null)
+        cancelAnimationFrame(conjureRafRef.current);
+    };
+  }, []);
 
   const selectedAgentSlug = searchParams.get("agent");
   const selectedMarketParam = searchParams.get("market");
@@ -510,16 +907,18 @@ export default function ArenaDashboard() {
       newsUpdatedAt: market.newsUpdatedAt ?? null,
     }));
 
-    const watchlistItems: WatchlistItem[] = snapshot.watchlistItems.map((item) => ({
-      id: String(item._id),
-      agentId: item.agentSlug,
-      marketSymbol: item.marketSymbol,
-      setupLabel: item.setupLabel,
-      timeframe: item.timeframe,
-      status: item.status,
-      triggerNote: item.triggerNote,
-      confluenceState: item.confluenceState,
-    }));
+    const watchlistItems: WatchlistItem[] = snapshot.watchlistItems.map(
+      (item) => ({
+        id: String(item._id),
+        agentId: item.agentSlug,
+        marketSymbol: item.marketSymbol,
+        setupLabel: item.setupLabel,
+        timeframe: item.timeframe,
+        status: item.status,
+        triggerNote: item.triggerNote,
+        confluenceState: item.confluenceState,
+      }),
+    );
 
     const tradeIdeas: TradeIdea[] = snapshot.tradeIdeas.map((idea) => ({
       id: String(idea._id),
@@ -554,7 +953,8 @@ export default function ArenaDashboard() {
       id: String(event._id),
       agentId: event.agentSlug,
       marketSymbol: event.marketSymbol,
-      timestamp: formatEventTimeLabel(event.eventTimeSec) || event.timestampLabel,
+      timestamp:
+        formatEventTimeLabel(event.eventTimeSec) || event.timestampLabel,
       eventTimeSec: event.eventTimeSec ?? undefined,
       title: event.title,
       detail: event.detail,
@@ -590,36 +990,39 @@ export default function ArenaDashboard() {
       url: item.url ?? "",
       agentSlug: item.agentSlug ?? null,
     }));
-    const browserSessions: BrowserSession[] = snapshot.browserSessions.map((session) => ({
-      id: String(session._id),
-      agentId: session.agentSlug,
-      marketSymbol: session.marketSymbol,
-      timeframe: session.timeframe,
-      browserTargetSymbol: session.browserTargetSymbol,
-      browserTargetTimeframe: session.browserTargetTimeframe,
-      inspectedOn: session.inspectedOn,
-      targetUrl: session.targetUrl,
-      status: session.status,
-      currentStepLabel: session.currentStepLabel,
-      currentStepIndex: session.currentStepIndex,
-      totalSteps: session.totalSteps,
-      startedAt: session.startedAt,
-      updatedAt: session.updatedAt,
-      completedAt: session.completedAt ?? undefined,
-      error: session.error ?? undefined,
-    }));
-    const browserSessionEvents: BrowserSessionEvent[] = snapshot.browserSessionEvents.map(
-      (event) => ({
+    const browserSessions: BrowserSession[] = snapshot.browserSessions.map(
+      (session) => ({
+        id: String(session._id),
+        agentId: session.agentSlug,
+        marketSymbol: session.marketSymbol,
+        timeframe: session.timeframe,
+        browserTargetSymbol: session.browserTargetSymbol,
+        browserTargetTimeframe: session.browserTargetTimeframe,
+        inspectedOn: session.inspectedOn,
+        targetUrl: session.targetUrl,
+        status: session.status,
+        currentStepLabel: session.currentStepLabel,
+        currentStepIndex: session.currentStepIndex,
+        totalSteps: session.totalSteps,
+        startedAt: session.startedAt,
+        updatedAt: session.updatedAt,
+        completedAt: session.completedAt ?? undefined,
+        error: session.error ?? undefined,
+      }),
+    );
+    const browserSessionEvents: BrowserSessionEvent[] =
+      snapshot.browserSessionEvents.map((event) => ({
         id: String(event._id),
         sessionId: String(event.sessionId),
         sequence: event.sequence,
         label: event.label,
         detail: event.detail,
         status: event.status,
-      }),
-    );
+      }));
 
-    const selectedAgent = agents.find((agent) => agent.id === selectedAgentSlug) ?? agents[0];
+    const selectedAgent = selectedAgentSlug
+      ? (agents.find((agent) => agent.id === selectedAgentSlug) ?? null)
+      : null;
     if (!selectedAgent) {
       return {
         agents,
@@ -663,44 +1066,61 @@ export default function ArenaDashboard() {
 
     const selectedTradeIdea = tradeIdeas.find(
       (idea) =>
-        idea.agentId === selectedAgent.id && idea.marketSymbol === selectedMarketSymbol,
+        idea.agentId === selectedAgent.id &&
+        idea.marketSymbol === selectedMarketSymbol,
     );
     const selectedTrace = visualTraces.find(
       (trace) =>
-        trace.agentId === selectedAgent.id && trace.marketSymbol === selectedMarketSymbol,
+        trace.agentId === selectedAgent.id &&
+        trace.marketSymbol === selectedMarketSymbol,
     );
     const selectedEvents = tradeEvents.filter(
       (event) =>
-        event.agentId === selectedAgent.id && event.marketSymbol === selectedMarketSymbol,
+        event.agentId === selectedAgent.id &&
+        event.marketSymbol === selectedMarketSymbol,
     );
     const selectedWatchlist = watchlistItems.filter(
       (item) =>
-        item.agentId === selectedAgent.id && item.marketSymbol === selectedMarketSymbol,
+        item.agentId === selectedAgent.id &&
+        item.marketSymbol === selectedMarketSymbol,
     );
     const selectedPosition = positions.find(
       (position) =>
         position.agentId === selectedAgent.id &&
         position.marketSymbol === selectedMarketSymbol,
     );
-    const selectedNewsContexts = newsContexts.filter(
-      (item) =>
-        item.marketSymbol === selectedMarketSymbol &&
-        (item.agentSlug === null || item.agentSlug === selectedAgent.id),
-    ).slice(0, 4);
+    const selectedNewsContexts = newsContexts
+      .filter(
+        (item) =>
+          item.marketSymbol === selectedMarketSymbol &&
+          (item.agentSlug === null || item.agentSlug === selectedAgent.id),
+      )
+      .slice(0, 4);
     const selectedNewsRationale = selectedNewsContexts[0]?.rationale ?? "";
     const selectedAgentOpenPositions = positions.filter(
       (position) => position.agentId === selectedAgent.id,
     ).length;
-    const selectedBrowserSession = browserSessions.find(
-      (session) =>
-        session.agentId === selectedAgent.id &&
-        session.marketSymbol === selectedMarketSymbol,
-    );
+    const selectedBrowserSession =
+      browserSessions
+        .filter(
+          (session) =>
+            session.agentId === selectedAgent.id &&
+            session.marketSymbol === selectedMarketSymbol &&
+            session.status !== "failed" &&
+            session.status !== "completed",
+        )
+        .sort((a, b) => b.startedAt - a.startedAt)[0] ?? null;
     const selectedBrowserSessionEvents = selectedBrowserSession
       ? browserSessionEvents.filter(
           (event) => event.sessionId === selectedBrowserSession.id,
         )
       : [];
+    const selectedVisionDecision =
+      snapshot.visionDecisions?.find(
+        (d) =>
+          d.agentSlug === selectedAgent.id &&
+          d.marketSymbol === selectedMarketSymbol,
+      ) ?? null;
 
     return {
       agents,
@@ -722,37 +1142,146 @@ export default function ArenaDashboard() {
       selectedNewsRationale,
       selectedBrowserSession,
       selectedBrowserSessionEvents,
+      selectedVisionDecision,
       lastScanAt: snapshot.scanRuns[0]?.startedAt ?? null,
     };
   }, [selectedAgentSlug, selectedMarketParam, snapshot]);
 
+  // Auto-reset "starting" flag once Convex delivers the real session
+  const selectedBrowserSessionId = derived?.selectedBrowserSession?.id ?? null;
+  useEffect(() => {
+    if (selectedBrowserSessionId) {
+      setIsStartingBrowserSession(false);
+    }
+  }, [selectedBrowserSessionId]);
+
+  const selectedConjureKey = derived?.selectedAgent
+    ? `${derived.selectedAgent.id}::${derived.selectedMarketSymbol}`
+    : null;
+
+  useEffect(() => {
+    setRevealedConjureSelectionKey(null);
+    setAutoRestartedConjureSelectionKey(null);
+    setIsStartingBrowserSession(false);
+  }, [selectedConjureKey]);
+
   if (!snapshot || !derived) {
     return (
-      <main className="arena-dashboard">
-        <section className="arena-dashboard-shell">
-          <div className="arena-surface arena-loading-surface">
-            <LoaderCircle aria-hidden="true" className="arena-spin" size={20} />
-            <div>
-              <strong className="font-barlow">Loading arena state</strong>
-              <p className="font-inter">
-                Loading agents, traces, markets, and current arena activity.
-              </p>
+      <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(0,0,0,0.05),transparent_28%),linear-gradient(180deg,#f4f4f1_0%,#ecece8_100%)] text-[#121212]">
+        <section className="w-full max-w-[1280px] mx-auto px-6 pt-8 pb-16">
+          {/* ── Header skeleton ── */}
+          <header className="grid grid-cols-[minmax(0,1.8fr)_minmax(280px,0.9fr)] gap-6 items-start">
+            <div
+              className={cn(
+                skelBase,
+                "w-[220px] h-[32px] rounded-[8px] mb-[10px]",
+              )}
+            />
+            <div
+              className={cn(skelBase, "w-[340px] h-[14px] rounded-[4px] mb-5")}
+            />
+            <div className="flex flex-wrap gap-[10px]">
+              {[1, 2, 3, 4].map((i) => (
+                <div
+                  key={i}
+                  className={cn(
+                    skelBase,
+                    "inline-block w-[72px] h-[24px] rounded-[20px]",
+                  )}
+                />
+              ))}
             </div>
-          </div>
+          </header>
+
+          {/* ── Leaderboard table skeleton ── */}
+          <section className="mt-6">
+            <table className="w-full border-collapse text-[13px]">
+              <thead>
+                <tr className="border-b border-[rgba(18,18,18,0.1)]">
+                  {[
+                    "#",
+                    "Agent",
+                    "Strategy",
+                    "Status",
+                    "Win rate",
+                    "PnL",
+                    "Positions",
+                    "Markets",
+                    "Score",
+                  ].map((h) => (
+                    <th
+                      key={h}
+                      className="font-barlow px-[14px] py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap"
+                    >
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {[1, 2, 3].map((row) => (
+                  <tr
+                    key={row}
+                    className="border-b border-[rgba(18,18,18,0.055)] cursor-pointer transition-colors hover:bg-[rgba(18,18,18,0.03)]"
+                  >
+                    <td className="px-[14px] py-[13px] align-middle">
+                      <div className={cn(skelBase, "w-[24px] h-[14px]")} />
+                    </td>
+                    <td className="px-[14px] py-[13px] align-middle">
+                      <div className={cn(skelBase, "w-[90px] h-[15px]")} />
+                    </td>
+                    <td className="px-[14px] py-[13px] align-middle">
+                      <div className={cn(skelBase, "w-[160px] h-[14px]")} />
+                    </td>
+                    <td className="px-[14px] py-[13px] align-middle">
+                      <div
+                        className={cn(
+                          skelBase,
+                          "inline-block w-[72px] h-[24px] rounded-[20px]",
+                        )}
+                      />
+                    </td>
+                    <td className="px-[14px] py-[13px] align-middle">
+                      <div className={cn(skelBase, "w-[44px] h-[14px]")} />
+                    </td>
+                    <td className="px-[14px] py-[13px] align-middle">
+                      <div className={cn(skelBase, "w-[44px] h-[14px]")} />
+                    </td>
+                    <td className="px-[14px] py-[13px] align-middle">
+                      <div className={cn(skelBase, "w-[44px] h-[14px]")} />
+                    </td>
+                    <td className="px-[14px] py-[13px] align-middle">
+                      <div className={cn(skelBase, "w-[44px] h-[14px]")} />
+                    </td>
+                    <td className="px-[14px] py-[13px] align-middle">
+                      <div
+                        className={cn(
+                          skelBase,
+                          "w-[48px] h-[20px] rounded-[4px]",
+                        )}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </section>
         </section>
       </main>
     );
   }
 
-  if (!derived.selectedAgent) {
+  if (!derived.selectedAgent && !derived.agents?.length) {
     return (
-      <main className="arena-dashboard">
-        <section className="arena-dashboard-shell">
-          <div className="arena-surface">
-            <div className="arena-surface-header">
-              <div className="arena-surface-title">
+      <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(0,0,0,0.05),transparent_28%),linear-gradient(180deg,#f4f4f1_0%,#ecece8_100%)] text-[#121212]">
+        <section className="w-full max-w-[1280px] mx-auto px-6 pt-8 pb-16">
+          <div className={cn(surfaceCard, "p-5")}>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-[10px]">
                 <Radar aria-hidden="true" size={18} />
-                <h2 className="font-barlow">Arena state</h2>
+                <h2 className="font-barlow m-0 text-[14px] font-semibold tracking-[0.06em] uppercase">
+                  Arena state
+                </h2>
               </div>
             </div>
             <EmptyState
@@ -781,6 +1310,7 @@ export default function ArenaDashboard() {
     selectedNewsRationale,
     selectedBrowserSession,
     selectedBrowserSessionEvents = [],
+    selectedVisionDecision,
     lastScanAt,
   } = derived;
   const selectedMarket = trackedMarkets.find(
@@ -788,41 +1318,65 @@ export default function ArenaDashboard() {
   );
 
   return (
-    <main className="arena-dashboard">
-      <section className="arena-dashboard-shell">
-        <header className="arena-dashboard-header">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(0,0,0,0.05),transparent_28%),linear-gradient(180deg,#f4f4f1_0%,#ecece8_100%)] text-[#121212]">
+      <section className="w-full max-w-[1280px] mx-auto px-6 pt-8 pb-16">
+        <header className="grid grid-cols-[minmax(0,1.8fr)_minmax(280px,0.9fr)] gap-6 items-start">
           <div>
-            <Link href="/" className="arena-back-link font-barlow">
+            <Link
+              href="/"
+              className="inline-flex items-center gap-2 min-h-[40px] mb-[18px] text-[rgba(18,18,18,0.72)] text-[12px] font-semibold tracking-[0.14em] uppercase no-underline font-barlow"
+            >
               <ArrowLeft aria-hidden="true" size={16} />
               Back to landing
             </Link>
-            <p className="arena-kicker font-barlow">Arena season zero</p>
-            <h1 className="arena-dashboard-title font-instrument">
-              Strategy agents tracking structure, confluence, and execution state.
+            <p className="m-0 mb-[10px] text-[rgba(18,18,18,0.42)] text-[12px] font-semibold tracking-[0.18em] uppercase font-barlow">
+              Arena season zero
+            </p>
+            <h1 className="max-w-[12ch] m-0 text-[clamp(42px,7vw,92px)] font-normal leading-[0.94] tracking-[-0.8px] font-instrument">
+              Strategy agents tracking structure, confluence, and execution
+              state.
             </h1>
-            <p className="arena-dashboard-intro font-inter">
-              Monitor active agents, watched markets, chart annotations, and staged
-              trade logic as the arena evolves across each symbol.
+            <p className="max-w-[60ch] mt-5 mb-0 text-[rgba(18,18,18,0.64)] text-[16px] leading-[1.7] font-inter">
+              Monitor active agents, watched markets, chart annotations, and
+              staged trade logic as the arena evolves across each symbol.
             </p>
           </div>
 
-          <div className="arena-status-strip">
-            <div className="arena-status-card">
-              <span className="font-barlow">Season</span>
-              <strong className="font-instrument">S0</strong>
+          <div className="flex flex-wrap gap-[10px]">
+            {/* Season */}
+            <div className={cn(surfaceCard, "grid gap-2 p-[18px]")}>
+              <span className="font-barlow text-[rgba(18,18,18,0.48)] text-[11px] font-semibold tracking-[0.14em] uppercase">
+                Season
+              </span>
+              <strong className="font-instrument text-[32px] font-normal leading-[0.95]">
+                S0
+              </strong>
             </div>
-            <div className="arena-status-card">
-              <span className="font-barlow">Agents live</span>
-              <strong className="font-instrument">{agents.length}</strong>
+            {/* Agents live */}
+            <div className={cn(surfaceCard, "grid gap-2 p-[18px]")}>
+              <span className="font-barlow text-[rgba(18,18,18,0.48)] text-[11px] font-semibold tracking-[0.14em] uppercase">
+                Agents live
+              </span>
+              <strong className="font-instrument text-[32px] font-normal leading-[0.95]">
+                {agents.length}
+              </strong>
             </div>
-            <div className="arena-status-card">
-              <span className="font-barlow">Last scan</span>
-              <strong className="font-instrument">
+            {/* Last scan */}
+            <div className={cn(surfaceCard, "grid gap-2 p-[18px]")}>
+              <span className="font-barlow text-[rgba(18,18,18,0.48)] text-[11px] font-semibold tracking-[0.14em] uppercase">
+                Last scan
+              </span>
+              <strong className="font-instrument text-[32px] font-normal leading-[0.95]">
                 {formatRelativeMinutes(lastScanAt)}
               </strong>
             </div>
+            {/* Dev scan trigger */}
             <button
-              className={`arena-status-card arena-scan-trigger${isRunningScan ? " is-running" : ""}`}
+              className={cn(
+                surfaceCard,
+                "grid gap-2 p-[18px] w-full text-left cursor-pointer items-start",
+                isRunningScan && "opacity-[0.78]",
+              )}
               type="button"
               onClick={async () => {
                 setIsRunningScan(true);
@@ -834,591 +1388,723 @@ export default function ArenaDashboard() {
               }}
               disabled={isRunningScan}
             >
-              <span className="font-barlow">Dev scan</span>
-              <strong className="font-instrument">
+              <span className="font-barlow text-[rgba(18,18,18,0.48)] text-[11px] font-semibold tracking-[0.14em] uppercase">
+                Dev scan
+              </span>
+              <strong className="font-instrument text-[32px] font-normal leading-[0.95]">
                 {isRunningScan ? "Running..." : "Run now"}
               </strong>
               <RefreshCcw
                 aria-hidden="true"
                 size={16}
-                className={isRunningScan ? "arena-spin" : ""}
+                className={isRunningScan ? "animate-arena-spin" : ""}
               />
             </button>
           </div>
         </header>
 
-        <section className="arena-dashboard-grid" aria-label="Arena overview">
-          <article className="arena-surface arena-leaderboard-card">
-            <div className="arena-surface-header">
-              <div className="arena-surface-title">
-                <Trophy aria-hidden="true" size={18} />
-                <h2 className="font-barlow">Leaderboard</h2>
-              </div>
-              <span className="arena-chip font-barlow">Points</span>
-            </div>
-            <div className="arena-agent-list">
+        <section className="mt-6" aria-label="Arena leaderboard">
+          <table className="w-full border-collapse text-[13px]">
+            <thead>
+              <tr className="border-b border-[rgba(18,18,18,0.1)]">
+                <th className="font-barlow px-[14px] py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap">
+                  #
+                </th>
+                <th className="font-barlow px-[14px] py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap">
+                  Agent
+                </th>
+                <th className="font-barlow px-[14px] py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap">
+                  Strategy
+                </th>
+                <th className="font-barlow px-[14px] py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap">
+                  Status
+                </th>
+                <th className="font-barlow px-[14px] py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap">
+                  Win rate
+                </th>
+                <th className="font-barlow px-[14px] py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap">
+                  PnL
+                </th>
+                <th className="font-barlow px-[14px] py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap">
+                  Positions
+                </th>
+                <th className="font-barlow px-[14px] py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap">
+                  Markets
+                </th>
+                <th className="font-barlow px-[14px] py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap">
+                  Score
+                </th>
+              </tr>
+            </thead>
+            <tbody>
               {agents.map((agent, index) => {
-                const isSelected = agent.id === selectedAgent.id;
-
+                const isSelected = agent.id === selectedAgent?.id;
+                const agentPositions = positions.filter(
+                  (p) => p.agentId === agent.id,
+                );
                 return (
-                  <Link
+                  <tr
                     key={agent.id}
-                    href={`/arena?agent=${agent.id}`}
-                    className={`arena-agent-row${isSelected ? " is-selected" : ""}`}
+                    className={cn(
+                      "border-b border-[rgba(18,18,18,0.055)] cursor-pointer transition-colors hover:bg-[rgba(18,18,18,0.03)]",
+                      isSelected && "bg-[rgba(18,18,18,0.055)]",
+                    )}
+                    onClick={() => {
+                      router.replace(`/arena?agent=${agent.id}`, {
+                        scroll: false,
+                      });
+                    }}
                   >
-                    <div className="arena-agent-rank font-barlow">
+                    <td className="px-[14px] py-[13px] align-middle text-[rgba(18,18,18,0.35)] text-[12px] w-9 font-barlow">
                       {String(index + 1).padStart(2, "0")}
-                    </div>
-                    <div className="arena-agent-main">
-                      <strong className="font-barlow">{agent.name}</strong>
-                      <span className="font-inter">
-                        {agent.primaryMarket} · {agent.strategyLabel}
-                      </span>
-                    </div>
-                    <div className="arena-agent-meta">
-                      <span className="font-barlow">
+                    </td>
+                    <td className="px-[14px] py-[13px] align-middle">
+                      <strong className="font-barlow text-[14px] font-semibold">
+                        {agent.name}
+                      </strong>
+                    </td>
+                    <td className="px-[14px] py-[13px] align-middle text-[rgba(18,18,18,0.55)] text-[13px] font-inter">
+                      {agent.strategyLabel}
+                    </td>
+                    <td className="px-[14px] py-[13px] align-middle">
+                      <span className={cn(chipClass, "font-barlow")}>
                         {statusLabelMap[agent.status]}
                       </span>
-                      <strong className="font-instrument">{agent.score}</strong>
-                    </div>
-                  </Link>
+                    </td>
+                    <td className="px-[14px] py-[13px] align-middle font-barlow">
+                      {agent.winRate}%
+                    </td>
+                    <td
+                      className={cn(
+                        "px-[14px] py-[13px] align-middle font-barlow",
+                        agent.pnlPercent >= 0
+                          ? "text-[#1a7f46]"
+                          : "text-[#a33030]",
+                      )}
+                    >
+                      {agent.pnlPercent >= 0 ? "+" : ""}
+                      {agent.pnlPercent.toFixed(1)}%
+                    </td>
+                    <td className="px-[14px] py-[13px] align-middle font-barlow">
+                      {agentPositions.length}
+                    </td>
+                    <td className="px-[14px] py-[13px] align-middle font-barlow">
+                      {agent.trackedMarkets.length}
+                    </td>
+                    <td className="px-[14px] py-[13px] align-middle text-[18px] font-normal text-right font-instrument">
+                      {agent.score}
+                    </td>
+                  </tr>
                 );
               })}
-            </div>
-          </article>
+            </tbody>
+          </table>
+        </section>
 
-          <article className="arena-surface">
-            <div className="arena-surface-header">
-              <div className="arena-surface-title">
-                <Radar aria-hidden="true" size={18} />
-                <h2 className="font-barlow">Watched markets</h2>
+        {selectedAgent ? (
+          <section
+            className={cn(
+              "grid gap-[18px] mt-7",
+              isWideWorkspace
+                ? "grid-cols-1"
+                : "grid-cols-[minmax(0,1.6fr)_minmax(320px,0.9fr)]",
+            )}
+            aria-label="Selected agent detail"
+          >
+            <article className={cn(surfaceCard, "p-5 grid gap-[18px]")}>
+              {/* ── Agent header ─────────────────────────────────────────── */}
+              <div className="flex items-start justify-between gap-5">
+                <div>
+                  <p className="m-0 mb-[10px] text-[rgba(18,18,18,0.42)] text-[12px] font-semibold tracking-[0.18em] uppercase font-barlow">
+                    Selected agent
+                  </p>
+                  <h2 className="m-0 text-[clamp(30px,4vw,48px)] font-normal leading-[0.96] tracking-[-0.5px] font-instrument">
+                    {selectedAgent.name}
+                  </h2>
+                  <p className="max-w-[58ch] mt-[14px] mb-0 text-[rgba(18,18,18,0.62)] text-[14px] leading-[1.6] font-inter">
+                    {selectedAgent.lastAction}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-[10px] justify-end">
+                  <span className={cn(chipClass, "font-barlow")}>
+                    {statusLabelMap[selectedAgent.status]}
+                  </span>
+                  <span className={cn(chipClass, "font-barlow")}>
+                    {selectedAgent.timeframe}
+                  </span>
+                </div>
               </div>
-              <span className="arena-chip font-barlow">
-                {trackedMarkets.length} tracked
-              </span>
-            </div>
-            <div className="arena-market-list">
-              {trackedMarkets.map((market) => {
-                const roleLabels = getMarketRoles({
-                  marketSymbol: market.symbol,
-                  primaryMarket: selectedAgent.primaryMarket,
-                  hasWatchlist: selectedWatchlist.some(
-                    (item) => item.marketSymbol === market.symbol,
-                  ),
-                  hasPosition: positions.some(
-                    (position) =>
-                      position.agentId === selectedAgent.id &&
-                      position.marketSymbol === market.symbol,
-                  ),
-                });
 
-                return (
-                  <Link
-                    key={market.symbol}
-                    href={`/arena?agent=${selectedAgent.id}&market=${encodeURIComponent(
-                      market.symbol,
-                    )}`}
-                    className={`arena-market-row arena-market-row-tone-${market.newsState}${
-                      market.symbol === selectedMarketSymbol ? " is-selected" : ""
-                    }`}
+              {/* ── Compact stats row ─────────────────────────────────────── */}
+              <div className="flex flex-wrap border border-[rgba(18,18,18,0.08)] rounded-[16px] overflow-hidden bg-[rgba(250,250,247,0.92)]">
+                <div className="grid gap-[3px] px-[18px] py-3 border-r border-[rgba(18,18,18,0.08)] flex-1 min-w-[90px]">
+                  <span className="font-barlow text-[11px] font-semibold tracking-[0.1em] uppercase text-[rgba(18,18,18,0.42)]">
+                    Win rate
+                  </span>
+                  <strong className="font-instrument text-[18px] font-normal leading-[1.1]">
+                    {selectedAgent.winRate}%
+                  </strong>
+                </div>
+                <div className="grid gap-[3px] px-[18px] py-3 border-r border-[rgba(18,18,18,0.08)] flex-1 min-w-[90px]">
+                  <span className="font-barlow text-[11px] font-semibold tracking-[0.1em] uppercase text-[rgba(18,18,18,0.42)]">
+                    PnL
+                  </span>
+                  <strong
+                    className={cn(
+                      "font-instrument text-[18px] font-normal leading-[1.1]",
+                      selectedAgent.pnlPercent >= 0
+                        ? "text-[#1a7f46]"
+                        : "text-[#a33030]",
+                    )}
                   >
-                    <div>
-                      <strong className="font-barlow">{market.symbol}</strong>
-                      <span className="font-inter">
-                        {market.displayName}
-                        {roleLabels.length ? ` · ${roleLabels.join(" · ")}` : ""}
-                      </span>
-                    </div>
-                    <div>
-                      <div className="arena-market-meta-top">
-                        <span className={`arena-pill is-${market.newsState} font-barlow`}>
-                          {confluenceToneMap[market.newsState]}
+                    {selectedAgent.pnlPercent >= 0 ? "+" : ""}
+                    {selectedAgent.pnlPercent.toFixed(1)}%
+                  </strong>
+                </div>
+                <div className="grid gap-[3px] px-[18px] py-3 border-r border-[rgba(18,18,18,0.08)] flex-1 min-w-[90px]">
+                  <span className="font-barlow text-[11px] font-semibold tracking-[0.1em] uppercase text-[rgba(18,18,18,0.42)]">
+                    Positions
+                  </span>
+                  <strong className="font-instrument text-[18px] font-normal leading-[1.1]">
+                    {selectedAgent.openPositions}
+                  </strong>
+                </div>
+                <div className="grid gap-[3px] px-[18px] py-3 border-r border-[rgba(18,18,18,0.08)] flex-1 min-w-[90px]">
+                  <span className="font-barlow text-[11px] font-semibold tracking-[0.1em] uppercase text-[rgba(18,18,18,0.42)]">
+                    Score
+                  </span>
+                  <strong className="font-instrument text-[18px] font-normal leading-[1.1]">
+                    {agents.find((a) => a.id === selectedAgent.id)?.score ??
+                      "—"}
+                  </strong>
+                </div>
+                <div className="grid gap-[3px] px-[18px] py-3 flex-1 min-w-[90px] last:border-r-0">
+                  <span className="font-barlow text-[11px] font-semibold tracking-[0.1em] uppercase text-[rgba(18,18,18,0.42)]">
+                    Next check
+                  </span>
+                  <strong className="font-instrument text-[18px] font-normal leading-[1.1]">
+                    {selectedPosition?.nextCheckIn ?? "Waiting"}
+                  </strong>
+                </div>
+              </div>
+
+              {/* ── Market switcher ───────────────────────────────────────── */}
+              <div
+                className="flex flex-wrap gap-3"
+                aria-label="Tracked markets"
+              >
+                {trackedMarkets.map((market) => {
+                  const isActive = market.symbol === selectedMarketSymbol;
+                  return (
+                    <Link
+                      key={market.symbol}
+                      href={`/arena?agent=${selectedAgent.id}&market=${encodeURIComponent(market.symbol)}`}
+                      className={cn(
+                        "grid gap-1 min-w-[180px] p-[14px] border border-[rgba(18,18,18,0.08)] rounded-[16px] text-inherit no-underline",
+                        market.newsState === "supportive" &&
+                          "bg-[rgba(231,248,237,0.84)]",
+                        market.newsState === "neutral" &&
+                          "bg-[rgba(250,250,247,0.92)]",
+                        market.newsState === "risk" &&
+                          "bg-[rgba(251,238,236,0.84)]",
+                        isActive &&
+                          "border-[rgba(18,18,18,0.14)] bg-[rgba(18,18,18,0.06)]",
+                      )}
+                    >
+                      <strong className="font-barlow text-[14px] font-semibold">
+                        {market.symbol}
+                      </strong>
+                      <div className="inline-flex items-center gap-2">
+                        <span
+                          className={cn(
+                            pillClass(market.newsState as ConfluenceState),
+                            "font-barlow",
+                          )}
+                        >
+                          {
+                            confluenceToneMap[
+                              market.newsState as ConfluenceState
+                            ]
+                          }
                         </span>
-                        <span className="arena-market-freshness font-barlow">
+                        <span className="font-barlow text-[rgba(18,18,18,0.42)] text-[10px] font-semibold tracking-[0.12em] uppercase">
                           {formatNewsFreshness(market.newsUpdatedAt)}
                         </span>
                       </div>
-                      <strong className="font-barlow">{market.price}</strong>
+                    </Link>
+                  );
+                })}
+              </div>
+
+              {/* ── Trade idea (compact) ──────────────────────────────────── */}
+              {selectedTradeIdea ? (
+                <div className="border border-[rgba(18,18,18,0.08)] rounded-[18px] bg-[rgba(255,255,255,0.78)] shadow-[0_18px_40px_rgba(0,0,0,0.05)] backdrop-blur-[16px] p-5 grid gap-[18px]">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-[10px]">
+                      <Eye aria-hidden="true" size={18} />
+                      <h3 className="font-barlow m-0 text-[14px] font-semibold tracking-[0.06em] uppercase">
+                        Current trade idea
+                      </h3>
+                    </div>
+                    <div className="flex gap-2 items-center">
                       <span
-                        className={`font-inter ${
-                          market.changePercent >= 0 ? "is-positive" : "is-negative"
-                        }`}
+                        className={cn(
+                          pillClass(selectedTradeIdea.confluenceState),
+                          "font-barlow",
+                        )}
                       >
-                        {market.changePercent >= 0 ? "+" : ""}
-                        {market.changePercent.toFixed(2)}%
+                        {confluenceToneMap[selectedTradeIdea.confluenceState]}
+                      </span>
+                      <span className={cn(chipClass, "font-barlow")}>
+                        {selectedTradeIdea.status}
                       </span>
                     </div>
-                  </Link>
-                );
-              })}
-            </div>
-          </article>
-
-          <article className="arena-surface">
-            <DisclosureSection
-              title="Open positions"
-              icon={<Activity aria-hidden="true" size={18} />}
-              badge={
-                <span className="arena-chip font-barlow">
-                  {positions.length} active
-                </span>
-              }
-            >
-              <div className="arena-position-list">
-                {positions.map((position) => (
-                  <div key={position.id} className="arena-position-row">
+                  </div>
+                  <p className="font-inter">{selectedTradeIdea.thesis}</p>
+                  <div className="grid grid-cols-4 gap-3 mt-[18px]">
                     <div>
-                      <strong className="font-barlow">
-                        {position.marketSymbol} · {position.direction}
-                      </strong>
-                      <span className="font-inter">
-                        Entry {position.entry} · Mark {position.markPrice}
+                      <span className="font-barlow text-[rgba(18,18,18,0.48)] text-[11px] font-semibold tracking-[0.14em] uppercase">
+                        Entry
                       </span>
-                    </div>
-                    <div>
-                      <strong
-                        className={`font-barlow ${
-                          position.pnlPercent >= 0 ? "is-positive" : "is-negative"
-                        }`}
-                      >
-                        {position.pnlPercent >= 0 ? "+" : ""}
-                        {position.pnlPercent.toFixed(2)}%
+                      <strong className="font-instrument text-[clamp(24px,3vw,38px)] font-normal leading-[0.95]">
+                        {selectedTradeIdea.entry}
                       </strong>
-                      <span className="font-inter">{position.nextCheckIn}</span>
                     </div>
-                  </div>
-                ))}
-              </div>
-            </DisclosureSection>
-          </article>
-
-          <article className="arena-surface">
-            <DisclosureSection
-              title="Recent decisions"
-              icon={<LineChart aria-hidden="true" size={18} />}
-              badge={<span className="arena-chip font-barlow">{tradeEvents.length} logs</span>}
-            >
-              <div className="arena-event-list">
-                {tradeEvents.slice(-4).reverse().map((event) => (
-                  <div key={event.id} className="arena-event-row">
-                    <span className="arena-event-time font-barlow">
-                      {event.timestamp}
-                    </span>
                     <div>
-                      <strong className="font-barlow">{event.title}</strong>
-                      <span className="font-inter">{event.detail}</span>
+                      <span className="font-barlow text-[rgba(18,18,18,0.48)] text-[11px] font-semibold tracking-[0.14em] uppercase">
+                        Stop loss
+                      </span>
+                      <strong className="font-instrument text-[clamp(24px,3vw,38px)] font-normal leading-[0.95]">
+                        {selectedTradeIdea.stopLoss}
+                      </strong>
+                    </div>
+                    <div>
+                      <span className="font-barlow text-[rgba(18,18,18,0.48)] text-[11px] font-semibold tracking-[0.14em] uppercase">
+                        Take profit
+                      </span>
+                      <strong className="font-instrument text-[clamp(24px,3vw,38px)] font-normal leading-[0.95]">
+                        {selectedTradeIdea.takeProfit}
+                      </strong>
+                    </div>
+                    <div>
+                      <span className="font-barlow text-[rgba(18,18,18,0.48)] text-[11px] font-semibold tracking-[0.14em] uppercase">
+                        Confidence
+                      </span>
+                      <strong className="font-instrument text-[clamp(24px,3vw,38px)] font-normal leading-[0.95]">
+                        {Math.round(selectedTradeIdea.confidence * 100)}%
+                      </strong>
                     </div>
                   </div>
-                ))}
-              </div>
-            </DisclosureSection>
-          </article>
-        </section>
+                </div>
+              ) : null}
 
-        <section
-          className={`arena-detail-layout${isWideWorkspace ? " is-workspace-wide" : ""}`}
-          aria-label="Selected agent detail"
-        >
-          <article className="arena-surface arena-detail-primary">
-            <div className="arena-detail-header">
-              <div>
-                <p className="arena-kicker font-barlow">Selected agent</p>
-                <h2 className="font-instrument">{selectedAgent.name}</h2>
-                <p className="font-inter">{selectedAgent.lastAction}</p>
-              </div>
-              <div className="arena-detail-badges">
-                <span className="arena-chip font-barlow">
-                  {selectedMarketSymbol}
-                </span>
-                {selectedMarket ? (
-                  <>
-                    <span className={`arena-pill is-${selectedMarket.newsState} font-barlow`}>
-                      {confluenceToneMap[selectedMarket.newsState]}
-                    </span>
-                    <span className="arena-chip font-barlow">
-                      News {formatNewsFreshness(selectedMarket.newsUpdatedAt)}
-                    </span>
-                  </>
-                ) : null}
-                <span className="arena-chip font-barlow">
-                  {statusLabelMap[selectedAgent.status]}
-                </span>
-                <span className="arena-chip font-barlow">
-                  {selectedAgent.timeframe}
-                </span>
-              </div>
-            </div>
+              {/* ── Conjure button / viewport ─────────────────────────────── */}
+              {(() => {
+                // selectedAgent and selectedMarketSymbol are always defined here
+                // (we are inside the `selectedAgent ?` guard), but TypeScript cannot
+                // narrow through the IIFE function boundary — hence the assertions.
+                const agentId = selectedAgent!.id;
+                const agentName = selectedAgent!.name;
+                const agentTimeframe = selectedAgent!.timeframe;
+                const marketSym = selectedMarketSymbol!;
+                const conjureSelectionKey = `${agentId}::${marketSym}`;
+                const isConjureRevealed =
+                  revealedConjureSelectionKey === conjureSelectionKey;
+                const isConjureActive =
+                  isConjureRevealed && !!selectedBrowserSession;
+                const isConjureLoading =
+                  isConjureRevealed &&
+                  !selectedBrowserSession &&
+                  isStartingBrowserSession;
+                const isConjureIdle = !isConjureRevealed;
 
-            <div className="arena-market-switcher" aria-label="Tracked markets">
-              {trackedMarkets.map((market) => {
-                const isActive = market.symbol === selectedMarketSymbol;
-                const roleLabels = getMarketRoles({
-                  marketSymbol: market.symbol,
-                  primaryMarket: selectedAgent.primaryMarket,
-                  hasWatchlist: selectedWatchlist.some(
-                    (item) => item.marketSymbol === market.symbol,
-                  ),
-                  hasPosition: positions.some(
-                    (position) =>
-                      position.agentId === selectedAgent.id &&
-                      position.marketSymbol === market.symbol,
-                  ),
-                });
+                async function launchBrowserSession(options?: {
+                  forceNew?: boolean;
+                }) {
+                  setRevealedConjureSelectionKey(conjureSelectionKey);
+                  if (!options?.forceNew) {
+                    setAutoRestartedConjureSelectionKey(null);
+                  }
+                  if (selectedBrowserSession && !options?.forceNew) return;
+
+                  setIsStartingBrowserSession(true);
+                  try {
+                    const result = await startBrowserReviewSession({
+                      agentSlug: agentId,
+                      marketSymbol: marketSym,
+                      timeframe: agentTimeframe,
+                    });
+                    const response = await fetch("/api/browser-session/start", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        sessionId: result.sessionId,
+                        marketSymbol: result.browserTargetSymbol,
+                        timeframe: result.browserTargetTimeframe,
+                        agentSlug: agentId,
+                        agentMarketSymbol: marketSym,
+                        targetUrl: "https://charts.deriv.com/deriv",
+                        swingPoints:
+                          result.browserTargetSymbol === marketSym
+                            ? extractSwingPoints(selectedTrace, agentTimeframe)
+                            : undefined,
+                      }),
+                    });
+
+                    if (!response.ok) {
+                      throw new Error("browser_startup_request_failed");
+                    }
+                  } catch {
+                    setIsStartingBrowserSession(false);
+                    setRevealedConjureSelectionKey(null);
+                  }
+                }
 
                 return (
-                  <Link
-                    key={market.symbol}
-                    href={`/arena?agent=${selectedAgent.id}&market=${encodeURIComponent(
-                      market.symbol,
-                    )}`}
-                    className={`arena-market-pill arena-market-pill-tone-${market.newsState}${
-                      isActive ? " is-active" : ""
-                    }`}
-                  >
-                    <strong className="font-barlow">{market.symbol}</strong>
-                    <span className="font-inter">
-                      {market.displayName}
-                      {roleLabels.length ? ` · ${roleLabels.join(" · ")}` : ""}
-                    </span>
-                    <div className="arena-market-pill-meta">
-                      <span className={`arena-pill is-${market.newsState} font-barlow`}>
-                        {confluenceToneMap[market.newsState]}
-                      </span>
-                      <span className="arena-market-freshness font-barlow">
-                        {formatNewsFreshness(market.newsUpdatedAt)}
-                      </span>
-                    </div>
-                  </Link>
-                );
-              })}
-            </div>
-
-            <div className="arena-stat-grid">
-              <div className="arena-stat-card">
-                <span className="font-barlow">Win rate</span>
-                <strong className="font-instrument">{selectedAgent.winRate}%</strong>
-              </div>
-              <div className="arena-stat-card">
-                <span className="font-barlow">Arena PnL</span>
-                <strong className="font-instrument">
-                  {selectedAgent.pnlPercent > 0 ? "+" : ""}
-                  {selectedAgent.pnlPercent.toFixed(1)}%
-                </strong>
-              </div>
-              <div className="arena-stat-card">
-                <span className="font-barlow">Open positions</span>
-                <strong className="font-instrument">
-                  {selectedAgent.openPositions}
-                </strong>
-              </div>
-              <div className="arena-stat-card">
-                <span className="font-barlow">Next check</span>
-                <strong className="font-instrument">
-                  {selectedPosition?.nextCheckIn ?? "Waiting"}
-                </strong>
-              </div>
-            </div>
-
-            {selectedTradeIdea ? (
-              <div className="arena-idea-card">
-                <div className="arena-surface-header">
-                  <div className="arena-surface-title">
-                    <Eye aria-hidden="true" size={18} />
-                    <h3 className="font-barlow">Current trade idea</h3>
-                  </div>
-                  <span className="arena-chip font-barlow">
-                    {confluenceToneMap[selectedTradeIdea.confluenceState]}
-                  </span>
-                </div>
-                <p className="font-inter">{selectedTradeIdea.thesis}</p>
-                <div className="arena-level-grid">
-                  <div>
-                    <span className="font-barlow">Entry</span>
-                    <strong className="font-instrument">
-                      {selectedTradeIdea.entry}
-                    </strong>
-                  </div>
-                  <div>
-                    <span className="font-barlow">Stop loss</span>
-                    <strong className="font-instrument">
-                      {selectedTradeIdea.stopLoss}
-                    </strong>
-                  </div>
-                  <div>
-                    <span className="font-barlow">Take profit</span>
-                    <strong className="font-instrument">
-                      {selectedTradeIdea.takeProfit}
-                    </strong>
-                  </div>
-                  <div>
-                    <span className="font-barlow">Confidence</span>
-                    <strong className="font-instrument">
-                      {Math.round(selectedTradeIdea.confidence * 100)}%
-                    </strong>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="arena-idea-card">
-                <div className="arena-surface-header">
-                  <div className="arena-surface-title">
-                    <Eye aria-hidden="true" size={18} />
-                    <h3 className="font-barlow">Current trade idea</h3>
-                  </div>
-                </div>
-                <EmptyState
-                  title="No active idea for this market"
-                  description="The selected agent is tracking this symbol, but it has not promoted a setup into an active trade idea yet."
-                />
-              </div>
-            )}
-
-            <div className="arena-browser-session-card">
-              <div className="arena-surface-header">
-                <div className="arena-surface-title">
-                  <Activity aria-hidden="true" size={18} />
-                  <h3 className="font-barlow">Browser review session</h3>
-                </div>
-                <div className="arena-browser-session-header-meta">
-                  {selectedBrowserSession ? (
-                    <>
-                      <span className="arena-chip font-barlow">
-                        {browserSessionStatusLabelMap[selectedBrowserSession.status]}
-                      </span>
-                      <span className="arena-chip font-barlow">
-                        Step {selectedBrowserSession.currentStepIndex}/
-                        {selectedBrowserSession.totalSteps}
-                      </span>
-                    </>
-                  ) : null}
-                  <button
-                    className={`arena-tool-chip font-barlow${isStartingBrowserSession ? " is-active" : ""}`}
-                    type="button"
-                    onClick={async () => {
-                      setIsStartingBrowserSession(true);
-                      try {
-                        const result = await startBrowserReviewSession({
-                          agentSlug: selectedAgent.id,
-                          marketSymbol: selectedMarketSymbol,
-                          timeframe: selectedAgent.timeframe,
-                        });
-                        await fetch("/api/browser-session/start", {
-                          method: "POST",
-                          headers: {
-                            "Content-Type": "application/json",
-                          },
-                          body: JSON.stringify({
-                            sessionId: result.sessionId,
-                            marketSymbol: result.browserTargetSymbol,
-                            timeframe: result.browserTargetTimeframe,
-                            targetUrl: "https://charts.deriv.com/deriv",
-                          }),
-                        });
-                      } finally {
-                        setIsStartingBrowserSession(false);
-                      }
-                    }}
-                    disabled={isStartingBrowserSession}
-                  >
-                    {isStartingBrowserSession ? (
-                      <LoaderCircle aria-hidden="true" size={14} className="arena-spin" />
-                    ) : (
-                      <ExternalLink aria-hidden="true" size={14} />
+                  <div
+                    className={cn(
+                      "h-[80px] rounded-[20px] overflow-hidden transition-[height] duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]",
+                      (isConjureActive || isConjureLoading) && "h-[600px]",
                     )}
-                    {selectedBrowserSession ? "Restart session" : "Start session"}
-                  </button>
-                </div>
-              </div>
-
-              {selectedBrowserSession ? (
-                <>
-                  <div className="arena-browser-session-status">
-                    <strong className="font-barlow">
-                      {selectedBrowserSession.currentStepLabel}
-                    </strong>
-                    <span className="font-inter">
-                      Live remote session target:{" "}
-                      {selectedBrowserSession.browserTargetSymbol ??
-                        selectedBrowserSession.marketSymbol}{" "}
-                      ·{" "}
-                      {selectedBrowserSession.browserTargetTimeframe ??
-                        selectedBrowserSession.timeframe}{" "}
-                      on Deriv.
-                    </span>
-                  </div>
-
-                  <BrowserSessionViewport sessionId={selectedBrowserSession.id} />
-
-                  <div className="arena-browser-session-events">
-                    {selectedBrowserSessionEvents.map((event) => (
-                      <div
-                        key={event.id}
-                        className={`arena-browser-step arena-browser-step-${event.status}`}
+                  >
+                    {isConjureIdle ? (
+                      <button
+                        type="button"
+                        className="relative block w-full h-full p-0 border-0 rounded-[20px] overflow-hidden cursor-pointer bg-[#f5f5f2] shadow-[inset_0_1px_0_rgba(255,255,255,0.88),inset_0_-1px_0_rgba(0,0,0,0.08)] transition-transform duration-[120ms] hover:-translate-y-px active:scale-[0.985]"
+                        onClick={() => void launchBrowserSession()}
                       >
-                        <span className="arena-chip font-barlow">
-                          {String(event.sequence).padStart(2, "0")}
+                        <LiquidMetal
+                          className="!absolute inset-0 !w-full !h-full pointer-events-none"
+                          colorBack="#a9a9ab"
+                          colorTint="#ffffff"
+                          shape="none"
+                          repetition={2.6}
+                          softness={0.12}
+                          shiftRed={0.18}
+                          shiftBlue={0.22}
+                          distortion={0.08}
+                          contour={0.52}
+                          angle={70}
+                          speed={1}
+                          scale={1}
+                          fit="cover"
+                          width="100%"
+                          height="100%"
+                        />
+                        <span className="absolute inset-[18px] z-[2] inline-flex min-h-[44px] items-center justify-center rounded-md border border-[rgba(255,255,255,0.42)] bg-[rgba(255,255,255,0.16)] px-6 text-[clamp(22px,2vw,30px)] font-medium tracking-[0.02em] !text-[#121212] [text-shadow:0_1px_0_rgba(255,255,255,0.34)] shadow-[inset_0_1px_0_rgba(255,255,255,0.34),inset_0_-1px_0_rgba(255,255,255,0.08),0_18px_40px_rgba(0,0,0,0.08)] backdrop-blur-[14px] pointer-events-none font-instrument">
+                          Conjure {agentName}
                         </span>
-                        <div>
-                          <strong className="font-barlow">{event.label}</strong>
-                          <span className="font-inter">{event.detail}</span>
-                        </div>
+                      </button>
+                    ) : isConjureLoading ? (
+                      <div className="relative block w-full h-full p-0 border-0 rounded-[20px] overflow-hidden">
+                        <ImageDithering
+                          image="https://res.cloudinary.com/ddlz0zesx/image/upload/v1777216792/enter_the_arena_smth_qazlcz.png"
+                          colorBack="#000c38"
+                          colorFront="#94ffaf"
+                          colorHighlight="#eaff94"
+                          originalColors={false}
+                          inverted={false}
+                          type="8x8"
+                          size={conjureDitheringSize}
+                          colorSteps={2}
+                          fit="cover"
+                          width="100%"
+                          height="100%"
+                        />
+                        <span className="absolute inset-0 flex items-center justify-center text-[clamp(18px,3vw,26px)] font-normal text-[#94ffaf] tracking-[-0.3px] pointer-events-none [text-shadow:0_1px_12px_rgba(0,12,56,0.6)] font-instrument">
+                          Conjuring {agentName}...
+                        </span>
                       </div>
-                    ))}
+                    ) : (
+                      <BrowserSessionViewport
+                        sessionId={selectedBrowserSession!.id}
+                        sessionStatus={selectedBrowserSession!.status}
+                        onRestart={() => launchBrowserSession()}
+                        onStartupExhausted={() => {
+                          if (
+                            autoRestartedConjureSelectionKey !==
+                            conjureSelectionKey
+                          ) {
+                            setAutoRestartedConjureSelectionKey(
+                              conjureSelectionKey,
+                            );
+                            void launchBrowserSession({ forceNew: true });
+                            return;
+                          }
+
+                          setRevealedConjureSelectionKey(null);
+                          setAutoRestartedConjureSelectionKey(null);
+                          setIsStartingBrowserSession(false);
+                        }}
+                      />
+                    )}
                   </div>
-                </>
-              ) : (
-                <EmptyState
-                  title="No live browser session yet"
-                  description="Start a Deriv review session to prove the remote browser lifecycle for this market and timeframe."
-                />
+                );
+              })()}
+            </article>
+
+            <aside
+              className={cn(
+                "grid gap-[18px]",
+                isWideWorkspace && "grid-cols-[repeat(3,minmax(0,1fr))]",
               )}
-            </div>
+            >
+              {selectedVisionDecision ? (
+                <article className={cn(surfaceCard, "p-5")}>
+                  <DisclosureSection
+                    title="Vision analysis"
+                    icon={<Eye aria-hidden="true" size={18} />}
+                    badge={
+                      <span
+                        className={cn(
+                          pillClass(
+                            selectedVisionDecision.verdict === "valid"
+                              ? "supportive"
+                              : selectedVisionDecision.verdict === "staged"
+                                ? "neutral"
+                                : "risk",
+                          ),
+                          "font-barlow",
+                        )}
+                      >
+                        {selectedVisionDecision.verdict}
+                      </span>
+                    }
+                  >
+                    <div className="grid gap-[14px]">
+                      <div className="flex flex-wrap gap-[6px]">
+                        <span className={cn(chipClass, "font-barlow")}>
+                          {selectedVisionDecision.regime}
+                        </span>
+                        <span className={cn(chipClass, "font-barlow")}>
+                          {selectedVisionDecision.direction !== "none"
+                            ? selectedVisionDecision.direction
+                            : "no direction"}
+                        </span>
+                        <span className={cn(chipClass, "font-barlow")}>
+                          {Math.round(selectedVisionDecision.confidence * 100)}%
+                          confidence
+                        </span>
+                      </div>
+                      <p className="m-0 text-[rgba(18,18,18,0.72)] text-[13.5px] leading-[1.65] font-inter">
+                        {selectedVisionDecision.rationale}
+                      </p>
+                      {selectedVisionDecision.correctedT1 ? (
+                        <div className="grid gap-1 p-3 rounded-[12px] bg-[rgba(250,250,247,0.94)]">
+                          <span className="font-barlow text-[12px] font-semibold text-[rgba(18,18,18,0.7)]">
+                            T1 — {selectedVisionDecision.correctedT1.price}
+                          </span>
+                          <span className="font-inter text-[13px] text-[rgba(18,18,18,0.6)] leading-[1.5]">
+                            {selectedVisionDecision.correctedT1.note}
+                          </span>
+                        </div>
+                      ) : null}
+                      {selectedVisionDecision.correctedT2 ? (
+                        <div className="grid gap-1 p-3 rounded-[12px] bg-[rgba(250,250,247,0.94)]">
+                          <span className="font-barlow text-[12px] font-semibold text-[rgba(18,18,18,0.7)]">
+                            T2 — {selectedVisionDecision.correctedT2.price}
+                          </span>
+                          <span className="font-inter text-[13px] text-[rgba(18,18,18,0.6)] leading-[1.5]">
+                            {selectedVisionDecision.correctedT2.note}
+                          </span>
+                        </div>
+                      ) : null}
+                      {selectedVisionDecision.issues.length > 0 ? (
+                        <div className="grid gap-2">
+                          <span className="font-barlow text-[rgba(18,18,18,0.45)] text-[11px] font-semibold tracking-[0.12em] uppercase">
+                            Open issues
+                          </span>
+                          <ul className="m-0 pl-[18px] grid gap-[6px]">
+                            {selectedVisionDecision.issues.map((issue, i) => (
+                              <li
+                                key={i}
+                                className="font-inter text-[rgba(18,18,18,0.62)] text-[13px] leading-[1.5]"
+                              >
+                                {issue}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+                    </div>
+                  </DisclosureSection>
+                </article>
+              ) : null}
 
-            <TradingViewWorkspace
-              marketSymbol={selectedMarketSymbol}
-              timeframe={selectedAgent.timeframe}
-              trace={selectedTrace}
-              tradeIdea={selectedTradeIdea}
-              position={selectedPosition}
-              events={selectedEvents}
-              marketNewsState={selectedMarket?.newsState}
-              marketNewsUpdatedAt={selectedMarket?.newsUpdatedAt}
-              isWideLayout={isWideWorkspace}
-              onToggleLayout={() => setIsWideWorkspace((current) => !current)}
-            />
-          </article>
+              <article className={cn(surfaceCard, "p-5")}>
+                <DisclosureSection
+                  title="News confluence"
+                  icon={<Newspaper aria-hidden="true" size={18} />}
+                  badge={
+                    selectedNewsContexts.length ? (
+                      <span className={cn(chipClass, "font-barlow")}>
+                        {selectedNewsContexts.length} items
+                      </span>
+                    ) : undefined
+                  }
+                >
+                  {selectedNewsRationale ? (
+                    <div className="grid gap-2 mb-[14px] p-[16px_18px] rounded-[16px] bg-[rgba(250,250,247,0.96)]">
+                      <span className="font-barlow text-[rgba(18,18,18,0.48)] text-[11px] font-semibold tracking-[0.14em] uppercase">
+                        Why this confluence
+                      </span>
+                      <p className="font-inter m-0 text-[rgba(18,18,18,0.72)] text-[14px] leading-[1.6]">
+                        {selectedNewsRationale}
+                      </p>
+                    </div>
+                  ) : null}
+                  <div className="grid gap-[10px] mt-[18px]">
+                    {selectedNewsContexts.length ? (
+                      selectedNewsContexts.map((item) => {
+                        const isCalendarRow =
+                          item.sourceLabel === "Economic Calendar";
 
-          <aside className="arena-detail-sidebar">
-            <article className="arena-surface">
-              <DisclosureSection
-                title="News confluence"
-                icon={<Newspaper aria-hidden="true" size={18} />}
-                badge={
-                  selectedNewsContexts.length ? (
-                    <span className="arena-chip font-barlow">{selectedNewsContexts.length} items</span>
-                  ) : undefined
-                }
-              >
-                {selectedNewsRationale ? (
-                  <div className="arena-news-rationale">
-                    <span className="font-barlow">Why this confluence</span>
-                    <p className="font-inter">{selectedNewsRationale}</p>
+                        return (
+                          <div
+                            key={item.id}
+                            className={cn(
+                              "grid gap-[6px] p-[14px] rounded-[16px] no-underline text-inherit",
+                              isCalendarRow
+                                ? "bg-[rgba(247,240,231,0.96)]"
+                                : "bg-[rgba(250,250,247,0.92)]",
+                            )}
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="inline-flex flex-wrap items-center gap-2">
+                                <span
+                                  className={cn(
+                                    pillClass(item.state),
+                                    "font-barlow",
+                                  )}
+                                >
+                                  {confluenceToneMap[item.state]}
+                                </span>
+                                <span className={cn(chipClass, "font-barlow")}>
+                                  {isCalendarRow
+                                    ? "Scheduled event"
+                                    : "Headline flow"}
+                                </span>
+                              </div>
+                              {item.url ? (
+                                <a
+                                  href={item.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-center gap-[6px] text-[rgba(18,18,18,0.58)] text-[11px] font-semibold tracking-[0.14em] uppercase no-underline hover:text-[rgba(18,18,18,0.86)] font-barlow"
+                                >
+                                  Source
+                                  <ExternalLink aria-hidden="true" size={12} />
+                                </a>
+                              ) : null}
+                            </div>
+                            <strong className="font-barlow text-[15px] font-semibold">
+                              {item.headline}
+                            </strong>
+                            <span className="font-inter text-[rgba(18,18,18,0.62)] text-[14px] leading-[1.6]">
+                              {item.marketSymbol} · {item.sourceLabel} ·{" "}
+                              {item.publishedAt}
+                            </span>
+                            <p className="font-inter mt-[2px] mb-0 text-[rgba(18,18,18,0.62)] text-[14px] leading-[1.6]">
+                              {item.note}
+                            </p>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <EmptyState
+                        title="No current news confluence"
+                        description="No mapped news context is attached to this market yet. The agent will rely on technical structure until a confluence signal is logged."
+                      />
+                    )}
                   </div>
-                ) : null}
-                <div className="arena-news-list">
-                  {selectedNewsContexts.length ? (
-                    selectedNewsContexts.map((item) => {
-                      const isCalendarRow = item.sourceLabel === "Economic Calendar";
+                </DisclosureSection>
+              </article>
 
-                      return (
+              <article className={cn(surfaceCard, "p-5")}>
+                <DisclosureSection
+                  title="Watchlist state"
+                  icon={<Radar aria-hidden="true" size={18} />}
+                  badge={
+                    selectedWatchlist.length ? (
+                      <span className={cn(chipClass, "font-barlow")}>
+                        {selectedWatchlist.length} active
+                      </span>
+                    ) : undefined
+                  }
+                >
+                  <div className="grid gap-[10px] mt-[18px]">
+                    {selectedWatchlist.length ? (
+                      selectedWatchlist.map((item) => (
                         <div
                           key={item.id}
-                          className={`arena-news-row${isCalendarRow ? " is-calendar" : " is-headline"}`}
+                          className="grid gap-[6px] p-[14px] rounded-[16px] bg-[rgba(250,250,247,0.92)]"
                         >
-                          <div className="arena-news-row-top">
-                            <div className="arena-news-row-badges">
-                              <span className={`arena-pill is-${item.state} font-barlow`}>
-                                {confluenceToneMap[item.state]}
-                              </span>
-                              <span className="arena-chip font-barlow">
-                                {isCalendarRow ? "Scheduled event" : "Headline flow"}
-                              </span>
-                            </div>
-                            {item.url ? (
-                              <a
-                                href={item.url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="arena-news-link font-barlow"
-                              >
-                                Source
-                                <ExternalLink aria-hidden="true" size={12} />
-                              </a>
-                            ) : null}
-                          </div>
-                          <strong className="font-barlow">{item.headline}</strong>
-                          <span className="font-inter">
-                            {item.marketSymbol} · {item.sourceLabel} · {item.publishedAt}
+                          <strong className="font-barlow text-[15px] font-semibold">
+                            {item.setupLabel}
+                          </strong>
+                          <span className="font-inter text-[rgba(18,18,18,0.62)] text-[14px] leading-[1.6]">
+                            {item.marketSymbol} · {item.timeframe} ·{" "}
+                            {item.status}
                           </span>
-                          <p className="font-inter">{item.note}</p>
+                          <p className="font-inter mt-[2px] mb-0 text-[rgba(18,18,18,0.62)] text-[14px] leading-[1.6]">
+                            {item.triggerNote}
+                          </p>
                         </div>
-                      );
-                    })
-                  ) : (
-                    <EmptyState
-                      title="No current news confluence"
-                      description="No mapped news context is attached to this market yet. The agent will rely on technical structure until a confluence signal is logged."
-                    />
-                  )}
-                </div>
-              </DisclosureSection>
-            </article>
+                      ))
+                    ) : (
+                      <EmptyState
+                        title="Nothing on watch here yet"
+                        description="This market is in the agent's orbit, but there is no active watchlist state recorded for the current timeframe."
+                      />
+                    )}
+                  </div>
+                </DisclosureSection>
+              </article>
 
-            <article className="arena-surface">
-              <DisclosureSection
-                title="Watchlist state"
-                icon={<Radar aria-hidden="true" size={18} />}
-                badge={
-                  selectedWatchlist.length ? (
-                    <span className="arena-chip font-barlow">{selectedWatchlist.length} active</span>
-                  ) : undefined
-                }
-              >
-                <div className="arena-watchlist">
-                  {selectedWatchlist.length ? (
-                    selectedWatchlist.map((item) => (
-                      <div key={item.id} className="arena-watch-row">
-                        <strong className="font-barlow">{item.setupLabel}</strong>
-                        <span className="font-inter">
-                          {item.marketSymbol} · {item.timeframe} · {item.status}
-                        </span>
-                        <p className="font-inter">{item.triggerNote}</p>
-                      </div>
-                    ))
-                  ) : (
-                    <EmptyState
-                      title="Nothing on watch here yet"
-                      description="This market is in the agent's orbit, but there is no active watchlist state recorded for the current timeframe."
-                    />
-                  )}
-                </div>
-              </DisclosureSection>
-            </article>
-
-            <article className="arena-surface">
-              <DisclosureSection
-                title="Agent event log"
-                icon={<Activity aria-hidden="true" size={18} />}
-                badge={
-                  selectedEvents.length ? (
-                    <span className="arena-chip font-barlow">{selectedEvents.length} steps</span>
-                  ) : undefined
-                }
-              >
-                <div className="arena-event-list is-detailed">
-                  {selectedEvents.length ? (
-                    selectedEvents.map((event) => (
-                      <div key={event.id} className="arena-event-row">
-                        <span className="arena-event-time font-barlow">
-                          {event.timestamp}
-                        </span>
-                        <div>
-                          <strong className="font-barlow">{event.title}</strong>
-                          <span className="font-inter">{event.detail}</span>
+              <article className={cn(surfaceCard, "p-5")}>
+                <DisclosureSection
+                  title="Agent event log"
+                  icon={<Activity aria-hidden="true" size={18} />}
+                  badge={
+                    selectedEvents.length ? (
+                      <span className={cn(chipClass, "font-barlow")}>
+                        {selectedEvents.length} steps
+                      </span>
+                    ) : undefined
+                  }
+                >
+                  <div className="grid gap-[10px] mt-[18px]">
+                    {selectedEvents.length ? (
+                      selectedEvents.map((event) => (
+                        <div
+                          key={event.id}
+                          className="grid grid-cols-[auto_1fr] gap-3 p-[14px] rounded-[16px] bg-[rgba(250,250,247,0.92)]"
+                        >
+                          <span className="font-barlow text-[rgba(18,18,18,0.4)] text-[11px] font-bold tracking-[0.12em] uppercase">
+                            {event.timestamp}
+                          </span>
+                          <div>
+                            <strong className="font-barlow text-[15px] font-semibold">
+                              {event.title}
+                            </strong>
+                            <span className="font-inter text-[rgba(18,18,18,0.62)] text-[14px] leading-[1.6]">
+                              {event.detail}
+                            </span>
+                          </div>
                         </div>
-                      </div>
-                    ))
-                  ) : (
-                    <EmptyState
-                      title="No event history for this market"
-                      description="The selected agent has not yet logged market-specific events for this symbol."
-                    />
-                  )}
-                </div>
-              </DisclosureSection>
-            </article>
-          </aside>
-        </section>
+                      ))
+                    ) : (
+                      <EmptyState
+                        title="No event history for this market"
+                        description="The selected agent has not yet logged market-specific events for this symbol."
+                      />
+                    )}
+                  </div>
+                </DisclosureSection>
+              </article>
+            </aside>
+          </section>
+        ) : null}
       </section>
     </main>
   );

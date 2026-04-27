@@ -38,6 +38,7 @@ import {
   getPythHistorySymbol,
   timeframeMinutesMap,
 } from "@/lib/pyth-history";
+import { cn } from "@/lib/utils";
 
 type TradingViewWorkspaceProps = {
   marketSymbol: string;
@@ -853,16 +854,25 @@ export default function TradingViewWorkspace({
     replayStepAnnotations,
   ]);
 
+  // Suppress unused variable warning — priceRange is kept for future use
+  void priceRange;
+
   return (
-    <section className="arena-workspace-card">
-      <div className="arena-surface-header">
-        <div className="arena-surface-title">
+    <section className="border border-[rgba(18,18,18,0.08)] rounded-[18px] bg-[rgba(255,255,255,0.78)] shadow-[0_18px_40px_rgba(0,0,0,0.05)] backdrop-blur-[16px] p-5">
+      {/* arena-surface-header */}
+      <div className="flex items-center justify-between gap-3">
+        {/* arena-surface-title */}
+        <div className="flex items-center gap-[10px]">
           <CandlestickChart aria-hidden="true" size={18} />
-          <h3 className="font-barlow">Chart workspace</h3>
+          <h3 className="m-0 text-[14px] font-semibold tracking-[0.06em] uppercase font-barlow">
+            Chart workspace
+          </h3>
         </div>
-        <div className="arena-workspace-meta">
+        {/* arena-workspace-meta */}
+        <div className="flex flex-wrap gap-[10px] justify-end">
+          {/* arena-tool-chip */}
           <button
-            className="arena-tool-chip font-barlow"
+            className="inline-flex items-center gap-2 min-h-[40px] px-[14px] border border-[rgba(18,18,18,0.08)] rounded-full bg-[rgba(255,255,255,0.88)] text-[rgba(18,18,18,0.76)] text-[12px] font-semibold tracking-[0.08em] uppercase cursor-pointer font-barlow"
             type="button"
             onClick={onToggleLayout}
             aria-label={isWideLayout ? "Reduce chart width" : "Expand chart width"}
@@ -874,21 +884,47 @@ export default function TradingViewWorkspace({
             )}
             {isWideLayout ? "Compact view" : "Full width"}
           </button>
-          <span className="arena-chip font-barlow">{marketSymbol}</span>
-          <span className="arena-chip font-barlow">{timeframe}</span>
-          <span className={`arena-pill is-${marketNewsState} font-barlow`}>
+          {/* arena-chip */}
+          <span className="inline-flex items-center min-h-[32px] px-3 rounded-full border border-[rgba(18,18,18,0.08)] bg-[rgba(255,255,255,0.88)] text-[rgba(18,18,18,0.48)] text-[11px] font-semibold tracking-[0.14em] uppercase font-barlow">
+            {marketSymbol}
+          </span>
+          <span className="inline-flex items-center min-h-[32px] px-3 rounded-full border border-[rgba(18,18,18,0.08)] bg-[rgba(255,255,255,0.88)] text-[rgba(18,18,18,0.48)] text-[11px] font-semibold tracking-[0.14em] uppercase font-barlow">
+            {timeframe}
+          </span>
+          {/* arena-pill with is-* tone */}
+          <span
+            className={cn(
+              "inline-flex items-center justify-center w-fit min-h-[28px] px-[10px] rounded-full text-[11px] font-semibold tracking-[0.14em] uppercase font-barlow",
+              marketNewsState === "supportive" && "bg-[rgba(26,127,70,0.12)] text-[#1a7f46]",
+              marketNewsState === "neutral" && "bg-[rgba(18,18,18,0.06)] text-[rgba(18,18,18,0.64)]",
+              marketNewsState === "risk" && "bg-[rgba(163,48,48,0.12)] text-[#a33030]",
+            )}
+          >
             {marketNewsState}
           </span>
-          <span className="arena-chip font-barlow">News {newsFreshnessLabel}</span>
-          <span className={`arena-chip font-barlow tone-${dataSourceTone}`}>
+          {/* arena-chip */}
+          <span className="inline-flex items-center min-h-[32px] px-3 rounded-full border border-[rgba(18,18,18,0.08)] bg-[rgba(255,255,255,0.88)] text-[rgba(18,18,18,0.48)] text-[11px] font-semibold tracking-[0.14em] uppercase font-barlow">
+            News {newsFreshnessLabel}
+          </span>
+          {/* arena-chip with tone-live / tone-error */}
+          <span
+            className={cn(
+              "inline-flex items-center min-h-[32px] px-3 rounded-full border border-[rgba(18,18,18,0.08)] bg-[rgba(255,255,255,0.88)] text-[rgba(18,18,18,0.48)] text-[11px] font-semibold tracking-[0.14em] uppercase font-barlow",
+              dataSourceTone === "live" && "bg-[rgba(26,127,70,0.1)] text-[#1a7f46] border-[rgba(26,127,70,0.2)]",
+              dataSourceTone === "error" && "bg-[rgba(163,48,48,0.1)] text-[#a33030] border-[rgba(163,48,48,0.2)]",
+            )}
+          >
             {dataSourceLabel}
           </span>
           {livePrice !== null ? (
-            <span className="arena-chip font-barlow">
+            <span className="inline-flex items-center min-h-[32px] px-3 rounded-full border border-[rgba(18,18,18,0.08)] bg-[rgba(255,255,255,0.88)] text-[rgba(18,18,18,0.48)] text-[11px] font-semibold tracking-[0.14em] uppercase font-barlow">
               {livePrice.toFixed(marketSymbol === "EUR/USD" ? 4 : 2)}
               {liveDeltaPercent !== null ? (
                 <span
-                  className={`arena-chip-move ${liveDeltaPercent >= 0 ? "is-positive" : "is-negative"}`}
+                  className={cn(
+                    "ml-1",
+                    liveDeltaPercent >= 0 ? "text-[#1a7f46]" : "text-[#a33030]",
+                  )}
                 >
                   {liveDeltaPercent >= 0 ? "+" : ""}
                   {liveDeltaPercent.toFixed(2)}%
@@ -897,18 +933,28 @@ export default function TradingViewWorkspace({
             </span>
           ) : null}
           {trace ? (
-            <span className="arena-chip font-barlow">{trace.updatedAt}</span>
+            <span className="inline-flex items-center min-h-[32px] px-3 rounded-full border border-[rgba(18,18,18,0.08)] bg-[rgba(255,255,255,0.88)] text-[rgba(18,18,18,0.48)] text-[11px] font-semibold tracking-[0.14em] uppercase font-barlow">
+              {trace.updatedAt}
+            </span>
           ) : null}
         </div>
       </div>
 
-      <div className="arena-workspace-toolbar" aria-label="Workspace layers">
-        <button className="arena-tool-chip font-barlow is-static" type="button">
+      {/* arena-workspace-toolbar */}
+      <div className="flex flex-wrap gap-[10px] mt-4" aria-label="Workspace layers">
+        {/* arena-tool-chip is-static */}
+        <button
+          className="inline-flex items-center gap-2 min-h-[40px] px-[14px] border border-[rgba(18,18,18,0.08)] rounded-full bg-[rgba(255,255,255,0.88)] text-[rgba(18,18,18,0.76)] text-[12px] font-semibold tracking-[0.08em] uppercase cursor-default font-barlow"
+          type="button"
+        >
           <Layers3 aria-hidden="true" size={14} />
           Agent layers
         </button>
         <button
-          className={`arena-tool-chip font-barlow${visibleLayers.trendline ? " is-active" : ""}`}
+          className={cn(
+            "inline-flex items-center gap-2 min-h-[40px] px-[14px] border border-[rgba(18,18,18,0.08)] rounded-full bg-[rgba(255,255,255,0.88)] text-[rgba(18,18,18,0.76)] text-[12px] font-semibold tracking-[0.08em] uppercase cursor-pointer font-barlow",
+            visibleLayers.trendline && "border-[rgba(18,18,18,0.14)] bg-[rgba(18,18,18,0.08)] text-[#111111]",
+          )}
           type="button"
           onClick={() => toggleLayer("trendline")}
           aria-pressed={visibleLayers.trendline}
@@ -917,7 +963,10 @@ export default function TradingViewWorkspace({
           Trendline
         </button>
         <button
-          className={`arena-tool-chip font-barlow${visibleLayers.fibonacci ? " is-active" : ""}`}
+          className={cn(
+            "inline-flex items-center gap-2 min-h-[40px] px-[14px] border border-[rgba(18,18,18,0.08)] rounded-full bg-[rgba(255,255,255,0.88)] text-[rgba(18,18,18,0.76)] text-[12px] font-semibold tracking-[0.08em] uppercase cursor-pointer font-barlow",
+            visibleLayers.fibonacci && "border-[rgba(18,18,18,0.14)] bg-[rgba(18,18,18,0.08)] text-[#111111]",
+          )}
           type="button"
           onClick={() => toggleLayer("fibonacci")}
           aria-pressed={visibleLayers.fibonacci}
@@ -926,7 +975,10 @@ export default function TradingViewWorkspace({
           Fibonacci
         </button>
         <button
-          className={`arena-tool-chip font-barlow${visibleLayers.zone ? " is-active" : ""}`}
+          className={cn(
+            "inline-flex items-center gap-2 min-h-[40px] px-[14px] border border-[rgba(18,18,18,0.08)] rounded-full bg-[rgba(255,255,255,0.88)] text-[rgba(18,18,18,0.76)] text-[12px] font-semibold tracking-[0.08em] uppercase cursor-pointer font-barlow",
+            visibleLayers.zone && "border-[rgba(18,18,18,0.14)] bg-[rgba(18,18,18,0.08)] text-[#111111]",
+          )}
           type="button"
           onClick={() => toggleLayer("zone")}
           aria-pressed={visibleLayers.zone}
@@ -935,7 +987,10 @@ export default function TradingViewWorkspace({
           Zones
         </button>
         <button
-          className={`arena-tool-chip font-barlow${visibleLayers.levels ? " is-active" : ""}`}
+          className={cn(
+            "inline-flex items-center gap-2 min-h-[40px] px-[14px] border border-[rgba(18,18,18,0.08)] rounded-full bg-[rgba(255,255,255,0.88)] text-[rgba(18,18,18,0.76)] text-[12px] font-semibold tracking-[0.08em] uppercase cursor-pointer font-barlow",
+            visibleLayers.levels && "border-[rgba(18,18,18,0.14)] bg-[rgba(18,18,18,0.08)] text-[#111111]",
+          )}
           type="button"
           onClick={() => toggleLayer("levels")}
           aria-pressed={visibleLayers.levels}
@@ -945,19 +1000,25 @@ export default function TradingViewWorkspace({
         </button>
       </div>
 
-      <div className="arena-workspace-data-age">
-        <span className="font-barlow">Feed status</span>
-        <span className="font-inter">
+      {/* arena-workspace-data-age */}
+      <div className="grid gap-1 mt-[14px]">
+        <span className="text-[rgba(18,18,18,0.46)] text-[11px] font-semibold tracking-[0.12em] uppercase font-barlow">
+          Feed status
+        </span>
+        <span className="text-[rgba(18,18,18,0.62)] text-[14px] leading-[1.5] font-inter">
           {candleTimeLabel
             ? `Last candle ${candleTimeLabel} · refreshed ${dataAgeLabel}`
             : `No confirmed Pyth candle yet · ${dataAgeLabel}`}
         </span>
       </div>
 
-      <div className="arena-replay-bar">
-        <div className="arena-replay-controls">
+      {/* arena-replay-bar */}
+      <div className="grid gap-[14px] mt-4 p-4 border border-[rgba(18,18,18,0.08)] rounded-[18px] bg-[rgba(255,255,255,0.76)]">
+        {/* arena-replay-controls */}
+        <div className="flex items-center gap-[10px]">
+          {/* arena-replay-button */}
           <button
-            className="arena-replay-button"
+            className="inline-flex items-center justify-center gap-2 min-h-[40px] px-[14px] border border-[rgba(18,18,18,0.08)] rounded-full bg-[rgba(250,250,247,0.92)] text-[rgba(18,18,18,0.78)] cursor-pointer"
             type="button"
             onClick={() => {
               setIsPlaying(false);
@@ -967,8 +1028,9 @@ export default function TradingViewWorkspace({
           >
             <ChevronLeft aria-hidden="true" size={16} />
           </button>
+          {/* arena-replay-button is-primary */}
           <button
-            className="arena-replay-button is-primary"
+            className="inline-flex items-center justify-center gap-2 min-h-[40px] px-[14px] border border-[rgba(18,18,18,0.08)] rounded-full bg-[#111111] text-[#f7f7f3] cursor-pointer"
             type="button"
             onClick={() => {
               if (replayStep >= replaySteps) {
@@ -990,8 +1052,9 @@ export default function TradingViewWorkspace({
               {isPlaying ? "Pause replay" : replayStep >= replaySteps ? "Restart replay" : "Play replay"}
             </span>
           </button>
+          {/* arena-replay-button */}
           <button
-            className="arena-replay-button"
+            className="inline-flex items-center justify-center gap-2 min-h-[40px] px-[14px] border border-[rgba(18,18,18,0.08)] rounded-full bg-[rgba(250,250,247,0.92)] text-[rgba(18,18,18,0.78)] cursor-pointer"
             type="button"
             onClick={() => {
               setIsPlaying(false);
@@ -1003,7 +1066,8 @@ export default function TradingViewWorkspace({
           </button>
         </div>
 
-        <div className="arena-replay-track">
+        {/* arena-replay-track */}
+        <div className="flex flex-wrap items-center gap-[10px]">
           {events.map((event, index) => {
             const step = index + 1;
             const isVisible = step <= replayStep;
@@ -1012,7 +1076,11 @@ export default function TradingViewWorkspace({
             return (
               <button
                 key={event.id}
-                className={`arena-replay-node${isVisible ? " is-visible" : ""}${isActive ? " is-active" : ""}`}
+                className={cn(
+                  "flex items-center gap-2 min-h-[36px] px-[10px] border border-[rgba(18,18,18,0.08)] rounded-full bg-[rgba(250,250,247,0.9)] text-[rgba(18,18,18,0.44)] cursor-pointer",
+                  isVisible && "text-[rgba(18,18,18,0.76)]",
+                  isActive && "border-[rgba(18,18,18,0.16)] bg-[rgba(18,18,18,0.06)]",
+                )}
                 type="button"
                 onClick={() => {
                   setIsPlaying(false);
@@ -1020,7 +1088,14 @@ export default function TradingViewWorkspace({
                 }}
                 aria-label={`Jump to ${event.title}`}
               >
-                <span className="arena-replay-dot" />
+                {/* arena-replay-dot */}
+                <span
+                  className={cn(
+                    "w-2 h-2 rounded-full bg-[rgba(18,18,18,0.2)]",
+                    isVisible && "bg-[rgba(18,18,18,0.58)]",
+                    isActive && "bg-[#111111]",
+                  )}
+                />
                 <span className="font-barlow">{event.timestamp}</span>
               </button>
             );
@@ -1028,17 +1103,23 @@ export default function TradingViewWorkspace({
         </div>
 
         {activeEvent ? (
-          <div className="arena-replay-summary">
-            <strong className="font-barlow">{activeEvent.title}</strong>
-            <span className="font-inter">{activeEvent.detail}</span>
+          /* arena-replay-summary */
+          <div className="grid gap-1">
+            <strong className="text-[15px] font-semibold font-barlow">{activeEvent.title}</strong>
+            <span className="text-[rgba(18,18,18,0.62)] text-[14px] leading-[1.6] font-inter">
+              {activeEvent.detail}
+            </span>
           </div>
         ) : null}
       </div>
 
-      <div className="arena-workspace-frame">
-        <div ref={chartContainerRef} className="arena-tradingview-root" />
+      {/* arena-workspace-frame */}
+      <div className="relative min-h-[560px] mt-[18px] overflow-hidden rounded-[20px] border border-[rgba(18,18,18,0.08)] bg-[linear-gradient(180deg,rgba(255,255,255,0.72),rgba(247,247,243,0.72)),linear-gradient(rgba(18,18,18,0.04)_1px,transparent_1px),linear-gradient(90deg,rgba(18,18,18,0.04)_1px,transparent_1px)] [background-size:auto,100%_52px,52px_100%]">
+        {/* arena-tradingview-root */}
+        <div ref={chartContainerRef} className="w-full min-h-[560px]" />
 
-        <div className="arena-lightweight-overlay" aria-hidden="true">
+        {/* arena-lightweight-overlay */}
+        <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
           {activeAreaFocus ? (
             <ReplayAreaFocusOverlay
               key={`focus-area-${focusPulseKey}`}
@@ -1075,31 +1156,44 @@ export default function TradingViewWorkspace({
         </div>
       </div>
 
-      <div className="arena-workspace-lower">
-        <div className="arena-workspace-panel">
-          <details className="arena-disclosure">
-            <summary className="arena-disclosure-summary arena-disclosure-summary--compact">
-              <div className="arena-workspace-panel-title">
+      {/* arena-workspace-lower */}
+      <div className="grid grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)] gap-4 mt-4">
+        {/* arena-workspace-panel */}
+        <div className="grid gap-3 p-5 rounded-[18px] bg-[rgba(255,255,255,0.9)] border border-[rgba(18,18,18,0.08)]">
+          {/* arena-disclosure — group for group-open: variant */}
+          <details className="group grid gap-0 open:gap-[14px]">
+            {/* arena-disclosure-summary arena-disclosure-summary--compact */}
+            <summary className="flex items-center justify-between gap-3 list-none cursor-pointer [&::-webkit-details-marker]:hidden min-h-[40px]">
+              {/* arena-workspace-panel-title */}
+              <div className="flex items-center gap-[10px]">
                 <Sparkles aria-hidden="true" size={16} />
-                <h4 className="font-barlow">Trace annotations</h4>
+                <h4 className="m-0 text-[14px] font-semibold tracking-[0.06em] uppercase font-barlow">
+                  Trace annotations
+                </h4>
               </div>
-              <div className="arena-disclosure-meta">
-                <span className="arena-chip font-barlow">
+              {/* arena-disclosure-meta */}
+              <div className="inline-flex items-center gap-[10px]">
+                {/* arena-chip */}
+                <span className="inline-flex items-center min-h-[32px] px-3 rounded-full border border-[rgba(18,18,18,0.08)] bg-[rgba(255,255,255,0.88)] text-[rgba(18,18,18,0.48)] text-[11px] font-semibold tracking-[0.14em] uppercase font-barlow">
                   {overlayAnnotations.length} items
                 </span>
+                {/* arena-disclosure-chevron */}
                 <ChevronDown
                   aria-hidden="true"
                   size={16}
-                  className="arena-disclosure-chevron"
+                  className="text-[rgba(18,18,18,0.48)] transition-transform duration-[160ms] group-open:rotate-180"
                 />
               </div>
             </summary>
-            <div className="arena-disclosure-body">
-              <div className="arena-annotation-list">
+            {/* arena-disclosure-body */}
+            <div className="grid gap-[14px]">
+              {/* arena-annotation-list */}
+              <div className="grid gap-[10px] mt-[18px]">
                 {overlayAnnotations.map((annotation) => (
-                  <div key={annotation.id} className="arena-annotation-row">
-                    <strong className="font-barlow">{annotation.label}</strong>
-                    <span className="font-inter">{annotation.detail}</span>
+                  /* arena-annotation-row */
+                  <div key={annotation.id} className="grid gap-[6px] p-[14px] rounded-[16px] bg-[rgba(250,250,247,0.92)]">
+                    <strong className="text-[15px] font-semibold font-barlow">{annotation.label}</strong>
+                    <span className="text-[rgba(18,18,18,0.62)] text-[14px] leading-[1.6] font-inter">{annotation.detail}</span>
                   </div>
                 ))}
               </div>
@@ -1107,38 +1201,51 @@ export default function TradingViewWorkspace({
           </details>
         </div>
 
-        <div className="arena-workspace-panel">
-          <details className="arena-disclosure">
-            <summary className="arena-disclosure-summary arena-disclosure-summary--compact">
-              <div className="arena-workspace-panel-title">
+        {/* arena-workspace-panel */}
+        <div className="grid gap-3 p-5 rounded-[18px] bg-[rgba(255,255,255,0.9)] border border-[rgba(18,18,18,0.08)]">
+          {/* arena-disclosure */}
+          <details className="group grid gap-0 open:gap-[14px]">
+            {/* arena-disclosure-summary arena-disclosure-summary--compact */}
+            <summary className="flex items-center justify-between gap-3 list-none cursor-pointer [&::-webkit-details-marker]:hidden min-h-[40px]">
+              {/* arena-workspace-panel-title */}
+              <div className="flex items-center gap-[10px]">
                 <CandlestickChart aria-hidden="true" size={16} />
-                <h4 className="font-barlow">Chart stack</h4>
+                <h4 className="m-0 text-[14px] font-semibold tracking-[0.06em] uppercase font-barlow">
+                  Chart stack
+                </h4>
               </div>
-              <div className="arena-disclosure-meta">
+              {/* arena-disclosure-meta */}
+              <div className="inline-flex items-center gap-[10px]">
+                {/* arena-disclosure-chevron */}
                 <ChevronDown
                   aria-hidden="true"
                   size={16}
-                  className="arena-disclosure-chevron"
+                  className="text-[rgba(18,18,18,0.48)] transition-transform duration-[160ms] group-open:rotate-180"
                 />
               </div>
             </summary>
-            <div className="arena-disclosure-body">
-              <div className="arena-workspace-note-list">
-                <div className="arena-watch-row">
-                  <strong className="font-barlow">Current layer</strong>
-                  <span className="font-inter">
+            {/* arena-disclosure-body */}
+            <div className="grid gap-[14px]">
+              {/* arena-workspace-note-list */}
+              <div className="grid gap-[10px]">
+                {/* arena-watch-row */}
+                <div className="grid gap-[6px] p-[14px] rounded-[16px] bg-[rgba(250,250,247,0.92)]">
+                  <strong className="text-[15px] font-semibold font-barlow">Current layer</strong>
+                  <span className="text-[rgba(18,18,18,0.62)] text-[14px] leading-[1.6] font-inter">
                     Lightweight Charts renders the actual candles and price levels.
                   </span>
                 </div>
-                <div className="arena-watch-row">
-                  <strong className="font-barlow">Annotation model</strong>
-                  <span className="font-inter">
+                {/* arena-watch-row */}
+                <div className="grid gap-[6px] p-[14px] rounded-[16px] bg-[rgba(250,250,247,0.92)]">
+                  <strong className="text-[15px] font-semibold font-barlow">Annotation model</strong>
+                  <span className="text-[rgba(18,18,18,0.62)] text-[14px] leading-[1.6] font-inter">
                     Fibs, trendlines, zones, and markers now reveal by replay step from trace data.
                   </span>
                 </div>
-                <div className="arena-watch-row">
-                  <strong className="font-barlow">Upgrade path</strong>
-                  <span className="font-inter">
+                {/* arena-watch-row */}
+                <div className="grid gap-[6px] p-[14px] rounded-[16px] bg-[rgba(250,250,247,0.92)]">
+                  <strong className="text-[15px] font-semibold font-barlow">Upgrade path</strong>
+                  <span className="text-[rgba(18,18,18,0.62)] text-[14px] leading-[1.6] font-inter">
                     Swap to TradingView Advanced Charts later when the official files arrive.
                   </span>
                 </div>
@@ -1247,7 +1354,10 @@ function OverlayAnnotation({
 
     return (
       <div
-        className={`arena-overlay-line tone-${geometryTone(geometry)}`}
+        className={cn(
+          "absolute h-[2px] origin-left",
+          geometryTone(geometry) === "muted" ? "bg-[rgba(17,17,17,0.32)]" : "bg-[rgba(17,17,17,0.82)]",
+        )}
         style={{
           left: `${left}px`,
           top: `${top}px`,
@@ -1281,7 +1391,7 @@ function OverlayAnnotation({
 
     return (
       <div
-        className="arena-overlay-fib"
+        className="absolute overflow-hidden border-t border-b border-dashed border-[rgba(17,17,17,0.18)] rounded-[18px] bg-[rgba(17,17,17,0.03)]"
         style={{
           left: `${Math.min(left, right)}px`,
           top: `${Math.min(top, bottom)}px`,
@@ -1292,7 +1402,7 @@ function OverlayAnnotation({
         {(geometry.levels ?? [0, 0.5, 0.618, 0.7, 1]).map((level) => (
           <div
             key={`${annotation.id}-${level}`}
-            className="arena-overlay-fib-level"
+            className="absolute left-0 right-0 h-px border-t border-dashed border-[rgba(17,17,17,0.18)]"
             style={{ top: `${level * 100}%` }}
           />
         ))}
@@ -1323,7 +1433,7 @@ function OverlayAnnotation({
 
     return (
       <div
-        className={`arena-overlay-zone tone-${geometryTone(geometry)}`}
+        className="absolute border border-dashed border-[rgba(17,17,17,0.28)] rounded-[16px] bg-[rgba(17,17,17,0.05)]"
         style={{
           left: `${Math.min(left, right)}px`,
           top: `${Math.min(top, bottom)}px`,
@@ -1346,9 +1456,21 @@ function OverlayAnnotation({
     return null;
   }
 
+  const tone = geometryTone(geometry);
+  const isStructural = annotation.type === "note";
+
   return (
     <div
-      className={`arena-overlay-tag tone-${geometryTone(geometry)}${annotation.type === "note" ? " is-structural" : ""}`}
+      className={cn(
+        "absolute inline-flex items-center min-h-[28px] px-[10px] rounded-full text-[11px] font-bold tracking-[0.1em] uppercase -translate-x-1/2 -translate-y-1/2",
+        tone === "entry" && "bg-[rgba(17,17,17,0.92)] text-[#f7f7f3]",
+        tone === "stop" && "bg-[rgba(163,48,48,0.12)] text-[#a33030]",
+        tone === "target" && "bg-[rgba(26,127,70,0.12)] text-[#1a7f46]",
+        (tone === "default" || tone === "muted" || tone === "zone") &&
+          "bg-[rgba(17,17,17,0.92)] text-[#f7f7f3]",
+        isStructural &&
+          "z-[5] min-h-[30px] px-[11px] bg-[rgba(17,17,17,0.92)] text-[#f7f7f3] shadow-[0_8px_20px_rgba(17,17,17,0.12),0_0_0_4px_rgba(255,255,255,0.66)]",
+      )}
       style={{
         left: `${left}px`,
         top: `${top}px`,
@@ -1382,7 +1504,14 @@ function ReplayFocusPoint({
 
   return (
     <div
-      className={`arena-overlay-focus-point tone-${point.tone}${isActive ? " is-active" : ""}`}
+      className={cn(
+        "absolute z-[4] w-3 h-3 border-2 border-[rgba(17,17,17,0.72)] rounded-full bg-[rgba(255,255,255,0.94)] shadow-[0_0_0_4px_rgba(17,17,17,0.08)] -translate-x-1/2 -translate-y-1/2",
+        point.tone === "entry" && "border-[#1a7f46]",
+        point.tone === "stop" && "border-[#a33030]",
+        point.tone === "target" && "border-[#1a7f46]",
+        point.tone === "zone" && "border-[#a16b14]",
+        isActive && "w-4 h-4 shadow-[0_0_0_5px_rgba(17,17,17,0.12),0_0_0_10px_rgba(17,17,17,0.05)] animate-[focus-pulse_520ms_ease-out]",
+      )}
       style={{
         left: `${left}px`,
         top: `${top}px`,
@@ -1412,27 +1541,38 @@ function ReplayFocusOverlay({
   }
 
   return (
-    <div className="arena-overlay-focus">
+    /* arena-overlay-focus */
+    <div className="absolute inset-0 pointer-events-none">
+      {/* arena-overlay-focus-band */}
       <div
-        className="arena-overlay-focus-band"
+        className="absolute left-0 right-0 h-[64px] bg-[linear-gradient(180deg,rgba(17,17,17,0)_0%,rgba(17,17,17,0.045)_50%,rgba(17,17,17,0)_100%)] -translate-y-1/2"
         style={{
           top: `${top}px`,
         }}
       />
+      {/* arena-overlay-focus-x */}
       <div
-        className="arena-overlay-focus-x"
+        className="absolute left-0 right-0 h-px border-t border-dashed border-[rgba(18,18,18,0.18)]"
         style={{
           top: `${top}px`,
         }}
       />
+      {/* arena-overlay-focus-y */}
       <div
-        className="arena-overlay-focus-y"
+        className="absolute top-0 bottom-0 w-px border-l border-dashed border-[rgba(18,18,18,0.18)]"
         style={{
           left: `${left}px`,
         }}
       />
+      {/* arena-overlay-focus-label */}
       <div
-        className={`arena-overlay-focus-label tone-${point.tone}`}
+        className={cn(
+          "absolute z-[3] px-[10px] py-[6px] rounded-full bg-[rgba(17,17,17,0.92)] text-[#f7f7f3] text-[11px] font-semibold tracking-[0.06em] uppercase translate-x-3 -translate-y-[30px] whitespace-nowrap",
+          point.tone === "entry" && "bg-[rgba(26,127,70,0.94)]",
+          point.tone === "stop" && "bg-[rgba(163,48,48,0.94)]",
+          point.tone === "target" && "bg-[rgba(26,127,70,0.94)]",
+          point.tone === "zone" && "bg-[rgba(161,107,20,0.94)]",
+        )}
         style={{
           left: `${left}px`,
           top: `${top}px`,
@@ -1450,9 +1590,15 @@ function ReplayAreaFocusOverlay({
   area: OverlayAreaFocus;
 }) {
   return (
-    <div className="arena-overlay-focus">
+    /* arena-overlay-focus */
+    <div className="absolute inset-0 pointer-events-none">
+      {/* arena-overlay-area-focus */}
       <div
-        className={`arena-overlay-area-focus tone-${area.tone}`}
+        className={cn(
+          "absolute z-[2] border-2 border-[rgba(17,17,17,0.26)] rounded-[14px] bg-[rgba(17,17,17,0.04)] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.24),0_0_0_6px_rgba(17,17,17,0.05)] animate-[focus-pulse_520ms_ease-out]",
+          area.tone === "zone" &&
+            "border-[rgba(161,107,20,0.48)] bg-[rgba(161,107,20,0.08)] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.28),0_0_0_6px_rgba(161,107,20,0.08)]",
+        )}
         style={{
           left: `${area.left}px`,
           top: `${area.top}px`,
@@ -1460,8 +1606,15 @@ function ReplayAreaFocusOverlay({
           height: `${Math.abs(area.bottom - area.top)}px`,
         }}
       />
+      {/* arena-overlay-focus-label */}
       <div
-        className={`arena-overlay-focus-label tone-${area.tone}`}
+        className={cn(
+          "absolute z-[3] px-[10px] py-[6px] rounded-full bg-[rgba(17,17,17,0.92)] text-[#f7f7f3] text-[11px] font-semibold tracking-[0.06em] uppercase translate-x-3 -translate-y-[30px] whitespace-nowrap",
+          area.tone === "entry" && "bg-[rgba(26,127,70,0.94)]",
+          area.tone === "stop" && "bg-[rgba(163,48,48,0.94)]",
+          area.tone === "target" && "bg-[rgba(26,127,70,0.94)]",
+          area.tone === "zone" && "bg-[rgba(161,107,20,0.94)]",
+        )}
         style={{
           left: `${(area.left + area.right) / 2}px`,
           top: `${area.top}px`,

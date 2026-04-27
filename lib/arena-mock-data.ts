@@ -12,8 +12,8 @@ import type {
 export const agents: Agent[] = [
   {
     id: "fibonacci-trend",
-    name: "Fibonacci Trend",
-    strategyLabel: "Trend continuation",
+    name: "Auron",
+    strategyLabel: "Fibonacci trend continuation",
     status: "monitoring",
     primaryMarket: "XAU/USD",
     timeframe: "15m",
@@ -25,8 +25,8 @@ export const agents: Agent[] = [
   },
   {
     id: "third-touch",
-    name: "Third Touch",
-    strategyLabel: "Trendline reaction",
+    name: "Kairos",
+    strategyLabel: "Third touch trendline",
     status: "watchlist",
     primaryMarket: "XAG/USD",
     timeframe: "1h",

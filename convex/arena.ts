@@ -224,6 +224,7 @@ export const getArenaSnapshot = query({
       browserSessionEvents,
       leaderboardSnapshots,
       scanRuns,
+      visionDecisions,
     ] = await Promise.all([
       ctx.db.query("agents").collect(),
       ctx.db.query("markets").collect(),
@@ -237,6 +238,7 @@ export const getArenaSnapshot = query({
       ctx.db.query("browserSessionEvents").collect(),
       ctx.db.query("leaderboardSnapshots").collect(),
       ctx.db.query("scanRuns").collect(),
+      ctx.db.query("visionDecisions").collect(),
     ]);
 
     return {
@@ -281,6 +283,11 @@ export const getArenaSnapshot = query({
         (a, b) => b.capturedAt - a.capturedAt,
       ),
       scanRuns: scanRuns.sort((a, b) => b.startedAt - a.startedAt),
+      visionDecisions: latestByKey(
+        visionDecisions,
+        (row) => `${row.agentSlug}:${row.marketSymbol}`,
+        (row) => row.capturedAt,
+      ),
     };
   },
 });
@@ -1265,6 +1272,82 @@ export const startBrowserReviewSession = action({
       browserTargetSymbol: reviewTarget.browserTargetSymbol,
       browserTargetTimeframe: reviewTarget.browserTargetTimeframe,
     };
+  },
+});
+
+export const persistVisionDecision = mutation({
+  args: {
+    agentSlug: v.string(),
+    marketSymbol: v.string(),
+    regime: v.union(v.literal("bullish"), v.literal("bearish"), v.literal("mixed")),
+    verdict: v.union(v.literal("valid"), v.literal("staged"), v.literal("invalid"), v.literal("reject")),
+    direction: v.union(v.literal("long"), v.literal("short"), v.literal("none")),
+    confidence: v.number(),
+    correctedT1: v.optional(v.object({ price: v.number(), note: v.string() })),
+    correctedT2: v.optional(v.object({ price: v.number(), note: v.string() })),
+    correctedZone: v.optional(v.object({ low: v.number(), high: v.number(), projectedPrice: v.number() })),
+    rationale: v.string(),
+    issues: v.array(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("visionDecisions")
+      .withIndex("by_agentSlug_marketSymbol", (q) =>
+        q.eq("agentSlug", args.agentSlug).eq("marketSymbol", args.marketSymbol),
+      )
+      .unique();
+
+    // Only update when something structurally significant changed
+    const significantChange =
+      !existing ||
+      existing.regime !== args.regime ||
+      existing.direction !== args.direction ||
+      existing.verdict !== args.verdict ||
+      (args.correctedT1 != null &&
+        existing.correctedT1 != null &&
+        Math.abs(args.correctedT1.price - existing.correctedT1.price) /
+          Math.max(existing.correctedT1.price, 1) > 0.02) ||
+      (args.correctedT2 != null &&
+        existing.correctedT2 != null &&
+        Math.abs(args.correctedT2.price - existing.correctedT2.price) /
+          Math.max(existing.correctedT2.price, 1) > 0.02);
+
+    if (!significantChange) {
+      return { updated: false, id: existing!._id };
+    }
+
+    const payload = { ...args, capturedAt: Date.now() };
+
+    if (existing) {
+      await ctx.db.patch(existing._id, payload);
+      return { updated: true, id: existing._id };
+    }
+
+    const id = await ctx.db.insert("visionDecisions", payload);
+    return { updated: true, id };
+  },
+});
+
+export const updateAgentDisplayNames = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const nameMap: Record<string, { name: string; strategyLabel: string }> = {
+      "fibonacci-trend": { name: "Auron", strategyLabel: "Fibonacci trend continuation" },
+      "third-touch": { name: "Kairos", strategyLabel: "Third touch trendline" },
+    };
+
+    let updated = 0;
+    for (const [slug, display] of Object.entries(nameMap)) {
+      const agent = await ctx.db
+        .query("agents")
+        .withIndex("by_slug", (q) => q.eq("slug", slug))
+        .unique();
+      if (agent) {
+        await ctx.db.patch(agent._id, display);
+        updated += 1;
+      }
+    }
+    return { updated };
   },
 });
 

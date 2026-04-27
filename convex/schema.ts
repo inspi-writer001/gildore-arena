@@ -295,6 +295,21 @@ export default defineSchema({
     .index("by_startedAt", ["startedAt"])
     .index("by_agentSlug_and_marketSymbol", ["agentSlug", "marketSymbol"]),
 
+  visionDecisions: defineTable({
+    agentSlug: v.string(),
+    marketSymbol: v.string(),
+    regime: v.union(v.literal("bullish"), v.literal("bearish"), v.literal("mixed")),
+    verdict: v.union(v.literal("valid"), v.literal("staged"), v.literal("invalid"), v.literal("reject")),
+    direction: v.union(v.literal("long"), v.literal("short"), v.literal("none")),
+    confidence: v.number(),
+    correctedT1: v.optional(v.object({ price: v.number(), note: v.string() })),
+    correctedT2: v.optional(v.object({ price: v.number(), note: v.string() })),
+    correctedZone: v.optional(v.object({ low: v.number(), high: v.number(), projectedPrice: v.number() })),
+    rationale: v.string(),
+    issues: v.array(v.string()),
+    capturedAt: v.number(),
+  }).index("by_agentSlug_marketSymbol", ["agentSlug", "marketSymbol"]),
+
   browserSessionEvents: defineTable({
     sessionId: v.id("browserSessions"),
     sequence: v.number(),
