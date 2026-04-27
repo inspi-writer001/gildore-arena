@@ -1815,10 +1815,10 @@ export default function ArenaDashboard() {
                           Conjuring {agentName}...
                         </span>
                       </div>
-                    ) : (
+                    ) : selectedBrowserSession ? (
                       <BrowserSessionViewport
-                        sessionId={selectedBrowserSession!.id}
-                        sessionStatus={selectedBrowserSession!.status}
+                        sessionId={selectedBrowserSession.id}
+                        sessionStatus={selectedBrowserSession.status}
                         onRestart={() => launchBrowserSession()}
                         onStartupExhausted={() => {
                           if (
@@ -1837,6 +1837,26 @@ export default function ArenaDashboard() {
                           setIsStartingBrowserSession(false);
                         }}
                       />
+                    ) : (
+                      <div className="relative block w-full h-full p-0 border-0 rounded-[20px] overflow-hidden">
+                        <ImageDithering
+                          image="https://res.cloudinary.com/ddlz0zesx/image/upload/v1777216792/enter_the_arena_smth_qazlcz.png"
+                          colorBack="#000c38"
+                          colorFront="#94ffaf"
+                          colorHighlight="#eaff94"
+                          originalColors={false}
+                          inverted={false}
+                          type="8x8"
+                          size={conjureDitheringSize}
+                          colorSteps={2}
+                          fit="cover"
+                          width="100%"
+                          height="100%"
+                        />
+                        <span className="absolute inset-0 flex items-center justify-center text-[clamp(18px,3vw,26px)] font-normal text-[#94ffaf] tracking-[-0.3px] pointer-events-none [text-shadow:0_1px_12px_rgba(0,12,56,0.6)] font-instrument">
+                          Reconnecting {agentName}...
+                        </span>
+                      </div>
                     )}
                   </div>
                 );
