@@ -783,6 +783,9 @@ export async function startControlledBrowserSession(args: {
 }) {
   const existing = runtimeSessions.get(args.sessionId);
   if (existing) {
+    console.log("[browser-session-runtime] reusing existing runtime", {
+      sessionId: args.sessionId,
+    });
     return {
       ok: true,
       screenshotPath: existing.screenshotPath,
@@ -790,11 +793,30 @@ export async function startControlledBrowserSession(args: {
     };
   }
 
+  console.log("[browser-session-runtime] boot requested", {
+    sessionId: args.sessionId,
+    agentSlug: args.agentSlug,
+    agentMarketSymbol: args.agentMarketSymbol,
+    marketSymbol: args.marketSymbol,
+    timeframe: args.timeframe,
+    targetUrl: args.targetUrl,
+    hasSwingPoints: Boolean(args.swingPoints),
+  });
+
   await ensureScreenshotDir();
   const screenshotPath = screenshotPathFor(args.sessionId);
+  console.log("[browser-session-runtime] launching chromium", {
+    sessionId: args.sessionId,
+  });
   const browser = await chromium.launch({ headless: true });
+  console.log("[browser-session-runtime] chromium launched", {
+    sessionId: args.sessionId,
+  });
   const page = await browser.newPage({
     viewport: { width: 1440, height: 900 },
+  });
+  console.log("[browser-session-runtime] new page created", {
+    sessionId: args.sessionId,
   });
 
   runtimeSessions.set(args.sessionId, {
@@ -809,6 +831,10 @@ export async function startControlledBrowserSession(args: {
   const steps = buildSteps(args.marketSymbol, args.timeframe);
 
   try {
+    console.log("[browser-session-runtime] step 1 loading chart", {
+      sessionId: args.sessionId,
+      targetUrl: args.targetUrl,
+    });
     await writeStepState({
       sessionId: args.sessionId,
       steps,
@@ -822,7 +848,14 @@ export async function startControlledBrowserSession(args: {
     });
     await page.waitForTimeout(3000);
     await capture(args.sessionId);
+    console.log("[browser-session-runtime] chart loaded", {
+      sessionId: args.sessionId,
+    });
 
+    console.log("[browser-session-runtime] step 2 switching symbol", {
+      sessionId: args.sessionId,
+      marketSymbol: args.marketSymbol,
+    });
     await writeStepState({
       sessionId: args.sessionId,
       steps,
@@ -831,7 +864,15 @@ export async function startControlledBrowserSession(args: {
     });
     await switchDerivSymbol(args.sessionId, page, args.marketSymbol);
     await capture(args.sessionId);
+    console.log("[browser-session-runtime] symbol switched", {
+      sessionId: args.sessionId,
+      marketSymbol: args.marketSymbol,
+    });
 
+    console.log("[browser-session-runtime] step 3 switching timeframe", {
+      sessionId: args.sessionId,
+      timeframe: args.timeframe,
+    });
     await writeStepState({
       sessionId: args.sessionId,
       steps,
@@ -840,23 +881,50 @@ export async function startControlledBrowserSession(args: {
     });
     await switchDerivTimeframe(args.sessionId, page, args.timeframe);
     await capture(args.sessionId);
+    console.log("[browser-session-runtime] timeframe switched", {
+      sessionId: args.sessionId,
+      timeframe: args.timeframe,
+    });
 
+    console.log("[browser-session-runtime] panning chart for review", {
+      sessionId: args.sessionId,
+    });
     await panChartForReview(args.sessionId, page);
     await capture(args.sessionId);
+    console.log("[browser-session-runtime] chart positioned for review", {
+      sessionId: args.sessionId,
+    });
 
     // Always capture the 6-shot sequence and run vision analysis.
     // swingPoints is optional context (only valid when the browser symbol matches the agent market).
     setActionLabel(args.sessionId, "Capturing chart context for vision analysis");
+    console.log("[browser-session-runtime] capturing strategy screenshots", {
+      sessionId: args.sessionId,
+    });
     const screenshots = await captureStrategyScreenshots(args.sessionId, page);
     await capture(args.sessionId);
+    console.log("[browser-session-runtime] strategy screenshots captured", {
+      sessionId: args.sessionId,
+      screenshotCount: screenshots.length,
+    });
 
     setActionLabel(args.sessionId, "Analysing structure with vision agent");
     try {
+      console.log("[browser-session-runtime] starting vision analysis", {
+        sessionId: args.sessionId,
+      });
       const decision = await analyzeChartWithVision(screenshots, args.swingPoints);
       console.log("[vision-agent] parsed decision:\n", JSON.stringify(decision, null, 2));
       const runtime = runtimeSessions.get(args.sessionId);
       if (runtime) runtime.visionDecision = decision;
       await capture(args.sessionId);
+      console.log("[browser-session-runtime] vision analysis completed", {
+        sessionId: args.sessionId,
+        verdict: decision.verdict,
+        regime: decision.regime,
+        direction: decision.direction,
+        confidence: decision.confidence,
+      });
 
       // Persist to Convex — gated internally so only writes on significant changes
       try {
@@ -873,6 +941,9 @@ export async function startControlledBrowserSession(args: {
           correctedZone: decision.correctedZone ?? undefined,
           rationale: decision.rationale,
           issues: decision.issues,
+        });
+        console.log("[browser-session-runtime] vision decision persisted", {
+          sessionId: args.sessionId,
         });
       } catch (persistErr) {
         console.error("[vision-agent] persist failed:", persistErr);
@@ -910,8 +981,15 @@ export async function startControlledBrowserSession(args: {
             candleSeconds: base?.candleSeconds ?? 14400,
           };
 
+          console.log("[browser-session-runtime] drawing corrected structure", {
+            sessionId: args.sessionId,
+            direction: drawPoints.direction,
+          });
           await identifySwingPointsOnChart(args.sessionId, page, drawPoints);
           await capture(args.sessionId);
+          console.log("[browser-session-runtime] corrected structure drawn", {
+            sessionId: args.sessionId,
+          });
         }
       } else {
         setActionLabel(args.sessionId, `Vision: ${decision.rationale.slice(0, 90)}`);
@@ -924,12 +1002,21 @@ export async function startControlledBrowserSession(args: {
       await page.waitForTimeout(1000);
       // Fall back to deterministic drawing if we have swing points
       if (args.swingPoints) {
+        console.log("[browser-session-runtime] falling back to deterministic drawing", {
+          sessionId: args.sessionId,
+        });
         await identifySwingPointsOnChart(args.sessionId, page, args.swingPoints);
         await capture(args.sessionId);
+        console.log("[browser-session-runtime] deterministic fallback drawn", {
+          sessionId: args.sessionId,
+        });
       }
       setActionLabel(args.sessionId, undefined);
     }
 
+    console.log("[browser-session-runtime] marking session ready", {
+      sessionId: args.sessionId,
+    });
     await writeStepState({
       sessionId: args.sessionId,
       steps,
@@ -937,12 +1024,24 @@ export async function startControlledBrowserSession(args: {
       currentStatus: "ready",
     });
     await capture(args.sessionId);
+    console.log("[browser-session-runtime] session ready", {
+      sessionId: args.sessionId,
+      screenshotPath,
+    });
     return {
       ok: true,
       screenshotPath,
       reused: false,
     };
   } catch (error) {
+    console.error("[browser-session-runtime] startup failed", {
+      sessionId: args.sessionId,
+      error: error instanceof Error ? {
+        message: error.message,
+        stack: error.stack,
+        name: error.name,
+      } : error,
+    });
     await writeStepState({
       sessionId: args.sessionId,
       steps,
