@@ -1,11 +1,3 @@
-# Project: Switched
-
-<!-- cspell:ignore livestreaming Turbopack webrtc solana -->
-
-## What This Is
-
-Switched is a browser-based live streaming platform that combines a professional stream studio (like StreamYard) with a viewer community platform (like Twitch/Kick). Creators go live directly from their browser, invite guests via shareable links, choose from preset stream layouts, and simulcast to YouTube, X, and LinkedIn — all from a single tab. The platform is built creator-first with a roadmap toward a blockchain-based token economy on Solana.
-
 ## Tech Stack
 
 - **Framework**: Next.js 16 (App Router, Turbopack)
@@ -16,9 +8,6 @@ Switched is a browser-based live streaming platform that combines a professional
 - **Backend / Database / Real-time**: Convex
 - **Auth**: Convex Auth (Google OAuth)
 - **Client Data Fetching**: TanStack Query v5
-- **Studio WebRTC**: Cloudflare Realtime SFU
-- **Stream Delivery**: Cloudflare Stream (HLS)
-- **Simulcast**: Restream API
 - **Package Manager**: pnpm
 
 ## Project Structure
@@ -105,13 +94,16 @@ TanStack Query is used **only for external REST API calls** (Cloudflare Stream A
 ```ts
 // lib/queries/restream.ts
 export const restreamKeys = {
-  sessionStatus: (sessionId: string) => ["restream", "session", sessionId] as const,
-}
+  sessionStatus: (sessionId: string) =>
+    ["restream", "session", sessionId] as const,
+};
 
-export async function fetchSessionStatus(sessionId: string): Promise<RestreamSessionStatus> {
-  const res = await fetch(`/api/restream/session/${sessionId}`)
-  if (!res.ok) throw new Error("Failed to fetch session status")
-  return res.json()
+export async function fetchSessionStatus(
+  sessionId: string,
+): Promise<RestreamSessionStatus> {
+  const res = await fetch(`/api/restream/session/${sessionId}`);
+  if (!res.ok) throw new Error("Failed to fetch session status");
+  return res.json();
 }
 
 // In a component
@@ -120,7 +112,7 @@ const { data, isLoading, isError } = useQuery({
   queryFn: () => fetchSessionStatus(sessionId),
   staleTime: 30_000,
   refetchInterval: 10_000, // poll while live
-})
+});
 ```
 
 ### File Naming
@@ -136,66 +128,12 @@ const { data, isLoading, isError } = useQuery({
 - Convex `useQuery`: check for `undefined` (loading) before rendering data
 - TanStack Query `useQuery`: check `isLoading` and `isError` before rendering `data`
 
-## Key Architecture Notes
-
-- **The platform always receives the stream.** A creator cannot simulcast to external platforms without also being live on Switched. The Cloudflare Stream HLS URL is always the primary delivery mechanism.
-- **Guest invite links do not require an account.** Guests join via `/studio/join/[token]` — they are session-scoped participants, not platform users.
-- **Tips are fake points in Phase 1.** The `tipTransactions` schema includes nullable `solanaSignature` and `tokenMint` fields from day one to make the Phase 3 Solana migration additive, not a rewrite.
-- **Private backstage chat is scoped to `studioSessionId`, not `streamId`.** Never query backstage messages using the public stream chat query.
-- **TanStack Query is not a Convex replacement.** Use Convex for anything that lives in the database. Use TanStack Query only for external service calls that do not go through Convex.
-
-
-<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
-## Beads Issue Tracker
-
-This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
-
-### Quick Reference
-
-```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work
-bd close <id>         # Complete work
-```
-
-### Rules
-
-- Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or markdown TODO lists
-- Run `bd prime` for detailed command reference and session close protocol
-- Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
-
-## Session Completion
-
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
-
-**MANDATORY WORKFLOW:**
-
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
-   ```bash
-   git pull --rebase
-   bd dolt push
-   git push
-   git status  # MUST show "up to date with origin"
-   ```
-5. **Clean up** - Clear stashes, prune remote branches
-6. **Verify** - All changes committed AND pushed
-7. **Hand off** - Provide context for next session
-
-**CRITICAL RULES:**
-- Work is NOT complete until `git push` succeeds
-- NEVER stop before pushing - that leaves work stranded locally
-- NEVER say "ready to push when you are" - YOU must push
-- If push fails, resolve and retry until it succeeds
-<!-- END BEADS INTEGRATION -->
-
 <!-- convex-ai-start -->
+
 This project uses [Convex](https://convex.dev) as its backend.
 
 When working on Convex code, **always read `convex/_generated/ai/guidelines.md` first** for important guidelines on how to correctly use Convex APIs and patterns. The file contains rules that override what you may have learned about Convex from training data.
 
 Convex agent skills for common tasks can be installed by running `npx convex ai-files install`.
+
 <!-- convex-ai-end -->

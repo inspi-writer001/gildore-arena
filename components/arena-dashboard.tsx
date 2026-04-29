@@ -172,6 +172,7 @@ type ArenaSnapshot = {
     regime: "bullish" | "bearish" | "mixed";
     verdict: "valid" | "staged" | "invalid" | "reject";
     direction: "long" | "short" | "none";
+    structureStatus: "clean" | "weak" | "broken" | "none";
     confidence: number;
     correctedT1?: { price: number; note: string } | null;
     correctedT2?: { price: number; note: string } | null;
@@ -180,6 +181,12 @@ type ArenaSnapshot = {
       high: number;
       projectedPrice: number;
     } | null;
+    invalidationZone?: {
+      low: number;
+      high: number;
+      note: string;
+    } | null;
+    invalidationNote?: string | null;
     rationale: string;
     issues: string[];
     capturedAt: number;
@@ -1897,6 +1904,9 @@ export default function ArenaDashboard() {
                           {selectedVisionDecision.regime}
                         </span>
                         <span className={cn(chipClass, "font-barlow")}>
+                          structure {selectedVisionDecision.structureStatus}
+                        </span>
+                        <span className={cn(chipClass, "font-barlow")}>
                           {selectedVisionDecision.direction !== "none"
                             ? selectedVisionDecision.direction
                             : "no direction"}
@@ -1926,6 +1936,28 @@ export default function ArenaDashboard() {
                           </span>
                           <span className="font-inter text-[13px] text-[rgba(18,18,18,0.6)] leading-[1.5]">
                             {selectedVisionDecision.correctedT2.note}
+                          </span>
+                        </div>
+                      ) : null}
+                      {selectedVisionDecision.invalidationZone ? (
+                        <div className="grid gap-1 p-3 rounded-[12px] bg-[rgba(251,238,236,0.84)]">
+                          <span className="font-barlow text-[12px] font-semibold text-[#8a2d2d]">
+                            Invalidation zone —{" "}
+                            {selectedVisionDecision.invalidationZone.low} to{" "}
+                            {selectedVisionDecision.invalidationZone.high}
+                          </span>
+                          <span className="font-inter text-[13px] text-[rgba(18,18,18,0.6)] leading-[1.5]">
+                            {selectedVisionDecision.invalidationZone.note}
+                          </span>
+                        </div>
+                      ) : null}
+                      {selectedVisionDecision.invalidationNote ? (
+                        <div className="grid gap-1 p-3 rounded-[12px] bg-[rgba(247,240,231,0.96)]">
+                          <span className="font-barlow text-[12px] font-semibold text-[rgba(18,18,18,0.7)]">
+                            Why it failed
+                          </span>
+                          <span className="font-inter text-[13px] text-[rgba(18,18,18,0.6)] leading-[1.5]">
+                            {selectedVisionDecision.invalidationNote}
                           </span>
                         </div>
                       ) : null}

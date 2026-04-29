@@ -341,17 +341,74 @@ If the setup **is entered**:
 
 ---
 
-## 14. Summary
+## 14. Multi-Timeframe Discovery: 8h → Trading Timeframe
+
+The browser agent uses a deliberate two-phase discovery flow to find the OLDEST, most dominant T1 anchor.
+
+### Phase 1 — 8h wide context (2 screenshots)
+- Switch to the 8h timeframe and zoom out
+- Pan left twice to reach the end of available history on the instrument
+- The 8h view covers 6+ months per screen — the deepest structural trough (bullish) or highest peak (bearish) visible here is the true T1 origin
+
+### Phase 2 — Trading timeframe (4 screenshots)
+- Switch back to the trading timeframe (e.g. 4h) and zoom out heavily
+- T1 from the 8h context should appear on the left of the zoomed-out 4h view
+- Confirm T1, identify T2 (next confirming swing), and settle on a drawing canvas that shows T1 + T2 + current price
+
+### Rule: T1 is NEVER a recent local swing
+T1 must be the oldest, most dominant structural turning point visible in the full available 8h history. It is the origin of the current trend — the absolute deepest trough (bullish) or highest peak (bearish). A recent local swing low/high that forms within the current move is NOT T1.
+
+---
+
+## 15. Inner Trendline (Advanced — Phase 2 Feature)
+
+When price has respected the outer T1→T2 trendline but has NOT yet reached the projected outer T3 zone, the market sometimes forms a steeper INNER trendline within the outer channel. The agent can identify and draw this inner line as a secondary trade opportunity.
+
+### When to activate inner trendline detection
+- The outer T1→T2 trendline is valid and projected forward
+- Current price is above the outer line (bullish) — i.e. it has not come back to test T3 yet
+- Price action since T2 has formed a steeper ascending channel with its own identifiable swing lows
+
+### Construction
+- **T21** = the outer T2 (this point serves as the FIRST anchor of the inner trendline)
+- **T22** = the next significant higher low that forms on the steeper inner slope — usually more recent
+- The inner trendline is drawn through T21 → T22 and projected forward
+- **T23** = the projected point where price next approaches the inner trendline — this is the trade opportunity
+
+### What the chart looks like
+- Two lines visible simultaneously:
+  - The outer main line (T1 → T2 extended far into the future at a shallower slope)
+  - The inner line (T21 → T22 extended, steeper slope, tighter to current price)
+- When price approaches T23, the agent evaluates for a third-touch trade on the INNER line (not waiting for the outer T3)
+
+### Agent decision logic for inner trendline
+1. Check if outer T3 is not imminent (price is significantly above the outer projected line)
+2. Look at post-T2 structure for a steeper ascending channel
+3. Identify T21 (= outer T2) and T22 (next significant higher low)
+4. Project T23
+5. Assess whether T23 is within striking distance of current price
+6. If yes: draw both outer and inner lines; verdict on INNER T3 opportunity
+
+### Drawing
+- Draw the outer trendline first (T1 → T2 extended)
+- Draw the inner trendline second (T21 → T22 extended)
+- The two lines form a rising channel where the inner line is the actionable near-term boundary
+
+---
+
+## 16. Summary
 
 The updated third-touch strategy is:
 
-1. use a wide enough market context
-2. detect regime first
-3. only search for lines that match the regime
-4. use broad structural swings, not tiny pivots
-5. build the dominant line
-6. treat the touch as a zone, not a pixel
-7. use body-based invalidation
-8. when invalidated, promote the first invalidating body into the new `T2`
-9. redraw and re-project from there
-10. only enter after confirmation and minimum 1:3 reward path
+1. use multi-timeframe discovery: 8h for oldest structural origin, trading TF for precision
+2. T1 = oldest dominant structural swing from full 8h history — never a recent local extreme
+3. detect regime first
+4. only search for lines that match the regime
+5. use broad structural swings, not tiny pivots
+6. build the dominant line from T1 → T2
+7. treat the third touch as a zone, not a pixel
+8. use body-based invalidation
+9. when invalidated, promote the first invalidating body into the new `T2`
+10. redraw and re-project from there
+11. only enter after confirmation and minimum 1:3 reward path
+12. if outer T3 is not imminent: check for inner trendline (T21 → T22 → T23) as secondary opportunity

@@ -37,3 +37,6 @@ Thumbs.db
 # proprietary charting library files
 public/charting_library/
 public/datafeeds/
+
+
+charting_library/

@@ -287,7 +287,10 @@ export const getArenaSnapshot = query({
         visionDecisions,
         (row) => `${row.agentSlug}:${row.marketSymbol}`,
         (row) => row.capturedAt,
-      ),
+      ).map((row) => ({
+        ...row,
+        structureStatus: row.structureStatus ?? "none",
+      })),
     };
   },
 });
@@ -1282,10 +1285,18 @@ export const persistVisionDecision = mutation({
     regime: v.union(v.literal("bullish"), v.literal("bearish"), v.literal("mixed")),
     verdict: v.union(v.literal("valid"), v.literal("staged"), v.literal("invalid"), v.literal("reject")),
     direction: v.union(v.literal("long"), v.literal("short"), v.literal("none")),
+    structureStatus: v.union(
+      v.literal("clean"),
+      v.literal("weak"),
+      v.literal("broken"),
+      v.literal("none"),
+    ),
     confidence: v.number(),
-    correctedT1: v.optional(v.object({ price: v.number(), note: v.string() })),
-    correctedT2: v.optional(v.object({ price: v.number(), note: v.string() })),
+    correctedT1: v.optional(v.object({ price: v.number(), note: v.string(), date: v.optional(v.string()), viewSixPos: v.optional(v.object({ xPct: v.number(), yPct: v.number() })) })),
+    correctedT2: v.optional(v.object({ price: v.number(), note: v.string(), date: v.optional(v.string()), viewSixPos: v.optional(v.object({ xPct: v.number(), yPct: v.number() })) })),
     correctedZone: v.optional(v.object({ low: v.number(), high: v.number(), projectedPrice: v.number() })),
+    invalidationZone: v.optional(v.object({ low: v.number(), high: v.number(), note: v.string() })),
+    invalidationNote: v.optional(v.string()),
     rationale: v.string(),
     issues: v.array(v.string()),
   },
@@ -1298,19 +1309,43 @@ export const persistVisionDecision = mutation({
       .unique();
 
     // Only update when something structurally significant changed
+    const correctedT1Changed =
+      (args.correctedT1 == null) !== (existing?.correctedT1 == null) ||
+      (args.correctedT1 != null &&
+        existing?.correctedT1 != null &&
+        Math.abs(args.correctedT1.price - existing.correctedT1.price) /
+          Math.max(existing.correctedT1.price, 1) > 0.02);
+    const correctedT2Changed =
+      (args.correctedT2 == null) !== (existing?.correctedT2 == null) ||
+      (args.correctedT2 != null &&
+        existing?.correctedT2 != null &&
+        Math.abs(args.correctedT2.price - existing.correctedT2.price) /
+          Math.max(existing.correctedT2.price, 1) > 0.02);
+    const correctedZoneChanged =
+      (args.correctedZone == null) !== (existing?.correctedZone == null) ||
+      (args.correctedZone != null &&
+        existing?.correctedZone != null &&
+        Math.abs(
+          args.correctedZone.projectedPrice - existing.correctedZone.projectedPrice,
+        ) / Math.max(existing.correctedZone.projectedPrice, 1) > 0.02);
+    const invalidationZoneChanged =
+      (args.invalidationZone == null) !== (existing?.invalidationZone == null) ||
+      (args.invalidationZone != null &&
+        existing?.invalidationZone != null &&
+        Math.abs(args.invalidationZone.low - existing.invalidationZone.low) /
+          Math.max(existing.invalidationZone.low, 1) > 0.02);
+
     const significantChange =
       !existing ||
       existing.regime !== args.regime ||
       existing.direction !== args.direction ||
+      existing.structureStatus !== args.structureStatus ||
       existing.verdict !== args.verdict ||
-      (args.correctedT1 != null &&
-        existing.correctedT1 != null &&
-        Math.abs(args.correctedT1.price - existing.correctedT1.price) /
-          Math.max(existing.correctedT1.price, 1) > 0.02) ||
-      (args.correctedT2 != null &&
-        existing.correctedT2 != null &&
-        Math.abs(args.correctedT2.price - existing.correctedT2.price) /
-          Math.max(existing.correctedT2.price, 1) > 0.02);
+      existing.invalidationNote !== args.invalidationNote ||
+      correctedT1Changed ||
+      correctedT2Changed ||
+      correctedZoneChanged ||
+      invalidationZoneChanged;
 
     if (!significantChange) {
       return { updated: false, id: existing!._id };
