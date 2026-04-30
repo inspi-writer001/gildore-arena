@@ -168,14 +168,14 @@ function extractFocusPoints(annotation: VisualAnnotation): OverlayFocusPoint[] {
         timeSec: geometry.startTimeSec,
         price: geometry.highPrice,
         label: `${annotation.label} high`,
-        tone: "zone",
+        tone: geometry.tone ?? "zone",
       },
       {
         barIndex: geometry.endBarIndex,
         timeSec: geometry.endTimeSec,
         price: geometry.lowPrice,
         label: `${annotation.label} low`,
-        tone: "zone",
+        tone: geometry.tone ?? "zone",
       },
     ];
   }
@@ -246,7 +246,7 @@ function extractAreaFocus(
       top: Math.min(top, bottom),
       bottom: Math.max(top, bottom),
       label: annotation.label,
-      tone: "zone",
+      tone: geometry.tone ?? "zone",
     };
   }
 
@@ -1370,43 +1370,48 @@ function OverlayAnnotation({
 
   if (geometry.kind === "fibonacci") {
     const left = xCoordinateFromAnchor(
-      {
-        barIndex: geometry.startBarIndex,
-        timeSec: geometry.startTimeSec,
-      },
+      { barIndex: geometry.startBarIndex, timeSec: geometry.startTimeSec },
       coordinates,
     );
-    const right = xCoordinateFromAnchor(
-      {
-        barIndex: geometry.endBarIndex,
-        timeSec: geometry.endTimeSec,
-      },
-      coordinates,
-    );
-    const top = yCoordinateFromPrice(geometry.highPrice, coordinates);
-    const bottom = yCoordinateFromPrice(geometry.lowPrice, coordinates);
-    if (left === null || right === null || top === null || bottom === null) {
-      return null;
-    }
+    if (left === null) return null;
+
+    const isMuted = geometryTone(geometry) === "muted";
+    const levels = geometry.levels ?? [0, 0.5, 0.618, 0.7, 0.786, 1];
+    const priceRange = geometry.highPrice - geometry.lowPrice;
+
+    const levelData = levels.flatMap((level) => {
+      const price = geometry.highPrice - priceRange * level;
+      const y = yCoordinateFromPrice(price, coordinates);
+      return y !== null ? [{ level, price, y }] : [];
+    });
+
+    if (!levelData.length) return null;
 
     return (
-      <div
-        className="absolute overflow-hidden border-t border-b border-dashed border-[rgba(17,17,17,0.18)] rounded-[18px] bg-[rgba(17,17,17,0.03)]"
-        style={{
-          left: `${Math.min(left, right)}px`,
-          top: `${Math.min(top, bottom)}px`,
-          width: `${Math.abs(right - left)}px`,
-          height: `${Math.abs(bottom - top)}px`,
-        }}
-      >
-        {(geometry.levels ?? [0, 0.5, 0.618, 0.7, 1]).map((level) => (
+      <>
+        {levelData.map(({ level, price, y }) => (
           <div
             key={`${annotation.id}-${level}`}
-            className="absolute left-0 right-0 h-px border-t border-dashed border-[rgba(17,17,17,0.18)]"
-            style={{ top: `${level * 100}%` }}
-          />
+            className="absolute"
+            style={{ left: `${left}px`, top: `${y}px`, right: 0 }}
+          >
+            <div
+              className={cn(
+                "absolute inset-x-0 top-0 border-t border-dashed",
+                isMuted ? "border-[rgba(17,17,17,0.1)]" : "border-[rgba(17,17,17,0.22)]",
+              )}
+            />
+            <span
+              className={cn(
+                "absolute right-1 -top-[11px] text-[9px] font-mono tabular-nums leading-none whitespace-nowrap",
+                isMuted ? "text-[rgba(17,17,17,0.28)]" : "text-[rgba(17,17,17,0.54)]",
+              )}
+            >
+              {level} · {price.toFixed(2)}
+            </span>
+          </div>
         ))}
-      </div>
+      </>
     );
   }
 

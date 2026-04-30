@@ -126,3 +126,20 @@ So the next concrete step should be:
 1. define the first strategy engine contract
 2. implement Fibonacci detection against current candle data
 3. emit arena state from it
+
+---
+
+1. Kill the 8h pan-to-oldest-history (View 2 redesign)
+
+Instead of panning back to ancient data, View 2 should be the 8h chart showing the current structural cycle clearly: the Jan-Feb 2026 bottom (the  
+ massive selloff from the Nov 2025 peak), and then the entire rally from that bottom to now. That's what you did manually — you didn't need to go to
+2024 data.
+
+2. Reframe the prompt: T1 = origin of the current visible trend, not historical max
+
+The key phrase change: instead of "absolute deepest trough in full history" → "the trough that launched the current multi-week or multi-month trend
+visible in the 4h trading timeframe." Add explicitly: "If the 8h view shows ancient lows from a completely different cycle — ignore them. T1 must be
+a point you can draw a line FROM and reach the current price action."
+
+The slope sanity check we added already catches the "too-old T1" case, but the prompt should head it off before the agent even tries.  
+

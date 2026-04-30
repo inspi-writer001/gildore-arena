@@ -139,6 +139,7 @@ export type VisualGeometry =
       highPrice: number;
       lowPrice: number;
       levels?: number[];
+      tone?: VisualTone;
     }
   | {
       kind: "zone";

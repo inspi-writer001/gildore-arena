@@ -32,6 +32,16 @@ const visualGeometry = v.union(
     highPrice: v.number(),
     lowPrice: v.number(),
     levels: v.optional(v.array(v.number())),
+    tone: v.optional(
+      v.union(
+        v.literal("default"),
+        v.literal("muted"),
+        v.literal("entry"),
+        v.literal("stop"),
+        v.literal("target"),
+        v.literal("zone"),
+      ),
+    ),
   }),
   v.object({
     kind: v.literal("zone"),

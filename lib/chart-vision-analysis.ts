@@ -8,6 +8,15 @@ import type { SwingPointsForBrowser } from "./browser-session-runtime";
 // These coordinates are used directly as page.mouse.click(x, y) targets.
 export type ScreenPos = { xPct: number; yPct: number };
 
+// Result of a lightweight post-draw verification pass.
+export type DrawingVerification = {
+  assessment: "correct" | "slope_too_steep" | "slope_too_shallow" | "line_broken";
+  note: string;
+  // Corrected anchors to redraw with, when assessment !== "correct"
+  correctedT1?: { price: number; date: string; viewPos?: ScreenPos };
+  correctedT2?: { price: number; date: string; viewPos?: ScreenPos };
+};
+
 export type ChartVisionDecision = {
   regime: "bullish" | "bearish" | "mixed";
   verdict: "valid" | "staged" | "invalid" | "reject";
@@ -55,23 +64,32 @@ const STRATEGY_SYSTEM_PROMPT = `You are a disciplined technical analysis agent s
 
 ### Multi-timeframe discovery flow
 The screenshots follow a deliberate multi-timeframe sequence:
-- Views 1–2 are the 8h timeframe. Use these to find the OLDEST available structural swing — the origin of the entire trend visible in the trading timeframe. This is the true T1 candidate.
-- Views 3–6 are the trading timeframe (4h or similar), zoomed out to show the full structure from that oldest swing to current price.
+- Views 1–2 are the 8h timeframe showing the CURRENT STRUCTURAL CYCLE (~4 months). Use these to identify the dominant regime and locate the trough (bullish) or peak (bearish) that LAUNCHED the active trend currently visible in the 4h trading timeframe. This is the true T1.
+- Views 3–6 are the trading timeframe (4h or similar), zoomed out to show the full structure from T1 to current price.
 
 ### Swing identification
-- T1 MUST be the OLDEST, MOST DOMINANT structural swing visible across the full history shown in Views 1–2. It is the absolute deepest trough (bullish) or highest peak (bearish) that originated the CURRENT macro trend — not any correction within it.
-- **Critical trap to avoid**: Do NOT pick a local low that formed DURING an already-established rally as T1. If the chart shows a multi-week or multi-month uptrend already in progress, T1 is the trough that STARTED that uptrend — it will be WEEKS OR MONTHS before the first impulse. A correction low within the uptrend is NOT T1.
-- T2 is the FIRST significant higher low (bullish) or lower high (bearish) after T1. NOT the second or third. The EARLIEST swing that confirms the slope direction.
-- T2 is typically 10–30+ days after T1 in time. A T2 that is only 2–5 days after T1 almost always produces a slope too steep to be meaningful — if that happens, look for a later higher low as T2.
-- **Slope sanity check — mandatory**: After identifying T1 and T2, mentally project the line forward to current price. If the projected line at current date is MORE THAN 5% ABOVE current price, the slope is too steep — T2 is wrong. Either go further back for T1 or pick a later, shallower T2.
+- **T1 = the structural origin of the CURRENT ACTIVE TREND visible in Views 3–6.** For a bullish setup, it is the lowest trough that you can draw a line FROM and reach current price action going upward. It is NOT the absolute all-time historical low — it is the trough that *started this specific rally*.
+- **Ancient lows from a different cycle are irrelevant.** If the 8h view shows a very deep trough from many months or years ago that belongs to a completely different market cycle, ignore it. T1 must be a pivot you can project forward and logically connect to current price.
+- **How to identify T1**: Look at Views 3–6 (the trading timeframe). There is a clear rally in progress. Find the lowest point BEFORE that rally began — the trough the market bounced off to start the entire move visible in the trading timeframe chart. That is T1.
+- **Critical trap**: Do NOT pick a higher local low that formed mid-rally as T1. The trough that started the rally is LOWER than any subsequent correction low. If your T1 is not the lowest point visible before the rally, you have the wrong candle.
+- T2 is the FIRST significant higher low (bullish) or lower high (bearish) after T1 — the earliest swing that confirms the slope direction.
+- T2 is typically 10–30+ days after T1 in time. A T2 only 2–5 days from T1 produces a slope too steep to be meaningful.
+- **Slope sanity check — mandatory**: Project the T1→T2 line forward to current price. If it lands MORE THAN 5% ABOVE current price, the slope is too steep — pick a later T2 or re-examine T1.
 - Use a WIDE neighbourhood — at least 20 candles either side when assessing on the trading timeframe.
 - Ignore all micro zig-zags. Anchor only to turns that dominate the full zoomed-out view.
 
 ### Trendline construction
-- T1 = oldest dominant structural swing from the 8h context (low for bullish, high for bearish).
+- T1 = the trough (bullish) or peak (bearish) that originated the current active trend — identifiable in the 8h views.
 - T2 = FIRST significant confirming swing after T1 on the trading timeframe (first higher low / first lower high).
-- The line through T1→T2 is projected forward. A shallower slope from an earlier/later T2 is ALWAYS preferable over a steep slope. The line should arrive at or near current price at current time — if it is well above or below, reconsider the anchors.
+- The line through T1→T2 is projected forward. A shallower slope is ALWAYS preferable. The projected line should arrive near or below current price for a bullish setup (price is touching or approaching support from above).
 - Prefer the line that the market has most clearly respected across the longest visible span.
+
+### CRITICAL: Anchor at wick extremes — never at body prices
+The price you report for T1 and T2 MUST be the candle WICK extreme, not the body:
+- **Bullish ascending support**: T1 price = the LOW (L) of the T1 candle (the bottom wick tip). T2 price = the LOW (L) of the T2 candle. The drawn line must run **BELOW all candle bodies** from T1 through to current price. If the line would cut through any candle body, the T2 anchor is wrong — choose a later swing whose wick low produces a line that stays under all bodies.
+- **Bearish descending resistance**: T1 price = the HIGH (H) of the T1 candle. T2 price = the HIGH (H) of the T2 candle. The drawn line must run **ABOVE all candle bodies**.
+- A line that cuts through candle bodies is NOT a valid trendline, regardless of how clean the T1/T2 swing points look in isolation.
+- Wick penetration (line touched by a wick only, body stays on the correct side) is fine — that is normal price behaviour at support/resistance.
 
 ### T2 rollover rule
 - If price closed aggressively through the original T2 before touching T3, the FIRST candle body that violated the line becomes the new T2.
@@ -133,18 +151,18 @@ function buildUserPrompt(candidate: SwingPointsForBrowser | undefined, screensho
 Use these as a starting hypothesis — correct them if the visual evidence disagrees.`
     : `No deterministic candidate is available for this chart. Identify the structure purely from visual analysis.`;
 
-  return `You are reviewing ${screenshotCount} sequential chart screenshots following a deliberate multi-timeframe discovery flow. Views 1–2 are the 8h timeframe showing the full available history. Views 3–6 are the trading timeframe (4h or similar) at decreasing zoom, ending at the drawing canvas.
+  return `You are reviewing ${screenshotCount} sequential chart screenshots following a deliberate multi-timeframe discovery flow. Views 1–2 are the 8h timeframe showing the CURRENT STRUCTURAL CYCLE (~4 months). Views 3–6 are the trading timeframe (4h or similar) at decreasing zoom, ending at the drawing canvas.
 
 ${candidateSection}
 
 Your task:
-1. From Views 1–2 (8h): establish the dominant regime and locate the OLDEST, MOST DOMINANT structural swing. This is T1 — the absolute deepest trough (bullish) or highest peak (bearish) visible. It may be months before recent price. NOT a local swing within an ongoing trend.
-2. From Views 3–4 (trading TF zoomed out): confirm T1. Then identify T2 — the first significant higher low (bullish) or lower high (bearish) that sets the slope. T2 is typically 10–30+ days after T1. If T2 is only a few days from T1, the slope will be too steep — pick a later T2.
-3. **Slope sanity check**: Project the T1→T2 line to the rightmost candle visible. The projected price should be near or below current price for a bullish setup (price approaching support from above). If the projected line at current time is well ABOVE current price, stop — your T2 is wrong. Adjust until the line arrives near current price.
+1. From Views 1–2 (8h): establish the dominant regime. Identify the trough (bullish) or peak (bearish) that STARTED the current multi-week rally visible in the chart. This is T1. Ask yourself: "Before this rally began, where was the lowest point?" — that is T1. Ignore ancient historical lows from completely different market cycles that are not connected to the current move.
+2. From Views 3–4 (trading TF zoomed out): confirm T1 is the lowest point BEFORE the rally — not a correction low mid-rally. Then identify T2 — the first significant higher low that sets the slope. T2 is typically 10–30+ days after T1.
+3. **Slope sanity check**: Project the T1→T2 line to the rightmost visible candle. For a bullish setup, the projected line should be at or below current price — price is above support or touching it. If the line is well ABOVE current price, your T2 is wrong (line is too steep). Adjust until the projection makes contact sense with current price.
 4. From Views 5–6: Assess the T3 zone — is current price approaching or touching the projected line?
 5. Return your verdict: valid, staged, invalid, or reject.
 6. Even if verdict is reject, still map the dominant structure when visible.
-7. In View 6 (DRAWING CANVAS), locate T1 and T2 at the EXACT candle wick/body tip and report viewSixPos (xPct, yPct as fractions of the 1440×900 image). Both T1 and T2 must be visible in View 6 — if T1 is off-screen left, use its earliest visible candle.
+7. In View 6 (DRAWING CANVAS), report viewSixPos for T1 and T2 if visible. If T1 is off-screen, set viewSixPos to null — use the correct price and date from the 8h analysis, not a substitute candle.
 
 Be honest. Lower confidence if ambiguous, but always attempt to map the dominant structure.`;
 }
@@ -171,12 +189,12 @@ export async function analyzeChartWithVision(
   // Interleave screenshot labels with images so Claude can reference them by position
   const contentBlocks: Anthropic.ContentBlockParam[] = [];
   const labels = [
-    "View 1 of 6 — 8H TIMEFRAME, broad regime view. Establish the dominant trend direction across the full visible history.",
-    "View 2 of 6 — 8H TIMEFRAME, panned to the OLDEST AVAILABLE DATA. Find the single most dominant structural swing here — this is the true T1 origin (deepest trough for bullish, highest peak for bearish). This is the anchor of everything.",
-    "View 3 of 6 — TRADING TIMEFRAME, maximum zoom-out. The full structure from the oldest dominant swing to current price is visible. T1 should be somewhere on the left side.",
-    "View 4 of 6 — TRADING TIMEFRAME, T1 region centred. Confirm T1: the oldest, most dominant swing. This is NOT a recent local extreme — it is the origin swing visible in the 8h views.",
-    "View 5 of 6 — TRADING TIMEFRAME, T1→T2 slope and post-T2 line interaction. Confirm T2 and assess how price has respected the projected line.",
-    "View 6 of 6 — TRADING TIMEFRAME, DRAWING CANVAS. T1 is on the left, T2 in the middle, current price (T3 zone) on the right. Report viewSixPos for BOTH T1 and T2 from THIS image — these coordinates are used directly for drawing.",
+    "View 1 of 6 — 8H TIMEFRAME, current structural cycle (~4 months). Identify the dominant regime. Note the major trough that launched the current multi-week rally — this is the candidate T1 origin.",
+    "View 2 of 6 — 8H TIMEFRAME, shifted slightly left so the CURRENT TREND ORIGIN is near the left edge. The trough that STARTED this specific rally (not an ancient historical low from a different cycle) should be prominent on the left. Confirm T1: it is the lowest visible point BEFORE the rally began, from which the market bounced and never looked back.",
+    "View 3 of 6 — TRADING TIMEFRAME, maximum zoom-out. T1 (the rally's origin trough) should be visible on the left. The full move from T1 to current price is visible.",
+    "View 4 of 6 — TRADING TIMEFRAME, T1 region centred. Confirm T1 is the lowest point before the rally — not a correction low mid-rally. T2 (first significant higher low) is visible to the right.",
+    "View 5 of 6 — TRADING TIMEFRAME, T1→T2 slope and post-T2 price behaviour. Confirm T2 and assess how price has respected the projected ascending line.",
+    "View 6 of 6 — TRADING TIMEFRAME, DRAWING CANVAS. T1 on the left, T2 in the middle, current price (T3 zone) on the right. Report viewSixPos for T1 and T2 from THIS image only — used directly for drawing.",
   ];
 
   for (let i = 0; i < screenshots.length; i++) {
@@ -275,5 +293,296 @@ Important output rules:
       rationale: `Vision analysis returned unparseable response: ${jsonText.slice(0, 200)}`,
       issues: ["JSON parse failed"],
     };
+  }
+}
+
+// Sonnet-based final confirmation. Runs AFTER all drawing and verification passes
+// to give a high-quality structural assessment of the final chart state. Checks:
+//   1. Anchors are at wick lows (ascending) / wick highs (descending)
+//   2. Line runs cleanly below (ascending) / above (descending) all candle bodies
+//   3. T1 is the structural origin trough, NOT a correction low mid-rally
+// Returns suggested T1/T2 dates if the structure is wrong.
+export type SonnetConfirmation = {
+  confirmed: boolean;
+  note: string;
+  t1Correct: boolean;
+  t2Correct: boolean;
+  suggestedT1Date?: string;
+  suggestedT1Price?: number;
+  suggestedT2Date?: string;
+  suggestedT2Price?: number;
+};
+
+export async function confirmStructureWithSonnet(
+  screenshot: Buffer,
+  t1: { price: number; date?: string },
+  t2: { price: number; date?: string },
+): Promise<SonnetConfirmation> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return { confirmed: true, note: "ANTHROPIC_API_KEY missing", t1Correct: true, t2Correct: true };
+
+  const client = new Anthropic({ apiKey });
+
+  const prompt = `This is the current chart with a blue ascending trendline drawn.
+
+Current anchors:
+- T1: ~${t1.date ?? "unknown"}, price ~${t1.price}
+- T2: ~${t2.date ?? "unknown"}, price ~${t2.price}
+
+## What to verify:
+
+**T1 — structural origin trough:**
+- Must be the lowest wick of the CURRENT CYCLE shown in this chart view — the trough the present multi-week rally launched from
+- IMPORTANT: Do NOT chase lows that are far to the left and belong to a DIFFERENT prior market cycle. The chart intentionally shows 90 days of history. T1 should be within this window, not at its far edge.
+- If the drawn T1 is clearly too late (a higher correction low mid-rally), suggest the correct earlier date. But if T1 is already near the leftmost significant trough of the visible rally, it is likely correct.
+
+**T2 — first significant higher low:**
+- Must be the FIRST clear higher low after T1 — a candle or cluster where price bounced and THEN rallied strongly
+- T2 wick low should be CLEARLY HIGHER than T1 wick low (at least 100+ pts above T1 for this chart)
+- T2 should be at least 10 days after T1 (closer than 8 days = likely wrong)
+- T2 is the inflection point: before T2 price was still correcting, after T2 the rally accelerated
+- NOT a random slightly-higher candle mid-correction — it must be a CLEAN BOUNCE POINT
+
+**Line quality:**
+- Line must run BELOW ALL candle bodies between T1 and current price
+- Wick touches are fine; body cuts are not
+
+Return confirmed=true ONLY if all three criteria are met. Otherwise return corrected dates/prices.
+
+JSON only:
+{
+  "confirmed": true | false,
+  "note": "<one sentence>",
+  "t1Correct": true | false,
+  "t2Correct": true | false,
+  "suggestedT1Date": "<YYYY-MM-DD>" | null,
+  "suggestedT1Price": <wick low price number> | null,
+  "suggestedT2Date": "<YYYY-MM-DD>" | null,
+  "suggestedT2Price": <number> | null
+}`;
+
+  try {
+    const response = await client.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 300,
+      messages: [{
+        role: "user",
+        content: [
+          { type: "image", source: { type: "base64", media_type: "image/png", data: screenshot.toString("base64") } },
+          { type: "text", text: prompt },
+        ],
+      }],
+    });
+
+    const text = response.content.find((b) => b.type === "text")?.text ?? "";
+    console.log("[sonnet-confirm] raw:", text.trim());
+
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return { confirmed: true, note: "parse failed", t1Correct: true, t2Correct: true };
+
+    const raw = JSON.parse(jsonMatch[0]) as Partial<SonnetConfirmation>;
+    return {
+      confirmed: raw.confirmed ?? true,
+      note: raw.note ?? "",
+      t1Correct: raw.t1Correct ?? true,
+      t2Correct: raw.t2Correct ?? true,
+      suggestedT1Date: raw.suggestedT1Date ?? undefined,
+      suggestedT1Price: raw.suggestedT1Price ?? undefined,
+      suggestedT2Date: raw.suggestedT2Date ?? undefined,
+      suggestedT2Price: raw.suggestedT2Price ?? undefined,
+    };
+  } catch (err) {
+    console.error("[sonnet-confirm] error:", err);
+    return { confirmed: true, note: "confirm call failed", t1Correct: true, t2Correct: true };
+  }
+}
+
+// Lightweight post-draw verification. Uses Haiku (cheap, fast) to check whether
+// the drawn trendline looks correct on the final chart screenshot. If the slope is
+// wrong it returns corrected anchor suggestions so the caller can redraw once.
+export async function verifyChartDrawing(
+  screenshot: Buffer,
+  t1: { price: number; date?: string },
+  t2: { price: number; date?: string },
+  zone: { low: number; high: number },
+): Promise<DrawingVerification> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return { assessment: "correct", note: "ANTHROPIC_API_KEY missing — skipping verify" };
+
+  const client = new Anthropic({ apiKey });
+
+  const prompt = `A blue ascending trendline has been drawn on this 4h candlestick chart.
+Expected structure:
+- T1 anchor: ~${t1.date ?? "unknown date"}, price ~${t1.price} — the WICK LOW of the structural origin trough
+- T2 anchor: ~${t2.date ?? "unknown date"}, price ~${t2.price} — the WICK LOW of the first significant higher low
+- Zone box (purple rectangle): should be near current price (~${zone.low}–${zone.high})
+
+The FUNDAMENTAL RULE for a valid ascending support trendline:
+- Anchors must be at candle WICK LOWS (the very bottom of the wicks, not the body)
+- The line must run BELOW ALL CANDLE BODIES between T1 and the right edge
+- If the line cuts through ANY candle body (not just a wick), it is INVALID
+
+Assess the drawn blue line:
+1. Does the line run cleanly BELOW all candle bodies? (correct)
+2. Does the line cut through candle bodies at any point? (slope_too_steep)
+3. Is price trading above the line at the current date (right side)? (correct) Or is the line above recent candles? (slope_too_steep)
+
+If the line cuts through bodies: identify the WICK LOW of the leftmost structural trough (T1 — deepest low before the rally) and the WICK LOW of the first clear higher low (T2) that produces a line which passes cleanly BELOW all intermediate candle bodies.
+
+Respond ONLY with valid JSON, no markdown:
+{
+  "assessment": "correct" | "slope_too_steep" | "slope_too_shallow" | "line_broken",
+  "note": "<one short sentence>",
+  "correctedT1": { "price": <wick low price>, "date": "<YYYY-MM-DD>", "xPct": <0-1>, "yPct": <0.20-0.88> } | null,
+  "correctedT2": { "price": <wick low price>, "date": "<YYYY-MM-DD>", "xPct": <0-1>, "yPct": <0.20-0.88> } | null
+}
+Note: yPct must be between 0.20 and 0.88 (chart canvas only, not toolbar/axis areas).`;
+
+  try {
+    const response = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 350,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "image",
+              source: { type: "base64", media_type: "image/png", data: screenshot.toString("base64") },
+            },
+            { type: "text", text: prompt },
+          ],
+        },
+      ],
+    });
+
+    const text = response.content.find((b) => b.type === "text")?.text ?? "";
+    console.log("[verify] raw:", text.trim());
+
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return { assessment: "correct", note: "parse failed — treating as correct" };
+
+    const raw = JSON.parse(jsonMatch[0]) as {
+      assessment?: string;
+      note?: string;
+      correctedT1?: { price?: number; date?: string; xPct?: number; yPct?: number } | null;
+      correctedT2?: { price?: number; date?: string; xPct?: number; yPct?: number } | null;
+    };
+
+    const parseAnchor = (a: typeof raw.correctedT1) => {
+      if (!a || typeof a.price !== "number") return undefined;
+      const pos = (typeof a.xPct === "number" && typeof a.yPct === "number")
+        ? { xPct: Math.max(0, Math.min(1, a.xPct)), yPct: Math.max(0, Math.min(1, a.yPct)) }
+        : undefined;
+      return {
+        price: a.price,
+        date: typeof a.date === "string" ? a.date : "",
+        viewPos: pos,
+      };
+    };
+
+    const validAssessments = ["correct", "slope_too_steep", "slope_too_shallow", "line_broken"] as const;
+    const assessment = validAssessments.includes(raw.assessment as never)
+      ? (raw.assessment as DrawingVerification["assessment"])
+      : "correct";
+
+    return {
+      assessment,
+      note: typeof raw.note === "string" ? raw.note : "",
+      correctedT1: parseAnchor(raw.correctedT1) ?? undefined,
+      correctedT2: parseAnchor(raw.correctedT2) ?? undefined,
+    };
+  } catch (err) {
+    console.error("[verify] error:", err);
+    return { assessment: "correct", note: "verify call failed — treating as correct" };
+  }
+}
+
+export type FibonacciVerification = {
+  confirmed: boolean;
+  structureIntact: boolean;
+  priceInZone: boolean;
+  note: string;
+};
+
+export async function verifyFibonacciDrawing(
+  screenshot: Buffer,
+  context: {
+    direction: "long" | "short";
+    activeLeg: { lowPrice: number; highPrice: number };
+    preferredZone?: { low: number; high: number };
+  },
+): Promise<FibonacciVerification> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return { confirmed: true, structureIntact: true, priceInZone: false, note: "ANTHROPIC_API_KEY missing — skipping verify" };
+  }
+
+  const client = new Anthropic({ apiKey });
+  const { direction, activeLeg, preferredZone } = context;
+  const isBullish = direction === "long";
+
+  const prompt = `Fibonacci retracements have been drawn on this ${isBullish ? "bullish" : "bearish"} chart.
+
+Expected structure:
+- Active fibonacci leg: from ~${activeLeg.lowPrice} (swing low) to ~${activeLeg.highPrice} (swing high)
+- ${preferredZone ? `Preferred reaction zone: ~${preferredZone.low}–${preferredZone.high} (should appear as a coloured rectangle)` : "No zone rectangle expected."}
+- The chart should show multiple fibonacci retracement lines (horizontal dashed lines at 0, 0.5, 0.618, 0.7, 0.786, 1 levels)
+
+Assess what you see:
+1. Are fibonacci retracement lines visible on the chart? (horizontal lines spanning the price range)
+2. Is the ${isBullish ? "bullish" : "bearish"} trend structure intact (price trending ${isBullish ? "upward" : "downward"})?
+3. Is current price ${isBullish ? "near or within the retracement zone (below the high, above 0.5 level)" : "near or within the retracement zone (above the low, below 0.5 level)"}?
+
+Respond ONLY with valid JSON, no markdown:
+{
+  "confirmed": true | false,
+  "structureIntact": true | false,
+  "priceInZone": true | false,
+  "note": "<one short sentence summarising what you see>"
+}`;
+
+  try {
+    const response = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 200,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "image",
+              source: { type: "base64", media_type: "image/png", data: screenshot.toString("base64") },
+            },
+            { type: "text", text: prompt },
+          ],
+        },
+      ],
+    });
+
+    const text = response.content.find((b) => b.type === "text")?.text ?? "";
+    console.log("[fib-verify] raw:", text.trim());
+
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return { confirmed: true, structureIntact: true, priceInZone: false, note: "parse failed — treating as confirmed" };
+    }
+
+    const raw = JSON.parse(jsonMatch[0]) as {
+      confirmed?: boolean;
+      structureIntact?: boolean;
+      priceInZone?: boolean;
+      note?: string;
+    };
+
+    return {
+      confirmed: raw.confirmed !== false,
+      structureIntact: raw.structureIntact !== false,
+      priceInZone: raw.priceInZone === true,
+      note: typeof raw.note === "string" ? raw.note : "",
+    };
+  } catch (err) {
+    console.error("[fib-verify] error:", err);
+    return { confirmed: true, structureIntact: true, priceInZone: false, note: "verify call failed — treating as confirmed" };
   }
 }

@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import { ImageDithering, LiquidMetal } from "@paper-design/shaders-react";
-import type { SwingPointsForBrowser } from "@/lib/browser-session-runtime";
+import type { SwingPointsForBrowser, FibonacciLegForBrowser } from "@/lib/browser-session-runtime";
 import { cn } from "@/lib/utils";
 import type {
   BrowserSession,
@@ -804,6 +804,37 @@ function extractSwingPoints(
     visiblePriceHigh: rawHigh + padding,
     candleSeconds: CANDLE_SECONDS[timeframe] ?? 3600,
   };
+}
+
+function extractFibonacciLegs(
+  trace: VisualTrace | undefined,
+): { legs: FibonacciLegForBrowser[]; preferredZone?: { low: number; high: number } } {
+  if (!trace) return { legs: [] };
+
+  const legs: FibonacciLegForBrowser[] = [];
+  let preferredZone: { low: number; high: number } | undefined;
+
+  for (const annotation of trace.annotations) {
+    const g = annotation.geometry;
+    if (!g) continue;
+
+    if (g.kind === "fibonacci" && g.startTimeSec !== undefined && g.endTimeSec !== undefined) {
+      legs.push({
+        lowTimeSec: g.startTimeSec,
+        lowPrice: g.lowPrice,
+        highTimeSec: g.endTimeSec,
+        highPrice: g.highPrice,
+        isMuted: g.tone === "muted",
+      });
+    }
+
+    // Preferred zone: tone === "zone" (the engine sets this only on the preferred band)
+    if (g.kind === "zone" && g.tone === "zone") {
+      preferredZone = { low: g.lowPrice, high: g.highPrice };
+    }
+  }
+
+  return { legs, preferredZone };
 }
 
 // Shared Tailwind class strings for reuse
@@ -1741,22 +1772,45 @@ export default function ArenaDashboard() {
                       marketSymbol: marketSym,
                       timeframe: agentTimeframe,
                     });
-                    const response = await fetch("/api/browser-session/start", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({
-                        sessionId: result.sessionId,
-                        marketSymbol: result.browserTargetSymbol,
-                        timeframe: result.browserTargetTimeframe,
-                        agentSlug: agentId,
-                        agentMarketSymbol: marketSym,
-                        targetUrl: "https://charts.deriv.com/deriv",
-                        swingPoints:
-                          result.browserTargetSymbol === marketSym
-                            ? extractSwingPoints(selectedTrace, agentTimeframe)
-                            : undefined,
-                      }),
-                    });
+
+                    const isFibAgent = agentId === "fibonacci-trend";
+                    let response: Response;
+
+                    if (isFibAgent) {
+                      const { legs, preferredZone } = extractFibonacciLegs(selectedTrace);
+                      response = await fetch("/api/browser-session/fibonacci/start", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          sessionId: result.sessionId,
+                          agentSlug: agentId,
+                          agentMarketSymbol: marketSym,
+                          marketSymbol: result.browserTargetSymbol,
+                          timeframe: result.browserTargetTimeframe,
+                          targetUrl: "https://charts.deriv.com/deriv",
+                          legs,
+                          preferredZone,
+                          direction: selectedTradeIdea?.direction ?? "long",
+                        }),
+                      });
+                    } else {
+                      response = await fetch("/api/browser-session/start", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          sessionId: result.sessionId,
+                          marketSymbol: result.browserTargetSymbol,
+                          timeframe: result.browserTargetTimeframe,
+                          agentSlug: agentId,
+                          agentMarketSymbol: marketSym,
+                          targetUrl: "https://charts.deriv.com/deriv",
+                          swingPoints:
+                            result.browserTargetSymbol === marketSym
+                              ? extractSwingPoints(selectedTrace, agentTimeframe)
+                              : undefined,
+                        }),
+                      });
+                    }
 
                     if (!response.ok) {
                       throw new Error("browser_startup_request_failed");

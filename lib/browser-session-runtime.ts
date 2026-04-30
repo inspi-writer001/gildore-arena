@@ -8,7 +8,7 @@ import { chromium, type Browser, type Frame, type Locator, type Page } from "pla
 import Anthropic from "@anthropic-ai/sdk";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "@/convex/_generated/api";
-import { analyzeChartWithVision, type ChartVisionDecision } from "./chart-vision-analysis";
+import { analyzeChartWithVision, verifyChartDrawing, confirmStructureWithSonnet, verifyFibonacciDrawing, type ChartVisionDecision } from "./chart-vision-analysis";
 
 type BrowserStepStatus = "queued" | "running" | "completed" | "failed";
 
@@ -395,6 +395,16 @@ function getChartFrame(page: Page) {
   return chartFrame;
 }
 
+// Deriv's TradingView uses its own internal symbol names. Map our arena market
+// symbols to a search term that returns results, plus a pattern to click the
+// correct row when multiple results appear.
+const DERIV_SYMBOL_SEARCH: Record<string, { term: string; selectPattern: RegExp; category?: string }> = {
+  "XAU/USD": { term: "xau", selectPattern: /FRXXAUUSD|GOLD\/USD|XAU/i, category: "Commodities" },
+  "XAG/USD": { term: "xag", selectPattern: /FRXXAGUSD|SILVER|XAG/i, category: "Commodities" },
+  "EUR/USD": { term: "eurusd", selectPattern: /EURUSD|EUR\/USD/i, category: "Forex" },
+  "GBP/USD": { term: "gbpusd", selectPattern: /GBPUSD|GBP\/USD/i, category: "Forex" },
+};
+
 async function switchDerivSymbol(
   sessionId: string,
   page: Page,
@@ -419,19 +429,31 @@ async function switchDerivSymbol(
 
   await page.waitForTimeout(800);
 
-  setActionLabel(sessionId, "Navigating to Derived markets");
-  await clickLocatorWithTelemetry(
-    sessionId,
-    page,
-    chartFrame.getByText(/^Derived$/).first(),
-  ).catch(() => {});
+  // Resolve Deriv-specific search term, result-row pattern, and category tab.
+  const derivOverride = DERIV_SYMBOL_SEARCH[marketSymbol];
+  const searchTerm = derivOverride?.term ?? marketSymbol;
+  const selectPattern = derivOverride?.selectPattern ?? new RegExp(escapeRegExp(marketSymbol), "i");
 
-  await page.waitForTimeout(400);
+  // Click the appropriate category tab before searching.
+  // Synthetic indices need "Derived"; commodities need "Commodities"; forex needs "Forex".
+  // Falling back to "Derived" for any unrecognised market (legacy default).
+  const categoryTab = derivOverride?.category
+    ?? (/volatility|crash|boom|step|jump/i.test(marketSymbol) ? "Derived" : null);
+
+  if (categoryTab) {
+    setActionLabel(sessionId, `Selecting ${categoryTab} category`);
+    await clickLocatorWithTelemetry(
+      sessionId,
+      page,
+      chartFrame.getByText(new RegExp(`^${categoryTab}$`, "i")).first(),
+    ).catch(() => {});
+    await page.waitForTimeout(400);
+  }
 
   setActionLabel(sessionId, `Searching for ${marketSymbol}`);
   const searchInput = chartFrame.locator('input[placeholder="Search"]').first();
   const filledSearch = await searchInput
-    .fill(marketSymbol)
+    .fill(searchTerm)
     .then(() => true)
     .catch(() => false);
 
@@ -442,11 +464,10 @@ async function switchDerivSymbol(
   await page.waitForTimeout(1200);
 
   setActionLabel(sessionId, `Selecting ${marketSymbol} from results`);
-  const exactSymbolPattern = new RegExp(escapeRegExp(marketSymbol), "i");
   const selectedSymbol = await clickLocatorWithTelemetry(
     sessionId,
     page,
-    chartFrame.getByText(exactSymbolPattern, { exact: false }).first(),
+    chartFrame.getByText(selectPattern, { exact: false }).first(),
   )
     .then(() => true)
     .catch(() => false);
@@ -672,112 +693,117 @@ async function captureStrategyScreenshots(
     screenshots.push(await captureToBuffer(page));
   }
 
-  // ── Phase 1: 8h — expose the full available history ──────────────────────────
-  // 8h candles cover many months per screen. Heavy zoom-out + one pan left
-  // exposes the oldest available data so Sonnet can identify the true T1 origin.
-  setActionLabel(sessionId, "Switching to 8h for full historical regime context");
+  // ── Phase 1: 8h — show the current structural cycle, NOT ancient history ────────
+  // Goal: let the agent see the trough that STARTED the current active trend
+  // (e.g. a Jan/Feb 2026 bottom after a Nov 2025 selloff), not pre-2025 data.
+  // View 1 = broad 8h view showing ~4 months: regime, dominant swings, trend direction.
+  // View 2 = same 8h, panned slightly left to put the CURRENT TREND ORIGIN at the
+  //           left-centre of the frame, with the full rally to present on the right.
+  setActionLabel(sessionId, "Switching to 8h — current structural cycle view");
   await switchDerivTimeframe(sessionId, page, "8h");
   await page.waitForTimeout(300);
-  // Click chart frame centre to restore focus after the interval dialog closes.
   const frameBox8h = await chartFrame.locator("body").boundingBox().catch(() => null);
   const f8hCx = frameBox8h ? frameBox8h.x + frameBox8h.width * 0.5 : chartCx;
   const f8hCy = frameBox8h ? frameBox8h.y + frameBox8h.height * 0.4 : chartCy;
-  // Extra tooltip dismissal pass — the "Got it!" modal sometimes appears with a
-  // short delay after the timeframe switch and can block all wheel/drag events.
   await page.waitForTimeout(1200);
   await dismissDerivTooltips(page, chartFrame);
   await page.waitForTimeout(300);
   await page.mouse.click(f8hCx, f8hCy);
   await page.waitForTimeout(200);
   await page.mouse.move(f8hCx, f8hCy);
-  await page.mouse.wheel(0, 3500); // zoom out on 8h
+  // Moderate zoom-out: show ~4 months of 8h candles. This puts the current
+  // trend origin (a recent major trough) in the left portion of the frame
+  // while keeping current price visible on the right.
+  await page.mouse.wheel(0, 2500);
   await page.waitForTimeout(700);
-  await snap("View 1/6 — 8h broad view: full recent regime, dominant swings and trend structure");
+  await snap("View 1/6 — 8h current structural cycle (~4 months): regime direction, dominant trend, recent major swings");
 
-  // Pan left to reach the end of available history on this instrument.
-  setActionLabel(sessionId, "Panning 8h to oldest available data — end of history");
-  await dragPointerWithTelemetry({
-    sessionId, page,
-    from: { x: chartCx, y: chartCy },
-    to: { x: chartCx + 1200, y: chartCy },
-    steps: 50,
-  });
-  await snap("View 2/6 — 8h oldest available history: absolute origin of the trend, dominant mega-swing visible");
-
-  // ── Phase 2: Return to trading timeframe — show full structure from T1 to now ──
-  // After switching timeframe, click the "6m" period button if available (it
-  // puts the full 6-month window in frame, which always includes the oldest
-  // structural swing). Fall back to heavy wheel zoom-out + extra pan left.
-  setActionLabel(sessionId, `Switching to ${targetTimeframe} — showing full structure from T1 to present`);
-  await switchDerivTimeframe(sessionId, page, targetTimeframe);
-  await page.waitForTimeout(500);
-
-  // After a timeframe switch, the chart frame loses focus (the interval dialog
-  // had focus). Wheel scroll only zooms the chart when the frame has focus.
-  // Get the frame's actual page coordinates, click its centre to restore focus,
-  // then wheel-zoom while the cursor is positioned over the canvas.
-  const frameBox = await chartFrame.locator("body").boundingBox().catch(() => null);
-  const fCx = frameBox ? frameBox.x + frameBox.width * 0.5 : chartCx;
-  const fCy = frameBox ? frameBox.y + frameBox.height * 0.4 : chartCy;
-
-  // Extra tooltip dismissal pass before the zoom — the "Got it!" modal blocks
-  // wheel events if it's still up when we try to scroll.
-  await page.waitForTimeout(1200);
-  await dismissDerivTooltips(page, chartFrame);
-  await page.waitForTimeout(300);
-  await page.mouse.click(fCx, fCy);   // restore focus to chart frame
-  await page.waitForTimeout(200);
-  await page.mouse.move(fCx, fCy);
-
-  // Zoom out heavily on the trading timeframe so the structural T1 (which may be
-  // 10+ weeks back) is visible. wheel(0, positive) = zoom OUT on TradingView/Deriv.
-  // Using 8000 (was 5000) to show ~3 months of 4h candles — enough to expose a
-  // Feb T1 when current date is late April.
-  await page.mouse.wheel(0, 8000);
-  await page.waitForTimeout(900);
-  // Pan left (drag right) to shift older history into the left side of the frame.
-  await dragPointerWithTelemetry({
-    sessionId, page,
-    from: { x: fCx, y: fCy },
-    to: { x: fCx + 700, y: fCy },
-    steps: 35,
-  });
-  await page.waitForTimeout(400);
-  console.log("[captureStrategyScreenshots] zoomed out and panned left on", targetTimeframe);
-  await snap(`View 3/6 — ${targetTimeframe} full structure: oldest dominant swing (T1) on left, current price on right`);
-
-  // Pan left a bit more to bring T1 clearly into frame without clipping.
-  setActionLabel(sessionId, "Centering on T1 — oldest structural anchor");
+  // Pan slightly LEFT (toward older data) so the trough that STARTED the current
+  // rally is near the left edge. 300px is enough to expose the origin without
+  // sliding into irrelevant ancient history.
+  setActionLabel(sessionId, "8h: centering on the current trend origin");
   await dragPointerWithTelemetry({
     sessionId, page,
     from: { x: chartCx, y: chartCy },
     to: { x: chartCx + 300, y: chartCy },
     steps: 15,
   });
-  await snap(`View 4/6 — ${targetTimeframe} T1 region: oldest dominant structural swing centred, T2 visible to the right`);
+  await snap("View 2/6 — 8h current trend origin: the trough that LAUNCHED the active rally is visible near the left; full rally to present on the right");
 
-  // Pan right (drag left) to expose the T1→T2 slope and post-T2 price action.
-  setActionLabel(sessionId, "Advancing to T1→T2 span — slope and post-T2 behaviour");
-  await dragPointerWithTelemetry({
-    sessionId, page,
-    from: { x: chartCx, y: chartCy },
-    to: { x: chartCx - 500, y: chartCy },
-    steps: 25,
-  });
-  await snap(`View 5/6 — ${targetTimeframe} T1→T2 slope and post-T2 line interaction, T3 region approaching`);
+  // ── Phase 2: Return to trading timeframe — use setVisibleRange for precise T1 ──
+  // Goal: show Jan 1 through current+30d so T1 (Feb 7-8) appears at ~25-30%
+  // from the left — well clear of the left edge, preventing the agent from
+  // picking the leftmost visible candle (Feb 22) as T1 instead of the true trough.
+  setActionLabel(sessionId, `Switching to ${targetTimeframe} — setting precise view from Jan to current`);
+  await switchDerivTimeframe(sessionId, page, targetTimeframe);
+  await page.waitForTimeout(500);
+
+  const frameBox = await chartFrame.locator("body").boundingBox().catch(() => null);
+  const fCx = frameBox ? frameBox.x + frameBox.width * 0.5 : chartCx;
+  const fCy = frameBox ? frameBox.y + frameBox.height * 0.4 : chartCy;
+
+  await page.waitForTimeout(1200);
+  await dismissDerivTooltips(page, chartFrame);
+  await page.waitForTimeout(300);
+  await page.mouse.click(fCx, fCy);
+  await page.waitForTimeout(300);
+
+  // Try to set a precise visible range via the chart API.
+  // Show the last 90 days from current — this is market-agnostic: 90 days of 4h
+  // candles always covers the structural T1 origin of a multi-week/multi-month rally
+  // without showing so much history that older-cycle lows confuse the agent.
+  const nowForRange = Math.floor(Date.now() / 1000) + 14 * 86400;  // current + 2-week buffer
+  const ninetyDaysAgo = nowForRange - 90 * 86400 - 14 * 86400;    // ~104 days total window
+  const rangeSet = await chartFrame.evaluate(({ from, to }: { from: number; to: number }) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const w = window as any;
+    let widget = w.__gildoreWidget;
+    if (!widget) {
+      for (const key of Object.getOwnPropertyNames(w)) {
+        try {
+          const val = w[key];
+          if (val && typeof val === "object" && typeof val.activeChart === "function" && typeof val.chart === "function") {
+            widget = val; break;
+          }
+        } catch { /* skip */ }
+      }
+    }
+    if (!widget) return false;
+    try { widget.activeChart().setVisibleRange({ from, to }); return true; }
+    catch { return false; }
+  }, { from: ninetyDaysAgo, to: nowForRange }).catch(() => false);
+
+  if (rangeSet) {
+    console.log("[captureStrategyScreenshots] setVisibleRange succeeded (Jan 1 – current+30d)");
+    await page.waitForTimeout(600);
+  } else {
+    // Fallback: wheel zoom to approximate the same range
+    console.log("[captureStrategyScreenshots] setVisibleRange failed — falling back to wheel zoom");
+    await page.mouse.move(fCx, fCy);
+    await page.mouse.wheel(0, 12000);
+    await page.waitForTimeout(900);
+    await dragPointerWithTelemetry({ sessionId, page, from: { x: fCx, y: fCy }, to: { x: fCx + 700, y: fCy }, steps: 35 });
+    await page.waitForTimeout(400);
+  }
+  await autoScaleYAxis(page);
+
+  await snap(`View 3/6 — ${targetTimeframe} full structure Jan→now: T1 (Feb 7-8 structural trough) visible at ~25% from left, current price at right`);
+
+  // View 4: minor right pan to expose the T1 low more clearly
+  setActionLabel(sessionId, "Centring T1 region");
+  await dragPointerWithTelemetry({ sessionId, page, from: { x: chartCx, y: chartCy }, to: { x: chartCx + 200, y: chartCy }, steps: 10 });
+  await snap(`View 4/6 — ${targetTimeframe} T1 region centred: wick low of Feb 7-8 visible, T2 (first higher low) to the right`);
+
+  // View 5: pan back to show the T1→T2 slope and post-T2 rally
+  setActionLabel(sessionId, "T1→T2 slope view");
+  await dragPointerWithTelemetry({ sessionId, page, from: { x: chartCx, y: chartCy }, to: { x: chartCx - 200, y: chartCy }, steps: 10 });
+  await snap(`View 5/6 — ${targetTimeframe} T1→T2 ascending slope and post-T2 rally, T3 zone approaching`);
 
   // ── Phase 3: Drawing canvas ───────────────────────────────────────────────────
-  // Pan left (drag right) 600px so T1 is back near the left side of the canvas
-  // and current price is near the right. This is the CRITICAL view — Sonnet
-  // reports viewSixPos from this screenshot as mouse-click targets for drawing.
-  // Using 600px (was 200px) to pull far enough back so T1 (~Feb 7) is on-screen.
-  setActionLabel(sessionId, "Settling to drawing canvas — T1 on left, T3 zone on right");
-  await dragPointerWithTelemetry({
-    sessionId, page,
-    from: { x: chartCx, y: chartCy },
-    to: { x: chartCx + 600, y: chartCy },
-    steps: 25,
-  });
+  // Return to the base Jan–current range (undo the View 4/5 pans).
+  setActionLabel(sessionId, "Drawing canvas — full structure T1→current");
+  await dragPointerWithTelemetry({ sessionId, page, from: { x: chartCx, y: chartCy }, to: { x: chartCx + 200, y: chartCy }, steps: 10 });
+  await autoScaleYAxis(page);
   await snap(`View 6/6 — ${targetTimeframe} DRAWING CANVAS: T1 (oldest low) on left, T2 in mid, T3 zone and current price on right`);
 
   return screenshots;
@@ -1216,18 +1242,42 @@ async function drawWithChartApi(
           return Math.round(range.from + span * Math.max(0, Math.min(1, canvasFrac)));
         };
 
-        // Prefer date-based timestamp (absolute, chart-state-independent) over xPct
-        // interpolation (requires chart to still be in View-6 state).
-        const t1Time = t1.dateUtcSec ?? (t1.xPct !== undefined ? xPctToTime(t1.xPct) : null);
-        const t2Time = t2.dateUtcSec ?? (t2.xPct !== undefined ? xPctToTime(t2.xPct) : null);
-        if (!t1Time || !t2Time) return { ok: false, reason: "no time source for T1 or T2" };
+        // ── Timestamp strategy ─────────────────────────────────────────────────
+        // The Deriv chart's internal timestamps differ from standard UTC Unix time
+        // by a constant offset (~10-14 days for VIX10). If we use Date.parse()
+        // values directly, every anchor lands that many days too early visually.
+        //
+        // Fix: treat T2's xPct-derived time as the ground truth (it comes directly
+        // from the chart's own getVisibleRange(), so it IS in chart-native time).
+        // Derive T1 and zone times RELATIVE to T2's native time using calendar deltas.
+        //
+        // Priority: xPct (chart-native) > dateUtcSec (UTC, needs offset correction)
 
-        // Zone always at the right side of the chart — the T3 interaction area.
-        const zoneStartTime = Math.round(range.from + span * 0.80);
-        const zoneEndTime   = Math.round(range.from + span * 0.97);
+        // T2: always prefer xPct over date — xPct is chart-native
+        const t2Time = t2.xPct !== undefined ? xPctToTime(t2.xPct) : (t2.dateUtcSec ?? null);
+        if (!t2Time) return { ok: false, reason: "no time source for T2" };
 
-        // Slope sanity: skip if T1 and T2 resolve to same timestamp or nearly same price
+        // Compute chart-native ↔ UTC offset from T2 (only valid when both sources available)
+        const chartUtcOffset = (t2.xPct !== undefined && t2.dateUtcSec)
+          ? xPctToTime(t2.xPct) - t2.dateUtcSec   // chart_native = UTC + offset
+          : 0;
+
+        // T1: use xPct if on-screen, otherwise apply the UTC offset to T1's date
+        const t1Time = t1.xPct !== undefined
+          ? xPctToTime(t1.xPct)
+          : (t1.dateUtcSec !== undefined ? t1.dateUtcSec + chartUtcOffset : null);
+        if (!t1Time) return { ok: false, reason: "no time source for T1" };
+
+        // Slope sanity
         if (t2Time <= t1Time) return { ok: false, reason: "T2 timestamp ≤ T1 — inverted or same time" };
+
+        // Current time in chart-native coordinates
+        const nowSec = Math.floor(Date.now() / 1000);
+        const nowChartTime = nowSec + chartUtcOffset;
+
+        // Zone at current time (T3 interaction area)
+        const zoneStartTime = nowChartTime - 5 * 24 * 3600;
+        const zoneEndTime   = nowChartTime + 10 * 24 * 3600;
 
         // Clear any drawings from previous sessions
         chart.removeAllShapes();
@@ -1247,7 +1297,7 @@ async function drawWithChartApi(
           },
         );
 
-        // Draw projected interaction zone as a rectangle at the T3 area (right side of chart)
+        // Draw projected interaction zone as a rectangle at the T3 area (current date)
         chart.createMultipointShape(
           [{ time: zoneStartTime, price: zone.low }, { time: zoneEndTime, price: zone.high }],
           {
@@ -1261,17 +1311,19 @@ async function drawWithChartApi(
           },
         );
 
-        // After drawing, set the visible range so T1 is near the left edge and
-        // current time is near the right — gives the user a natural view of the
-        // full structure without needing to manually zoom/pan.
-        const nowSec = Math.floor(Date.now() / 1000);
-        const paddingLeft = t1Time - (nowSec - t1Time) * 0.15;  // 15% of total span before T1
-        const paddingRight = nowSec + (nowSec - t1Time) * 0.05; // 5% after current date
+        // Reposition chart so T1 is near the left edge and current date is near the right.
+        // Cap the left boundary at 21 days before T1 — this is market-agnostic:
+        // enough context to show the decline into T1 without exposing data from a
+        // previous market cycle that would confuse the Sonnet verification loop.
+        const MIN_BEFORE_T1_SEC = 21 * 24 * 3600;
+        const rawPaddingLeft = t1Time - (nowChartTime - t1Time) * 0.15;
+        const paddingLeft = Math.max(t1Time - MIN_BEFORE_T1_SEC, rawPaddingLeft);
+        const paddingRight = nowChartTime + (nowChartTime - t1Time) * 0.05;
         try {
           chart.setVisibleRange({ from: Math.round(paddingLeft), to: Math.round(paddingRight) });
-        } catch { /* non-fatal — chart may not support setVisibleRange */ }
+        } catch { /* non-fatal */ }
 
-        return { ok: true, t1Time, t2Time, range };
+        return { ok: true, t1Time, t2Time, chartUtcOffset, range };
       },
       { t1, t2, zone } as { t1: { price: number; xPct?: number; dateUtcSec?: number }; t2: { price: number; xPct?: number; dateUtcSec?: number }; zone: { low: number; high: number } },
     );
@@ -1307,7 +1359,11 @@ async function identifySwingPointsOnChart(
   // agent positions reference the chart state as of View 6 (last screenshot).
   const agentT1Pos = overlay?.t1ViewSixPos;
   const agentT2Pos = overlay?.t2ViewSixPos;
-  const hasAgentPositions = agentT1Pos !== undefined && agentT2Pos !== undefined;
+  // T2's viewSixPos is sufficient to preserve the View 6 chart state for drawing.
+  // T1 being off-screen (null) is fine — it gets placed via date+chartUtcOffset.
+  // If we zoom-out here (old behaviour when T1 was null), the range changes and
+  // T2's xPct maps to the wrong timestamp, producing the wrong slope.
+  const hasAgentPositions = agentT2Pos !== undefined;
 
   setActionLabel(sessionId, "Settling chart for structure marking");
   await page.keyboard.press("Escape");
@@ -1316,15 +1372,12 @@ async function identifySwingPointsOnChart(
   const chartFrame = getChartFrame(page);
 
   if (hasAgentPositions) {
-    // View 6 was taken at the 3m settled view — the chart is still in that state.
-    // Preserve it exactly: Sonnet's viewSixPos targets those pixel positions.
-    setActionLabel(sessionId, "Preserving 3m drawing canvas from View 6 — agent positions ready");
+    // Chart is still in the View 6 state — preserve it so T2's xPct maps correctly.
+    setActionLabel(sessionId, "Preserving View 6 drawing canvas — T2 position valid");
     await dismissDerivTooltips(page, chartFrame);
   } else {
-    // No agent pixel positions — zoom out to show the full structure.
-    // Do NOT click period presets ("3m", "6m") — they cause unexpected
-    // timeframe changes on Deriv's embedded TradingView chart.
-    setActionLabel(sessionId, "Zooming to drawing canvas — full structure visibility");
+    // Neither anchor visible — zoom out to get any usable view.
+    setActionLabel(sessionId, "Zooming to drawing canvas — no anchor positions available");
     await movePointerWithTelemetry({ sessionId, page, to: { x: chartCx, y: chartCy }, steps: 6 });
     await page.mouse.wheel(0, 2000);
     await page.waitForTimeout(700);
@@ -1422,14 +1475,20 @@ async function identifySwingPointsOnChart(
   let t1X: number, t1Y: number, t2X: number, t2Y: number;
 
   if (hasAgentPositions) {
-    // Agent saw these exact candles in View 6 — use reported positions directly.
-    // xPct/yPct are fractions of the 1440×900 viewport → page.mouse.click coords.
-    t1X = agentT1Pos!.xPct * viewport.width;
-    t1Y = agentT1Pos!.yPct * viewport.height;
+    // T2 position is confirmed (hasAgentPositions = agentT2Pos !== undefined).
+    // T1 may be off-screen (agentT1Pos === undefined) — fall back to far-left estimate.
     t2X = agentT2Pos!.xPct * viewport.width;
     t2Y = agentT2Pos!.yPct * viewport.height;
+    if (agentT1Pos) {
+      t1X = agentT1Pos.xPct * viewport.width;
+      t1Y = agentT1Pos.yPct * viewport.height;
+    } else {
+      // T1 off-screen: place at the far-left edge of the chart canvas at T1 price.
+      t1X = CL + CW * 0.04;
+      t1Y = priceToY(sp.t1Price);
+    }
     console.log("[drawing] using agent View-6 pixel positions", {
-      t1: { x: Math.round(t1X), y: Math.round(t1Y), price: sp.t1Price },
+      t1: { x: Math.round(t1X), y: Math.round(t1Y), price: sp.t1Price, fromAgent: Boolean(agentT1Pos) },
       t2: { x: Math.round(t2X), y: Math.round(t2Y), price: sp.t2Price },
     });
   } else {
@@ -1577,14 +1636,19 @@ async function identifySwingPointsOnChart(
   setActionLabel(sessionId, `Regime: ${isLong ? "bullish — ascending support" : "bearish — descending resistance"}`);
   await page.waitForTimeout(700);
 
+  // Clamp cursor walk positions to the chart canvas — never move into the
+  // drawing toolbar (x < CL) or date axis (y > CB) which can trigger UI controls.
+  const safeCursorX = (x: number) => Math.max(CL + 5, Math.min(CR - 5, x));
+  const safeCursorY = (y: number) => Math.max(CT + 5, Math.min(CB - 5, y));
+
   setActionLabel(sessionId, `T1 — first structural ${isLong ? "swing low" : "swing high"} at ${sp.t1Price}`);
-  await movePointerWithTelemetry({ sessionId, page, to: { x: t1X, y: t1Y }, steps: 18 });
-  await updatePointer(sessionId, page, { x: t1X, y: t1Y, click: true });
+  await movePointerWithTelemetry({ sessionId, page, to: { x: safeCursorX(t1X), y: safeCursorY(t1Y) }, steps: 18 });
+  await updatePointer(sessionId, page, { x: safeCursorX(t1X), y: safeCursorY(t1Y), click: true });
   await page.waitForTimeout(600);
 
   setActionLabel(sessionId, `T2 — ${isLong ? "higher low" : "lower high"} at ${sp.t2Price} — slope confirmed`);
-  await movePointerWithTelemetry({ sessionId, page, to: { x: t2X, y: t2Y }, steps: 18 });
-  await updatePointer(sessionId, page, { x: t2X, y: t2Y, click: true });
+  await movePointerWithTelemetry({ sessionId, page, to: { x: safeCursorX(t2X), y: safeCursorY(t2Y) }, steps: 18 });
+  await updatePointer(sessionId, page, { x: safeCursorX(t2X), y: safeCursorY(t2Y), click: true });
   await page.waitForTimeout(600);
 
   // ── 5. Draw via Charting Library JS API ──────────────────────────────────────
@@ -2001,6 +2065,133 @@ export async function startControlledBrowserSession(args: {
         console.log("[browser-session-runtime] mapped structure drawn", {
           sessionId: args.sessionId,
         });
+
+        // ── Iterative refinement loop (up to 5 Sonnet passes) ───────────────
+        // Pass 1: Haiku quick check (fast/cheap binary slope guard).
+        // Passes 2-5: Sonnet iterative refinement — each pass takes a screenshot,
+        // assesses T1/T2 correctness and line quality, then redraws with corrected
+        // dates if needed. Loop exits when Sonnet confirms or max passes reached.
+        try {
+          // ── Pass 1: Haiku slope guard ────────────────────────────────────
+          setActionLabel(args.sessionId, "Pass 1 — Haiku slope check");
+          const verifyBuf = await captureToBuffer(page);
+          const verification = await verifyChartDrawing(
+            verifyBuf,
+            { price: t1Price, date: decision.correctedT1?.date },
+            { price: t2Price, date: decision.correctedT2?.date },
+            { low: zoneLow, high: zoneHigh },
+          );
+          console.log("[pass-1/haiku]", verification.assessment, "—", verification.note);
+
+          if (verification.assessment !== "correct") {
+            const t1DateStr = decision.correctedT1?.date;
+            const t2DateStr = decision.correctedT2?.date;
+            const t1UtcSec = t1DateStr ? Math.round(Date.parse(t1DateStr + "T12:00:00Z") / 1000) : undefined;
+            const t2UtcSec = t2DateStr ? Math.round(Date.parse(t2DateStr + "T12:00:00Z") / 1000) : undefined;
+            let corrT2Date = t2DateStr;
+            if (t1UtcSec && t2UtcSec && (t2UtcSec - t1UtcSec) / 86400 < 8) {
+              corrT2Date = new Date((t1UtcSec + 14 * 86400) * 1000).toISOString().split("T")[0];
+              console.log(`[pass-1/haiku] T2 pushed to ${corrT2Date}`);
+            }
+            setActionLabel(args.sessionId, `Pass 1 — slope fix, T2 → ${corrT2Date}`);
+            await identifySwingPointsOnChart(args.sessionId, page, drawPoints, {
+              structureStatus: decision.structureStatus, verdict: decision.verdict,
+              t1ViewSixPos: undefined, t2ViewSixPos: undefined,
+              t1Date: t1DateStr, t2Date: corrT2Date ?? t2DateStr,
+            });
+            await capture(args.sessionId);
+          }
+
+          // ── Passes 2-5: Sonnet iterative refinement ──────────────────────
+          const MAX_SONNET_PASSES = 4;
+          let curT1Date = decision.correctedT1?.date;
+          let curT2Date = decision.correctedT2?.date;
+          let curT1Price = t1Price;
+          let curT2Price = t2Price;
+
+          // Market-agnostic T1 drift guard: Sonnet cannot suggest a T1 more than
+          // 45 days before the INITIAL T1 the vision analysis identified. This prevents
+          // the loop from chasing lows from a different market cycle, regardless of
+          // which instrument is being analyzed.
+          const initialT1UtcSec = decision.correctedT1?.date
+            ? Math.round(Date.parse(decision.correctedT1.date + "T12:00:00Z") / 1000)
+            : undefined;
+          const MIN_T1_DATE_UTC_SEC = initialT1UtcSec ? initialT1UtcSec - 45 * 86400 : 0;
+
+          for (let pass = 0; pass < MAX_SONNET_PASSES; pass++) {
+            setActionLabel(args.sessionId, `Pass ${pass + 2} — Sonnet structural check`);
+            const confirmBuf = await captureToBuffer(page);
+            const confirmation = await confirmStructureWithSonnet(
+              confirmBuf,
+              { price: curT1Price, date: curT1Date },
+              { price: curT2Price, date: curT2Date },
+            );
+            console.log(`[pass-${pass + 2}/sonnet]`, {
+              confirmed: confirmation.confirmed,
+              t1Correct: confirmation.t1Correct,
+              t2Correct: confirmation.t2Correct,
+              note: confirmation.note,
+              suggestedT1: confirmation.suggestedT1Date ? `${confirmation.suggestedT1Date} @ ${confirmation.suggestedT1Price}` : null,
+              suggestedT2: confirmation.suggestedT2Date ? `${confirmation.suggestedT2Date} @ ${confirmation.suggestedT2Price}` : null,
+            });
+
+            if (confirmation.confirmed) {
+              console.log(`[refinement] confirmed on pass ${pass + 2} ✓`);
+              break;
+            }
+
+            // Apply Sonnet's suggested corrections — but guard against T1 drift:
+            // If Sonnet suggests a T1 before Feb 1 it's chasing a different cycle.
+            let newT1Date = (!confirmation.t1Correct && confirmation.suggestedT1Date) ? confirmation.suggestedT1Date : curT1Date;
+            let newT1Price = (!confirmation.t1Correct && confirmation.suggestedT1Price) ? confirmation.suggestedT1Price : curT1Price;
+            const newT2Date = (!confirmation.t2Correct && confirmation.suggestedT2Date) ? confirmation.suggestedT2Date : curT2Date;
+            const newT2Price = (!confirmation.t2Correct && confirmation.suggestedT2Price) ? confirmation.suggestedT2Price : curT2Price;
+
+            // Reject T1 suggestions earlier than Feb 1 (different market cycle)
+            if (newT1Date) {
+              const newT1Sec = Date.parse(newT1Date + "T12:00:00Z") / 1000;
+              if (newT1Sec < MIN_T1_DATE_UTC_SEC) {
+                console.log(`[pass-${pass + 2}/sonnet] T1 ${newT1Date} is before Feb 1 — rejecting (different cycle)`);
+                newT1Date = curT1Date;
+                newT1Price = curT1Price;
+              }
+            }
+
+            // Auto-push T2 if still within 8 days of T1
+            let finalT2Date = newT2Date;
+            if (newT1Date && newT2Date) {
+              const d1 = Date.parse(newT1Date + "T12:00:00Z") / 1000;
+              const d2 = Date.parse(newT2Date + "T12:00:00Z") / 1000;
+              if ((d2 - d1) / 86400 < 8) {
+                finalT2Date = new Date((d1 + 14 * 86400) * 1000).toISOString().split("T")[0];
+                console.log(`[pass-${pass + 2}/sonnet] T2 auto-pushed to ${finalT2Date}`);
+              }
+            }
+
+            // Stop if nothing changed (avoid infinite loop)
+            if (newT1Date === curT1Date && finalT2Date === curT2Date && newT1Price === curT1Price) {
+              console.log(`[refinement] no change in pass ${pass + 2} — stopping`);
+              break;
+            }
+
+            curT1Date = newT1Date;
+            curT2Date = finalT2Date;
+            curT1Price = newT1Price;
+            curT2Price = newT2Price;
+
+            setActionLabel(args.sessionId, `Pass ${pass + 2} — redrawing T1=${curT1Date} T2=${curT2Date}`);
+            const refineDrawPoints: SwingPointsForBrowser = { ...drawPoints, t1Price: curT1Price, t2Price: curT2Price };
+            await identifySwingPointsOnChart(args.sessionId, page, refineDrawPoints, {
+              structureStatus: decision.structureStatus, verdict: decision.verdict,
+              t1ViewSixPos: undefined, t2ViewSixPos: undefined,
+              t1Date: curT1Date, t2Date: curT2Date,
+            });
+            await capture(args.sessionId);
+            console.log(`[refinement] pass ${pass + 2} redraw complete`);
+          }
+        } catch (refineErr) {
+          console.warn("[refinement] error (non-fatal):", refineErr);
+        }
       } else {
         console.log("[browser-session-runtime] skipped structure drawing", {
           sessionId: args.sessionId,
@@ -2078,6 +2269,308 @@ export async function startControlledBrowserSession(args: {
       await capture(args.sessionId);
     } catch {}
 
+    throw error;
+  }
+}
+
+export type FibonacciLegForBrowser = {
+  lowTimeSec: number;
+  lowPrice: number;
+  highTimeSec: number;
+  highPrice: number;
+  isMuted: boolean;
+};
+
+async function drawFibonacciWithChartApi(
+  page: Page,
+  sessionId: string,
+  legs: FibonacciLegForBrowser[],
+  preferredZone?: { low: number; high: number },
+  direction?: "long" | "short",
+): Promise<boolean> {
+  let chartFrame: ReturnType<typeof getChartFrame>;
+  try {
+    chartFrame = getChartFrame(page);
+  } catch (err) {
+    console.error("[fib-drawing-api] chart frame not found:", err);
+    return false;
+  }
+
+  const widgetCheck = await chartFrame.evaluate(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const w = window as any;
+    return {
+      hasGildoreWidget: Boolean(w.__gildoreWidget),
+      hasTVNamespace: Boolean(w.TradingView),
+    };
+  }).catch(() => ({ hasGildoreWidget: false, hasTVNamespace: false }));
+  console.log("[fib-drawing-api] widget check:", widgetCheck);
+
+  const result = await chartFrame.evaluate(
+    ({ legs, preferredZone, isShort }: {
+      legs: FibonacciLegForBrowser[];
+      preferredZone?: { low: number; high: number };
+      isShort: boolean;
+    }) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const w = window as any;
+      let widget = w.__gildoreWidget;
+
+      if (!widget) {
+        const tvMethods = ["activeChart", "chart", "onChartReady", "headerReady", "subscribe"];
+        for (const key of Object.getOwnPropertyNames(w)) {
+          if (key.startsWith("__") || key === "window" || key === "self") continue;
+          try {
+            const val = w[key];
+            if (val && typeof val === "object" && !Array.isArray(val)) {
+              const matches = tvMethods.filter((m) => typeof val[m] === "function").length;
+              if (matches >= 3) {
+                w.__gildoreWidget = val;
+                widget = val;
+                break;
+              }
+            }
+          } catch { /* skip */ }
+        }
+      }
+
+      if (!widget) return { ok: false, reason: "widget not found in iframe" };
+
+      let chart: ReturnType<typeof widget.activeChart>;
+      try { chart = widget.activeChart(); } catch (e) {
+        return { ok: false, reason: "activeChart() failed: " + String(e) };
+      }
+
+      const range = chart.getVisibleRange() as { from: number; to: number } | null;
+      if (!range?.from || !range?.to) return { ok: false, reason: "no visible range" };
+
+      // Calibrate chart-native vs UTC: chart.getVisibleRange().to ≈ current time
+      const nowSec = Math.floor(Date.now() / 1000);
+      const chartUtcOffset = range.to - nowSec;
+      console.log("[fib-drawing-api] chartUtcOffset:", chartUtcOffset, "seconds");
+
+      // Set visible range: earliest low - 15 days → now + 7 days
+      const earliest = Math.min(...legs.map((l) => l.lowTimeSec));
+      const fromChart = (earliest - 15 * 86400) + chartUtcOffset;
+      const toChart = nowSec + chartUtcOffset + 7 * 86400;
+      try {
+        chart.setVisibleRange({ from: Math.round(fromChart), to: Math.round(toChart) });
+      } catch { /* non-fatal */ }
+
+      // Clear any previous shapes
+      try { chart.removeAllShapes(); } catch { /* non-fatal */ }
+
+      let drawn = 0;
+      for (const leg of legs) {
+        const lowTime = Math.round(leg.lowTimeSec + chartUtcOffset);
+        const highTime = Math.round(leg.highTimeSec + chartUtcOffset);
+
+        // For bullish: draw low→high (P1=swing low, P2=swing high)
+        // For bearish: draw high→low (P1=swing high, P2=swing low)
+        // In the geometry, startTimeSec=highPivot.time for bearish legs so lowTimeSec holds
+        // the high's timestamp — using highPrice with lowTimeSec gives the correct P1.
+        const points = isShort
+          ? [{ time: lowTime, price: leg.highPrice }, { time: highTime, price: leg.lowPrice }]
+          : [{ time: lowTime, price: leg.lowPrice },  { time: highTime, price: leg.highPrice }];
+
+        try {
+          chart.createMultipointShape(
+            points,
+            {
+              shape: "fib_retracement",
+              lock: false,
+              disableSelection: false,
+              overrides: leg.isMuted
+                ? { transparency: 85, linecolor: "rgba(120,120,120,0.4)" }
+                : { transparency: 70 },
+            },
+          );
+          drawn += 1;
+        } catch (e) {
+          console.warn("[fib-drawing-api] createMultipointShape failed for leg:", e);
+        }
+      }
+
+      // Draw the preferred reaction zone as a rectangle spanning now - 3 days → now + 10 days
+      if (preferredZone) {
+        const zoneFrom = Math.round(nowSec + chartUtcOffset - 3 * 86400);
+        const zoneTo   = Math.round(nowSec + chartUtcOffset + 10 * 86400);
+        try {
+          chart.createMultipointShape(
+            [
+              { time: zoneFrom, price: preferredZone.high },
+              { time: zoneTo,   price: preferredZone.low },
+            ],
+            {
+              shape: "rectangle",
+              lock: false,
+              disableSelection: false,
+              overrides: { fillBackground: true, transparency: 85 },
+            },
+          );
+        } catch (e) {
+          console.warn("[fib-drawing-api] zone rectangle failed:", e);
+        }
+      }
+
+      return { ok: drawn > 0, drawn, total: legs.length, chartUtcOffset };
+    },
+    { legs, preferredZone, isShort: direction === "short" },
+  ).catch((err) => ({ ok: false, reason: String(err), drawn: 0, total: legs.length }));
+
+  console.log("[fib-drawing-api] result:", result, { sessionId });
+  return result.ok;
+}
+
+export async function startFibonacciBrowserSession(args: {
+  sessionId: string;
+  agentSlug: string;
+  marketSymbol: string;
+  timeframe: string;
+  targetUrl: string;
+  legs: FibonacciLegForBrowser[];
+  preferredZone?: { low: number; high: number };
+  direction?: "long" | "short";
+}) {
+  const existing = runtimeSessions.get(args.sessionId);
+  if (existing) {
+    return { ok: true, screenshotPath: existing.screenshotPath, reused: true };
+  }
+
+  console.log("[fib-browser-session] boot requested", {
+    sessionId: args.sessionId,
+    agentSlug: args.agentSlug,
+    marketSymbol: args.marketSymbol,
+    timeframe: args.timeframe,
+    legCount: args.legs.length,
+  });
+
+  await ensureScreenshotDir();
+  const screenshotPath = screenshotPathFor(args.sessionId);
+  const browser = await launchBrowser();
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+
+  // Intercept the TradingView widget constructor (same init script as the main session)
+  await page.addInitScript(`
+    (function () {
+      let _tv;
+      Object.defineProperty(window, 'TradingView', {
+        configurable: true,
+        enumerable: true,
+        get: function () { return _tv; },
+        set: function (v) {
+          if (v && typeof v === 'object') {
+            _tv = new Proxy(v, {
+              set: function (target, prop, value) {
+                if (prop === 'widget' && typeof value === 'function') {
+                  var Orig = value;
+                  function GildoreWidget() {
+                    var inst = new (Function.prototype.bind.apply(Orig, [null].concat(Array.prototype.slice.call(arguments))))();
+                    window.__gildoreWidget = inst;
+                    console.log('[gildore] TradingView widget captured (fib)');
+                    return inst;
+                  }
+                  GildoreWidget.prototype = Orig.prototype;
+                  Object.setPrototypeOf(GildoreWidget, Orig);
+                  target[prop] = GildoreWidget;
+                  return true;
+                }
+                target[prop] = value;
+                return true;
+              }
+            });
+          } else {
+            _tv = v;
+          }
+        }
+      });
+    })();
+  `);
+
+  runtimeSessions.set(args.sessionId, {
+    browser,
+    page,
+    screenshotPath,
+    pointerPulseId: 0,
+    listeners: new Set(),
+  });
+  await startLiveCaptureLoop(args.sessionId);
+
+  const steps = buildSteps(args.marketSymbol, args.timeframe);
+
+  try {
+    await writeStepState({ sessionId: args.sessionId, steps, currentIndex: 1, currentStatus: "loading_chart" });
+    await page.goto(args.targetUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+    await page.waitForTimeout(3000);
+    await capture(args.sessionId);
+
+    await writeStepState({ sessionId: args.sessionId, steps, currentIndex: 2, currentStatus: "switching_symbol" });
+    await switchDerivSymbol(args.sessionId, page, args.marketSymbol);
+    await capture(args.sessionId);
+
+    await writeStepState({ sessionId: args.sessionId, steps, currentIndex: 3, currentStatus: "switching_timeframe" });
+    await switchDerivTimeframe(args.sessionId, page, args.timeframe);
+    await capture(args.sessionId);
+
+    // Wait for chart to fully settle before drawing
+    await page.waitForTimeout(2000);
+    await autoScaleYAxis(page);
+    await page.waitForTimeout(500);
+
+    if (args.legs.length > 0) {
+      setActionLabel(args.sessionId, "Drawing fibonacci retracements via chart API");
+      const drawn = await drawFibonacciWithChartApi(page, args.sessionId, args.legs, args.preferredZone, args.direction);
+      console.log("[fib-browser-session] fibonacci draw result:", { drawn, sessionId: args.sessionId });
+      await page.waitForTimeout(1200);
+
+      // Vision revalidation: quick Haiku pass to confirm the drawing looks correct
+      const activeLeg = args.legs.find((l) => !l.isMuted);
+      if (drawn && activeLeg) {
+        setActionLabel(args.sessionId, "Revalidating structure with vision agent");
+        const verifyBuf = await captureToBuffer(page);
+        const verification = await verifyFibonacciDrawing(verifyBuf, {
+          direction: args.direction ?? "long",
+          activeLeg: { lowPrice: activeLeg.lowPrice, highPrice: activeLeg.highPrice },
+          preferredZone: args.preferredZone,
+        });
+        console.log("[fib-browser-session] vision verification:", verification);
+        const runtime = runtimeSessions.get(args.sessionId);
+        if (runtime) {
+          runtime.visionDecision = {
+            regime: args.direction === "short" ? "bearish" : "bullish",
+            verdict: verification.confirmed ? "valid" : "staged",
+            direction: args.direction ?? "long",
+            structureStatus: verification.structureIntact ? "clean" : "weak",
+            confidence: verification.confirmed ? 0.82 : 0.55,
+            rationale: verification.note,
+            issues: verification.confirmed ? [] : ["Fibonacci drawing may need review"],
+          };
+        }
+        await capture(args.sessionId);
+      }
+    }
+
+    await capture(args.sessionId);
+
+    await writeStepState({ sessionId: args.sessionId, steps, currentIndex: 4, currentStatus: "ready" });
+    await capture(args.sessionId);
+    setActionLabel(args.sessionId, undefined);
+
+    console.log("[fib-browser-session] session ready", { sessionId: args.sessionId });
+    return { ok: true, screenshotPath, reused: false };
+  } catch (error) {
+    console.error("[fib-browser-session] startup failed", {
+      sessionId: args.sessionId,
+      error: error instanceof Error ? { message: error.message, stack: error.stack } : error,
+    });
+    await writeStepState({
+      sessionId: args.sessionId,
+      steps,
+      currentIndex: Math.min(steps.length, 3),
+      currentStatus: "failed",
+      error: error instanceof Error ? error.message : "fib_browser_session_failed",
+    });
+    try { await capture(args.sessionId); } catch {}
     throw error;
   }
 }

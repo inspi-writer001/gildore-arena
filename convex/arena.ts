@@ -192,13 +192,19 @@ function resolveBrowserReviewTarget(args: {
   marketSymbol: string;
   timeframe: "15m" | "1h" | "4h";
 }) {
-  if (args.marketSymbol === "XAG/USD" || args.marketSymbol === "XAU/USD" || args.marketSymbol === "EUR/USD") {
-    return {
-      browserTargetSymbol: "Volatility 10 (1s) Index",
-      browserTargetTimeframe: "4h",
-      reason:
-        "Weekend browser review is pinned to a public derived volatility chart until metals and FX sessions reopen.",
-    };
+  const forexMetals = ["XAG/USD", "XAU/USD", "EUR/USD"];
+  if (forexMetals.includes(args.marketSymbol)) {
+    // Forex and metals markets are closed on weekends. Fall back to VIX10 so
+    // the browser session still has a live chart to analyse.
+    const dayOfWeek = new Date().getUTCDay(); // 0 = Sunday, 6 = Saturday
+    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+    if (isWeekend) {
+      return {
+        browserTargetSymbol: "Volatility 10 (1s) Index",
+        browserTargetTimeframe: "4h",
+        reason: "Weekend fallback — metals/FX session closed, using VIX10 as a live reference chart.",
+      };
+    }
   }
 
   return {
