@@ -10,9 +10,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@sparticuz/chromium": "^138.0.2",
     "@anthropic-ai/sdk": "^0.91.1",
     "@paper-design/shaders-react": "^0.0.76",
+    "@solana/kit": "5.4.0",
+    "@sparticuz/chromium": "^138.0.2",
+    "@wallet-standard/core": "^1.1.1",
+    "@wallet-standard/react": "^1.0.1",
     "clsx": "^2.1.1",
     "convex": "^1.36.0",
     "lightweight-charts": "^5.1.0",

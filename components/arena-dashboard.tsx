@@ -5,6 +5,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAction, useMutation, useQuery } from "convex/react";
 import {
+  useConnect,
+  useDisconnect,
+  type UiWallet,
+} from "@wallet-standard/react";
+import {
   Activity,
   ArrowLeft,
   ChevronDown,
@@ -12,15 +17,20 @@ import {
   ExternalLink,
   LineChart,
   LoaderCircle,
+  LogOut,
   Newspaper,
   Radar,
-  RefreshCcw,
   Trophy,
+  Wallet,
 } from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import { ImageDithering, LiquidMetal } from "@paper-design/shaders-react";
-import type { SwingPointsForBrowser, FibonacciLegForBrowser } from "@/lib/browser-session-runtime";
+import type {
+  SwingPointsForBrowser,
+  FibonacciLegForBrowser,
+} from "@/lib/browser-session-runtime";
 import { cn } from "@/lib/utils";
+import { useSolanaWallet } from "@/components/convex-client-provider";
 import type {
   BrowserSession,
   BrowserSessionEvent,
@@ -806,9 +816,10 @@ function extractSwingPoints(
   };
 }
 
-function extractFibonacciLegs(
-  trace: VisualTrace | undefined,
-): { legs: FibonacciLegForBrowser[]; preferredZone?: { low: number; high: number } } {
+function extractFibonacciLegs(trace: VisualTrace | undefined): {
+  legs: FibonacciLegForBrowser[];
+  preferredZone?: { low: number; high: number };
+} {
   if (!trace) return { legs: [] };
 
   const legs: FibonacciLegForBrowser[] = [];
@@ -818,7 +829,11 @@ function extractFibonacciLegs(
     const g = annotation.geometry;
     if (!g) continue;
 
-    if (g.kind === "fibonacci" && g.startTimeSec !== undefined && g.endTimeSec !== undefined) {
+    if (
+      g.kind === "fibonacci" &&
+      g.startTimeSec !== undefined &&
+      g.endTimeSec !== undefined
+    ) {
       legs.push({
         lowTimeSec: g.startTimeSec,
         lowPrice: g.lowPrice,
@@ -857,26 +872,205 @@ function pillClass(state: ConfluenceState) {
   );
 }
 
+function truncateWalletAddress(address: string) {
+  return `${address.slice(0, 4)}...${address.slice(-4)}`;
+}
+
+function WalletChoice({
+  wallet,
+  onConnected,
+}: {
+  wallet: UiWallet;
+  onConnected: () => void;
+}) {
+  const { setWalletAndAccount } = useSolanaWallet();
+  const [isConnecting, connect] = useConnect(wallet);
+
+  const handleConnect = async () => {
+    if (isConnecting) {
+      return;
+    }
+
+    try {
+      const accounts = await connect();
+      const nextAccount = accounts.at(0);
+
+      if (nextAccount) {
+        setWalletAndAccount(wallet, nextAccount);
+        onConnected();
+      }
+    } catch (error) {
+      console.error(`Failed to connect ${wallet.name}`, error);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleConnect}
+      disabled={isConnecting}
+      className="flex w-full items-center justify-between rounded-[14px] border border-[rgba(255,255,255,0.16)] bg-[rgba(255,255,255,0.08)] px-3 py-2 text-left transition hover:bg-[rgba(255,255,255,0.14)] disabled:cursor-wait disabled:opacity-70"
+    >
+      <span className="flex items-center gap-2">
+        <span className="flex size-8 items-center justify-center rounded-full bg-[rgba(255,255,255,0.16)] text-[11px] font-semibold uppercase text-[#f7efe7]">
+          {wallet.name.slice(0, 2)}
+        </span>
+        <span className="font-barlow text-[13px] font-semibold tracking-[0.04em] text-[#f7efe7]">
+          {wallet.name}
+        </span>
+      </span>
+      <span className="font-barlow text-[11px] uppercase tracking-[0.14em] text-[rgba(247,239,231,0.72)]">
+        {isConnecting ? "Connecting" : "Connect"}
+      </span>
+    </button>
+  );
+}
+
+function DisconnectWalletButton({ wallet }: { wallet: UiWallet }) {
+  const { setWalletAndAccount } = useSolanaWallet();
+  const [isDisconnecting, disconnect] = useDisconnect(wallet);
+
+  const handleDisconnect = async () => {
+    try {
+      await disconnect();
+      setWalletAndAccount(null, null);
+    } catch (error) {
+      console.error(`Failed to disconnect ${wallet.name}`, error);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleDisconnect}
+      disabled={isDisconnecting}
+      className="inline-flex items-center gap-2 rounded-full border border-[rgba(255,255,255,0.18)] px-3 py-1.5 font-barlow text-[11px] font-semibold uppercase tracking-[0.14em] text-[#f7efe7] transition hover:bg-[rgba(255,255,255,0.08)] disabled:cursor-wait disabled:opacity-70"
+    >
+      <LogOut size={14} aria-hidden="true" />
+      {isDisconnecting ? "Disconnecting" : "Disconnect"}
+    </button>
+  );
+}
+
+function SignInCard() {
+  const {
+    wallets,
+    selectedWallet,
+    selectedAccount,
+    isConnected,
+    setWalletAndAccount,
+  } = useSolanaWallet();
+  const [isOpen, setIsOpen] = useState(false);
+
+  const handleClearSelection = () => {
+    setWalletAndAccount(null, null);
+    setIsOpen(false);
+  };
+
+  return (
+    <div
+      className={cn(
+        "grid w-full gap-3 rounded-[18px] border border-[#744729] bg-[#8d5c39] p-[18px] text-left text-[#f7efe7] shadow-[0_20px_45px_rgba(97,55,26,0.24)] sm:min-w-[280px] lg:min-w-[340px]",
+      )}
+    >
+      <button
+        type="button"
+        onClick={() => setIsOpen((value) => !value)}
+        className="grid gap-2 text-left"
+      >
+        <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.14em] text-[rgba(247,239,231,0.72)]">
+          Solana
+        </span>
+        <span className="flex items-center justify-between gap-3">
+          <strong className="font-instrument text-[32px] font-normal leading-[0.95]">
+            {isConnected && selectedAccount
+              ? truncateWalletAddress(selectedAccount.address)
+              : "Sign in"}
+          </strong>
+          <span className="flex items-center gap-2 text-[rgba(247,239,231,0.84)]">
+            <Wallet aria-hidden="true" size={16} />
+            <ChevronDown
+              aria-hidden="true"
+              size={16}
+              className={cn("transition", isOpen && "rotate-180")}
+            />
+          </span>
+        </span>
+      </button>
+
+      {isOpen ? (
+        <div className="grid gap-3 rounded-[14px] border border-[rgba(255,255,255,0.16)] bg-[rgba(58,32,16,0.18)] p-3">
+          {isConnected && selectedWallet && selectedAccount ? (
+            <>
+              <div className="grid gap-1">
+                <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.14em] text-[rgba(247,239,231,0.68)]">
+                  Connected
+                </span>
+                <span className="font-barlow text-[14px] font-semibold tracking-[0.04em] text-[#f7efe7]">
+                  {selectedWallet.name}
+                </span>
+                <span className="font-mono text-[12px] text-[rgba(247,239,231,0.78)]">
+                  {selectedAccount.address}
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <DisconnectWalletButton wallet={selectedWallet} />
+                <button
+                  type="button"
+                  onClick={handleClearSelection}
+                  className="inline-flex items-center rounded-full border border-[rgba(255,255,255,0.18)] px-3 py-1.5 font-barlow text-[11px] font-semibold uppercase tracking-[0.14em] text-[rgba(247,239,231,0.72)] transition hover:bg-[rgba(255,255,255,0.08)]"
+                >
+                  Close
+                </button>
+              </div>
+            </>
+          ) : wallets.length > 0 ? (
+            <>
+              <p className="font-barlow text-[11px] font-semibold uppercase tracking-[0.14em] text-[rgba(247,239,231,0.68)]">
+                Available wallets
+              </p>
+              <div className="grid gap-2">
+                {wallets.map((wallet) => (
+                  <WalletChoice
+                    key={wallet.name}
+                    wallet={wallet}
+                    onConnected={() => setIsOpen(false)}
+                  />
+                ))}
+              </div>
+            </>
+          ) : (
+            <p className="font-barlow text-[12px] leading-5 text-[rgba(247,239,231,0.8)]">
+              No Solana wallet detected. Install a Wallet Standard wallet like
+              Phantom or Solflare, then try again.
+            </p>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function ArenaDashboard() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const snapshot = useQuery(api.arena.getArenaSnapshot, {}) as
     | ArenaSnapshot
     | undefined;
-  const runArenaScanCycleNow = useAction(api.arena.runArenaScanCycleNow);
   const updateAgentDisplayNames = useMutation(
     api.arena.updateAgentDisplayNames,
   );
   const startBrowserReviewSession = useAction(
     api.arena.startBrowserReviewSession,
   );
-  const [isRunningScan, setIsRunningScan] = useState(false);
   const [isStartingBrowserSession, setIsStartingBrowserSession] =
     useState(false);
   const [revealedConjureSelectionKey, setRevealedConjureSelectionKey] =
     useState<string | null>(null);
-  const [autoRestartedConjureSelectionKey, setAutoRestartedConjureSelectionKey] =
-    useState<string | null>(null);
+  const [
+    autoRestartedConjureSelectionKey,
+    setAutoRestartedConjureSelectionKey,
+  ] = useState<string | null>(null);
   const isWideWorkspace = true;
   const [conjureDitheringSize, setConjureDitheringSize] = useState(2);
   const conjureRafRef = useRef<number | null>(null);
@@ -1387,7 +1581,7 @@ export default function ArenaDashboard() {
                 Season
               </span>
               <strong className="font-instrument text-[32px] font-normal leading-[0.95]">
-                S0
+                Season Zer0
               </strong>
             </div>
             {/* Agents live */}
@@ -1400,44 +1594,15 @@ export default function ArenaDashboard() {
               </strong>
             </div>
             {/* Last scan */}
-            <div className={cn(surfaceCard, "grid gap-2 p-[18px]")}>
+            {/* <div className={cn(surfaceCard, "grid gap-2 p-[18px]")}>
               <span className="font-barlow text-[rgba(18,18,18,0.48)] text-[11px] font-semibold tracking-[0.14em] uppercase">
                 Last scan
               </span>
               <strong className="font-instrument text-[32px] font-normal leading-[0.95]">
                 {formatRelativeMinutes(lastScanAt)}
               </strong>
-            </div>
-            {/* Dev scan trigger */}
-            <button
-              className={cn(
-                surfaceCard,
-                "grid gap-2 p-[18px] w-full text-left cursor-pointer items-start",
-                isRunningScan && "opacity-[0.78]",
-              )}
-              type="button"
-              onClick={async () => {
-                setIsRunningScan(true);
-                try {
-                  await runArenaScanCycleNow({});
-                } finally {
-                  setIsRunningScan(false);
-                }
-              }}
-              disabled={isRunningScan}
-            >
-              <span className="font-barlow text-[rgba(18,18,18,0.48)] text-[11px] font-semibold tracking-[0.14em] uppercase">
-                Dev scan
-              </span>
-              <strong className="font-instrument text-[32px] font-normal leading-[0.95]">
-                {isRunningScan ? "Running..." : "Run now"}
-              </strong>
-              <RefreshCcw
-                aria-hidden="true"
-                size={16}
-                className={isRunningScan ? "animate-arena-spin" : ""}
-              />
-            </button>
+            </div> */}
+            <SignInCard />
           </div>
         </header>
 
@@ -1777,22 +1942,26 @@ export default function ArenaDashboard() {
                     let response: Response;
 
                     if (isFibAgent) {
-                      const { legs, preferredZone } = extractFibonacciLegs(selectedTrace);
-                      response = await fetch("/api/browser-session/fibonacci/start", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                          sessionId: result.sessionId,
-                          agentSlug: agentId,
-                          agentMarketSymbol: marketSym,
-                          marketSymbol: result.browserTargetSymbol,
-                          timeframe: result.browserTargetTimeframe,
-                          targetUrl: "https://charts.deriv.com/deriv",
-                          legs,
-                          preferredZone,
-                          direction: selectedTradeIdea?.direction ?? "long",
-                        }),
-                      });
+                      const { legs, preferredZone } =
+                        extractFibonacciLegs(selectedTrace);
+                      response = await fetch(
+                        "/api/browser-session/fibonacci/start",
+                        {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            sessionId: result.sessionId,
+                            agentSlug: agentId,
+                            agentMarketSymbol: marketSym,
+                            marketSymbol: result.browserTargetSymbol,
+                            timeframe: result.browserTargetTimeframe,
+                            targetUrl: "https://charts.deriv.com/deriv",
+                            legs,
+                            preferredZone,
+                            direction: selectedTradeIdea?.direction ?? "long",
+                          }),
+                        },
+                      );
                     } else {
                       response = await fetch("/api/browser-session/start", {
                         method: "POST",
@@ -1806,7 +1975,10 @@ export default function ArenaDashboard() {
                           targetUrl: "https://charts.deriv.com/deriv",
                           swingPoints:
                             result.browserTargetSymbol === marketSym
-                              ? extractSwingPoints(selectedTrace, agentTimeframe)
+                              ? extractSwingPoints(
+                                  selectedTrace,
+                                  agentTimeframe,
+                                )
                               : undefined,
                         }),
                       });

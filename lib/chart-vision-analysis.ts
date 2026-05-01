@@ -505,6 +505,17 @@ export type FibonacciVerification = {
   note: string;
 };
 
+export type FibonacciPlacementEstimate = {
+  confirmed: boolean;
+  shouldAdjust: boolean;
+  anchorCycle: "intended_latest_swing" | "older_left_swing" | "unclear";
+  leftAnchorBarError: number;
+  rightAnchorBarError: number;
+  averageBarError: number;
+  confidence: number;
+  note: string;
+};
+
 export async function verifyFibonacciDrawing(
   screenshot: Buffer,
   context: {
@@ -584,5 +595,168 @@ Respond ONLY with valid JSON, no markdown:
   } catch (err) {
     console.error("[fib-verify] error:", err);
     return { confirmed: true, structureIntact: true, priceInZone: false, note: "verify call failed — treating as confirmed" };
+  }
+}
+
+export async function estimateFibonacciPlacementError(
+  screenshot: Buffer,
+  context: {
+    direction: "long" | "short";
+    timeframe: string;
+    granularitySec: number;
+    activeLeg: {
+      lowTimeSec: number;
+      lowPrice: number;
+      highTimeSec: number;
+      highPrice: number;
+    };
+  },
+): Promise<FibonacciPlacementEstimate> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return {
+      confirmed: true,
+      shouldAdjust: false,
+      anchorCycle: "unclear",
+      leftAnchorBarError: 0,
+      rightAnchorBarError: 0,
+      averageBarError: 0,
+      confidence: 0,
+      note: "ANTHROPIC_API_KEY missing — skipping placement estimate",
+    };
+  }
+
+  const client = new Anthropic({ apiKey });
+  const { direction, timeframe, granularitySec, activeLeg } = context;
+  const lowIso = new Date(activeLeg.lowTimeSec * 1000).toISOString();
+  const highIso = new Date(activeLeg.highTimeSec * 1000).toISOString();
+  const barMinutes = Math.round(granularitySec / 60);
+  const isBullish = direction === "long";
+
+  const prompt = `A fibonacci retracement has been drawn on a ${timeframe} chart (${barMinutes}-minute candles).
+
+Expected anchor points:
+- Swing low: ${lowIso} at price ~${activeLeg.lowPrice}
+- Swing high: ${highIso} at price ~${activeLeg.highPrice}
+- Direction: ${isBullish ? "bullish low-to-high" : "bearish high-to-low"}
+
+Your task is NOT to judge the trade. Your task is to estimate whether the DRAWN fibonacci is horizontally misplaced versus the intended swing candles.
+
+Critical judgement rule:
+- First decide whether the drawn fib is attached to the INTENDED LATEST visible swing near the current price action, or an OLDER LEFT-SIDE swing from earlier on the chart.
+- If it is attached to an older left-side swing, you MUST return:
+  - "anchorCycle": "older_left_swing"
+  - "shouldAdjust": true
+  - a NON-ZERO bar error
+- Never return zero error if the fib is clearly attached to an older swing cycle.
+- Use "intended_latest_swing" only when the fib endpoints visually belong to the latest intended swing that leads into the current reaction zone.
+- Use "unclear" only if the image is too ambiguous to tell.
+
+Use these rules:
+- Measure in whole candles/bars.
+- Negative bar error means the drawn anchor appears too far LEFT / too EARLY.
+- Positive bar error means the drawn anchor appears too far RIGHT / too LATE.
+- If the placement looks essentially correct, return 0.
+- Focus on horizontal candle alignment first, not vertical styling.
+- Be conservative. Only recommend adjustment when the error looks visually meaningful (about 3+ candles).
+
+Respond ONLY with valid JSON:
+{
+  "confirmed": true | false,
+  "shouldAdjust": true | false,
+  "anchorCycle": "intended_latest_swing" | "older_left_swing" | "unclear",
+  "leftAnchorBarError": <integer>,
+  "rightAnchorBarError": <integer>,
+  "averageBarError": <integer>,
+  "confidence": <number 0 to 1>,
+  "note": "<one short sentence>"
+}`;
+
+  try {
+    const response = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 220,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "image",
+              source: { type: "base64", media_type: "image/png", data: screenshot.toString("base64") },
+            },
+            { type: "text", text: prompt },
+          ],
+        },
+      ],
+    });
+
+    const text = response.content.find((b) => b.type === "text")?.text ?? "";
+    console.log("[fib-adjust] raw:", text.trim());
+
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return {
+        confirmed: true,
+        shouldAdjust: false,
+        anchorCycle: "unclear",
+        leftAnchorBarError: 0,
+        rightAnchorBarError: 0,
+        averageBarError: 0,
+        confidence: 0,
+        note: "parse failed — skipping adjustment",
+      };
+    }
+
+    const raw = JSON.parse(jsonMatch[0]) as {
+      confirmed?: boolean;
+      shouldAdjust?: boolean;
+      anchorCycle?: "intended_latest_swing" | "older_left_swing" | "unclear";
+      leftAnchorBarError?: number;
+      rightAnchorBarError?: number;
+      averageBarError?: number;
+      confidence?: number;
+      note?: string;
+    };
+
+    const leftAnchorBarError = Number.isFinite(raw.leftAnchorBarError)
+      ? Math.round(raw.leftAnchorBarError as number)
+      : 0;
+    const rightAnchorBarError = Number.isFinite(raw.rightAnchorBarError)
+      ? Math.round(raw.rightAnchorBarError as number)
+      : 0;
+    const averageBarError = Number.isFinite(raw.averageBarError)
+      ? Math.round(raw.averageBarError as number)
+      : Math.round((leftAnchorBarError + rightAnchorBarError) / 2);
+
+    return {
+      confirmed: raw.confirmed !== false,
+      shouldAdjust: raw.shouldAdjust === true,
+      anchorCycle:
+        raw.anchorCycle === "intended_latest_swing" ||
+        raw.anchorCycle === "older_left_swing" ||
+        raw.anchorCycle === "unclear"
+          ? raw.anchorCycle
+          : "unclear",
+      leftAnchorBarError,
+      rightAnchorBarError,
+      averageBarError,
+      confidence:
+        typeof raw.confidence === "number" && Number.isFinite(raw.confidence)
+          ? Math.max(0, Math.min(1, raw.confidence))
+          : 0,
+      note: typeof raw.note === "string" ? raw.note : "",
+    };
+  } catch (err) {
+    console.error("[fib-adjust] error:", err);
+    return {
+      confirmed: true,
+      shouldAdjust: false,
+      anchorCycle: "unclear",
+      leftAnchorBarError: 0,
+      rightAnchorBarError: 0,
+      averageBarError: 0,
+      confidence: 0,
+      note: "adjust call failed — skipping adjustment",
+    };
   }
 }
