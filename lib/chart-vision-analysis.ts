@@ -1,7 +1,7 @@
 import "server-only";
 
 import Anthropic from "@anthropic-ai/sdk";
-import type { SwingPointsForBrowser } from "./browser-session-runtime";
+import type { SwingPointsForBrowser, ThirdTouchT2Candidate } from "./browser-session-runtime";
 
 // Pixel position within the 1440×900 final-view screenshot (View 6).
 // xPct=0 is left edge, xPct=1 is right edge. yPct=0 is top, yPct=1 is bottom.
@@ -309,25 +309,36 @@ export type SonnetConfirmation = {
   t2Correct: boolean;
   suggestedT1Date?: string;
   suggestedT1Price?: number;
-  suggestedT2Date?: string;
-  suggestedT2Price?: number;
+  selectedT2CandidateId?: string;
 };
 
 export async function confirmStructureWithSonnet(
   screenshot: Buffer,
   t1: { price: number; date?: string },
   t2: { price: number; date?: string },
+  t2Candidates: ThirdTouchT2Candidate[],
 ): Promise<SonnetConfirmation> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return { confirmed: true, note: "ANTHROPIC_API_KEY missing", t1Correct: true, t2Correct: true };
 
   const client = new Anthropic({ apiKey });
 
+  const candidateList = t2Candidates.length > 0
+    ? t2Candidates
+        .map((candidate) =>
+          `- ${candidate.id}: ${new Date(candidate.timeSec * 1000).toISOString()} @ ${candidate.price} (${candidate.note})`,
+        )
+        .join("\n")
+    : "- C0: keep the current T2";
+
   const prompt = `This is the current chart with a blue ascending trendline drawn.
 
 Current anchors:
 - T1: ~${t1.date ?? "unknown"}, price ~${t1.price}
 - T2: ~${t2.date ?? "unknown"}, price ~${t2.price}
+
+Exact T2 candidates from market data:
+${candidateList}
 
 ## What to verify:
 
@@ -342,6 +353,9 @@ Current anchors:
 - T2 should be at least 10 days after T1 (closer than 8 days = likely wrong)
 - T2 is the inflection point: before T2 price was still correcting, after T2 the rally accelerated
 - NOT a random slightly-higher candle mid-correction — it must be a CLEAN BOUNCE POINT
+- Choose T2 from the exact candidate list above. Do NOT invent a new T2 date outside that list unless every candidate is invalid.
+- If the current T2 is already correct, return "selectedT2CandidateId": "KEEP_CURRENT".
+- If a different candidate is better, return its candidate id exactly as listed, like "C2".
 
 **Line quality:**
 - Line must run BELOW ALL candle bodies between T1 and current price
@@ -357,8 +371,7 @@ JSON only:
   "t2Correct": true | false,
   "suggestedT1Date": "<YYYY-MM-DD>" | null,
   "suggestedT1Price": <wick low price number> | null,
-  "suggestedT2Date": "<YYYY-MM-DD>" | null,
-  "suggestedT2Price": <number> | null
+  "selectedT2CandidateId": "KEEP_CURRENT" | "<candidate id>" | null
 }`;
 
   try {
@@ -388,8 +401,10 @@ JSON only:
       t2Correct: raw.t2Correct ?? true,
       suggestedT1Date: raw.suggestedT1Date ?? undefined,
       suggestedT1Price: raw.suggestedT1Price ?? undefined,
-      suggestedT2Date: raw.suggestedT2Date ?? undefined,
-      suggestedT2Price: raw.suggestedT2Price ?? undefined,
+      selectedT2CandidateId:
+        typeof (raw as { selectedT2CandidateId?: unknown }).selectedT2CandidateId === "string"
+          ? (raw as { selectedT2CandidateId: string }).selectedT2CandidateId
+          : undefined,
     };
   } catch (err) {
     console.error("[sonnet-confirm] error:", err);

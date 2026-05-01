@@ -1011,6 +1011,13 @@ export type SwingPointsForBrowser = {
   candleSeconds: number; // e.g. 14400 for 4h
 };
 
+export type ThirdTouchT2Candidate = {
+  id: string;
+  timeSec: number;
+  price: number;
+  note: string;
+};
+
 type ChartStructureOverlay = {
   structureStatus: ChartVisionDecision["structureStatus"];
   verdict: ChartVisionDecision["verdict"];
@@ -1028,6 +1035,9 @@ type ChartStructureOverlay = {
   // (anchor off-screen) to compute Unix timestamps directly for createMultipointShape.
   t1Date?: string;
   t2Date?: string;
+  t1ExactTimeSec?: number;
+  t2ExactTimeSec?: number;
+  skipHaikuLocate?: boolean;
 };
 
 async function panChartForReview(sessionId: string, page: Page) {
@@ -1612,8 +1622,8 @@ async function drawWithChartApi(
   sessionId: string,
   // xPct: viewport fraction from Sonnet's viewSixPos (requires chart in View-6 state)
   // dateUtcSec: Unix timestamp from agent's ISO date — works regardless of chart state
-  t1: { price: number; xPct?: number; dateUtcSec?: number },
-  t2: { price: number; xPct?: number; dateUtcSec?: number },
+  t1: { price: number; xPct?: number; dateUtcSec?: number; exactTimeSec?: number },
+  t2: { price: number; xPct?: number; dateUtcSec?: number; exactTimeSec?: number },
   zone: { low: number; high: number },
 ): Promise<boolean> {
   try {
@@ -1640,8 +1650,8 @@ async function drawWithChartApi(
 
     const result = await chartFrame.evaluate(
       ({ t1, t2, zone }: {
-        t1: { price: number; xPct?: number; dateUtcSec?: number };
-        t2: { price: number; xPct?: number; dateUtcSec?: number };
+        t1: { price: number; xPct?: number; dateUtcSec?: number; exactTimeSec?: number };
+        t2: { price: number; xPct?: number; dateUtcSec?: number; exactTimeSec?: number };
         zone: { low: number; high: number };
       }) => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1709,7 +1719,9 @@ async function drawWithChartApi(
         // Priority: xPct (chart-native) > dateUtcSec (UTC, needs offset correction)
 
         // T2: always prefer xPct over date — xPct is chart-native
-        const t2Time = t2.xPct !== undefined ? xPctToTime(t2.xPct) : (t2.dateUtcSec ?? null);
+        const t2Time =
+          t2.exactTimeSec
+          ?? (t2.xPct !== undefined ? xPctToTime(t2.xPct) : (t2.dateUtcSec ?? null));
         if (!t2Time) return { ok: false, reason: "no time source for T2" };
 
         // Compute chart-native ↔ UTC offset from T2 (only valid when both sources available)
@@ -1718,9 +1730,11 @@ async function drawWithChartApi(
           : 0;
 
         // T1: use xPct if on-screen, otherwise apply the UTC offset to T1's date
-        const t1Time = t1.xPct !== undefined
-          ? xPctToTime(t1.xPct)
-          : (t1.dateUtcSec !== undefined ? t1.dateUtcSec + chartUtcOffset : null);
+        const t1Time =
+          t1.exactTimeSec
+          ?? (t1.xPct !== undefined
+            ? xPctToTime(t1.xPct)
+            : (t1.dateUtcSec !== undefined ? t1.dateUtcSec + chartUtcOffset : null));
         if (!t1Time) return { ok: false, reason: "no time source for T1" };
 
         // Slope sanity
@@ -1780,7 +1794,11 @@ async function drawWithChartApi(
 
         return { ok: true, t1Time, t2Time, chartUtcOffset, range };
       },
-      { t1, t2, zone } as { t1: { price: number; xPct?: number; dateUtcSec?: number }; t2: { price: number; xPct?: number; dateUtcSec?: number }; zone: { low: number; high: number } },
+      { t1, t2, zone } as {
+        t1: { price: number; xPct?: number; dateUtcSec?: number; exactTimeSec?: number };
+        t2: { price: number; xPct?: number; dateUtcSec?: number; exactTimeSec?: number };
+        zone: { low: number; high: number };
+      },
     );
 
     console.log("[drawing-api]", result);
@@ -1819,6 +1837,7 @@ async function identifySwingPointsOnChart(
   // If we zoom-out here (old behaviour when T1 was null), the range changes and
   // T2's xPct maps to the wrong timestamp, producing the wrong slope.
   const hasAgentPositions = agentT2Pos !== undefined;
+  const shouldUseHaikuLocate = !hasAgentPositions && overlay?.skipHaikuLocate !== true;
 
   setActionLabel(sessionId, "Settling chart for structure marking");
   await page.keyboard.press("Escape");
@@ -1851,7 +1870,7 @@ async function identifySwingPointsOnChart(
 
   let priceToY: (price: number) => number;
 
-  if (!hasAgentPositions) {
+  if (shouldUseHaikuLocate) {
     const iframeOffset = await page.evaluate(() => {
       const blob = Array.from(document.querySelectorAll("iframe")).find((f) =>
         f.src.startsWith("blob:"),
@@ -2114,19 +2133,21 @@ async function identifySwingPointsOnChart(
   const drawT2Pos = overlay?.t2ViewSixPos;
   const t1DateUtcSec = overlay?.t1Date ? Math.round(Date.parse(overlay.t1Date + "T12:00:00Z") / 1000) : undefined;
   const t2DateUtcSec = overlay?.t2Date ? Math.round(Date.parse(overlay.t2Date + "T12:00:00Z") / 1000) : undefined;
+  const t1ExactTimeSec = overlay?.t1ExactTimeSec;
+  const t2ExactTimeSec = overlay?.t2ExactTimeSec;
 
   // Can draw via API if we have a time source for both anchors:
   // either viewSixPos.xPct (on-screen) or a date string (off-screen).
-  const t1HasTime = drawT1Pos !== undefined || t1DateUtcSec !== undefined;
-  const t2HasTime = drawT2Pos !== undefined || t2DateUtcSec !== undefined;
+  const t1HasTime = drawT1Pos !== undefined || t1DateUtcSec !== undefined || t1ExactTimeSec !== undefined;
+  const t2HasTime = drawT2Pos !== undefined || t2DateUtcSec !== undefined || t2ExactTimeSec !== undefined;
 
   if (t1HasTime && t2HasTime) {
     setActionLabel(sessionId, "Drawing structure via Charting Library API");
     const apiOk = await drawWithChartApi(
       page,
       sessionId,
-      { price: sp.t1Price, xPct: drawT1Pos?.xPct, dateUtcSec: t1DateUtcSec },
-      { price: sp.t2Price, xPct: drawT2Pos?.xPct, dateUtcSec: t2DateUtcSec },
+      { price: sp.t1Price, xPct: drawT1Pos?.xPct, dateUtcSec: t1DateUtcSec, exactTimeSec: t1ExactTimeSec },
+      { price: sp.t2Price, xPct: drawT2Pos?.xPct, dateUtcSec: t2DateUtcSec, exactTimeSec: t2ExactTimeSec },
       { low: activeZone.low, high: activeZone.high },
     );
 
@@ -2444,8 +2465,8 @@ export async function startControlledBrowserSession(args: {
       // Build draw points — prefer AI corrections, fall back to deterministic if available.
       // Structure mapping is independent from trade verdict: even rejects should be drawable.
       const base = args.swingPoints;
-      const t1Price = decision.correctedT1?.price ?? base?.t1Price;
-      const t2Price = decision.correctedT2?.price ?? base?.t2Price;
+      const t1Price = base?.t1Price ?? decision.correctedT1?.price;
+      const t2Price = base?.t2Price ?? decision.correctedT2?.price;
       const projectedPrice =
         decision.correctedZone?.projectedPrice ?? base?.projectedPrice;
       const zoneLow =
@@ -2511,10 +2532,9 @@ export async function startControlledBrowserSession(args: {
           verdict: decision.verdict,
           invalidationZone: decision.invalidationZone,
           invalidationNote: decision.invalidationNote,
-          t1ViewSixPos: decision.correctedT1?.viewSixPos,
-          t2ViewSixPos: decision.correctedT2?.viewSixPos,
-          t1Date: decision.correctedT1?.date,
-          t2Date: decision.correctedT2?.date,
+          t1ExactTimeSec: base?.t1TimeSec,
+          t2ExactTimeSec: base?.t2TimeSec,
+          skipHaikuLocate: true,
         });
         await capture(args.sessionId);
         console.log("[browser-session-runtime] mapped structure drawn", {
@@ -2539,39 +2559,45 @@ export async function startControlledBrowserSession(args: {
           console.log("[pass-1/haiku]", verification.assessment, "—", verification.note);
 
           if (verification.assessment !== "correct") {
-            const t1DateStr = decision.correctedT1?.date;
-            const t2DateStr = decision.correctedT2?.date;
-            const t1UtcSec = t1DateStr ? Math.round(Date.parse(t1DateStr + "T12:00:00Z") / 1000) : undefined;
-            const t2UtcSec = t2DateStr ? Math.round(Date.parse(t2DateStr + "T12:00:00Z") / 1000) : undefined;
-            let corrT2Date = t2DateStr;
-            if (t1UtcSec && t2UtcSec && (t2UtcSec - t1UtcSec) / 86400 < 8) {
-              corrT2Date = new Date((t1UtcSec + 14 * 86400) * 1000).toISOString().split("T")[0];
-              console.log(`[pass-1/haiku] T2 pushed to ${corrT2Date}`);
+            const t1TimeSec = base?.t1TimeSec;
+            const t2TimeSec = base?.t2TimeSec;
+            let corrT2TimeSec = t2TimeSec;
+            if (t1TimeSec && t2TimeSec && (t2TimeSec - t1TimeSec) / 86400 < 8) {
+              corrT2TimeSec = t1TimeSec + 14 * 86400;
+              console.log(`[pass-1/haiku] T2 pushed to ${formatUtcDateFromSec(corrT2TimeSec)}`);
             }
-            setActionLabel(args.sessionId, `Pass 1 — slope fix, T2 → ${corrT2Date}`);
+            setActionLabel(args.sessionId, `Pass 1 — slope fix, T2 → ${corrT2TimeSec ? formatUtcDateFromSec(corrT2TimeSec) : "current"}`);
             await identifySwingPointsOnChart(args.sessionId, page, drawPoints, {
-              structureStatus: decision.structureStatus, verdict: decision.verdict,
-              t1ViewSixPos: undefined, t2ViewSixPos: undefined,
-              t1Date: t1DateStr, t2Date: corrT2Date ?? t2DateStr,
+              structureStatus: decision.structureStatus,
+              verdict: decision.verdict,
+              t1ExactTimeSec: t1TimeSec,
+              t2ExactTimeSec: corrT2TimeSec,
+              skipHaikuLocate: true,
             });
             await capture(args.sessionId);
           }
 
           // ── Passes 2-5: Sonnet iterative refinement ──────────────────────
           const MAX_SONNET_PASSES = 4;
-          let curT1Date = decision.correctedT1?.date;
-          let curT2Date = decision.correctedT2?.date;
+          let curT1Date = base?.t1TimeSec ? formatUtcDateFromSec(base.t1TimeSec) : decision.correctedT1?.date;
+          let curT2Date = base?.t2TimeSec ? formatUtcDateFromSec(base.t2TimeSec) : decision.correctedT2?.date;
           let curT1Price = t1Price;
           let curT2Price = t2Price;
-
-          // Market-agnostic T1 drift guard: Sonnet cannot suggest a T1 more than
-          // 45 days before the INITIAL T1 the vision analysis identified. This prevents
-          // the loop from chasing lows from a different market cycle, regardless of
-          // which instrument is being analyzed.
-          const initialT1UtcSec = decision.correctedT1?.date
-            ? Math.round(Date.parse(decision.correctedT1.date + "T12:00:00Z") / 1000)
-            : undefined;
-          const MIN_T1_DATE_UTC_SEC = initialT1UtcSec ? initialT1UtcSec - 45 * 86400 : 0;
+          let curT1TimeSec = base?.t1TimeSec;
+          let curT2TimeSec = base?.t2TimeSec;
+          const granularity = timeframeToDerivGranularity(args.timeframe);
+          const derivSnapshot = await collectDerivHistorySnapshot(args.sessionId, page, granularity);
+          const derivCandles = derivSnapshot ? mergeDerivCandles(derivSnapshot) : [];
+          const t2Candidates = deriveThirdTouchT2Candidates({
+            candles: derivCandles,
+            direction,
+            t1TimeSec: curT1TimeSec,
+            t1Price: curT1Price,
+            t2TimeSec: curT2TimeSec,
+            t2Price: curT2Price,
+            t3TimeSec: drawPoints.t3TimeSec,
+            granularitySec: granularity,
+          });
 
           for (let pass = 0; pass < MAX_SONNET_PASSES; pass++) {
             setActionLabel(args.sessionId, `Pass ${pass + 2} — Sonnet structural check`);
@@ -2580,14 +2606,14 @@ export async function startControlledBrowserSession(args: {
               confirmBuf,
               { price: curT1Price, date: curT1Date },
               { price: curT2Price, date: curT2Date },
+              t2Candidates,
             );
             console.log(`[pass-${pass + 2}/sonnet]`, {
               confirmed: confirmation.confirmed,
               t1Correct: confirmation.t1Correct,
               t2Correct: confirmation.t2Correct,
               note: confirmation.note,
-              suggestedT1: confirmation.suggestedT1Date ? `${confirmation.suggestedT1Date} @ ${confirmation.suggestedT1Price}` : null,
-              suggestedT2: confirmation.suggestedT2Date ? `${confirmation.suggestedT2Date} @ ${confirmation.suggestedT2Price}` : null,
+              selectedT2CandidateId: confirmation.selectedT2CandidateId ?? null,
             });
 
             if (confirmation.confirmed) {
@@ -2595,51 +2621,43 @@ export async function startControlledBrowserSession(args: {
               break;
             }
 
-            // Apply Sonnet's suggested corrections — but guard against T1 drift:
-            // If Sonnet suggests a T1 before Feb 1 it's chasing a different cycle.
-            let newT1Date = (!confirmation.t1Correct && confirmation.suggestedT1Date) ? confirmation.suggestedT1Date : curT1Date;
-            let newT1Price = (!confirmation.t1Correct && confirmation.suggestedT1Price) ? confirmation.suggestedT1Price : curT1Price;
-            const newT2Date = (!confirmation.t2Correct && confirmation.suggestedT2Date) ? confirmation.suggestedT2Date : curT2Date;
-            const newT2Price = (!confirmation.t2Correct && confirmation.suggestedT2Price) ? confirmation.suggestedT2Price : curT2Price;
+            const selectedCandidate =
+              confirmation.selectedT2CandidateId &&
+              confirmation.selectedT2CandidateId !== "KEEP_CURRENT"
+                ? t2Candidates.find((candidate) => candidate.id === confirmation.selectedT2CandidateId)
+                : null;
 
-            // Reject T1 suggestions earlier than Feb 1 (different market cycle)
-            if (newT1Date) {
-              const newT1Sec = Date.parse(newT1Date + "T12:00:00Z") / 1000;
-              if (newT1Sec < MIN_T1_DATE_UTC_SEC) {
-                console.log(`[pass-${pass + 2}/sonnet] T1 ${newT1Date} is before Feb 1 — rejecting (different cycle)`);
-                newT1Date = curT1Date;
-                newT1Price = curT1Price;
-              }
-            }
-
-            // Auto-push T2 if still within 8 days of T1
-            let finalT2Date = newT2Date;
-            if (newT1Date && newT2Date) {
-              const d1 = Date.parse(newT1Date + "T12:00:00Z") / 1000;
-              const d2 = Date.parse(newT2Date + "T12:00:00Z") / 1000;
-              if ((d2 - d1) / 86400 < 8) {
-                finalT2Date = new Date((d1 + 14 * 86400) * 1000).toISOString().split("T")[0];
-                console.log(`[pass-${pass + 2}/sonnet] T2 auto-pushed to ${finalT2Date}`);
-              }
-            }
-
-            // Stop if nothing changed (avoid infinite loop)
-            if (newT1Date === curT1Date && finalT2Date === curT2Date && newT1Price === curT1Price) {
+            if (!selectedCandidate) {
               console.log(`[refinement] no change in pass ${pass + 2} — stopping`);
               break;
             }
 
-            curT1Date = newT1Date;
-            curT2Date = finalT2Date;
-            curT1Price = newT1Price;
-            curT2Price = newT2Price;
+            if (
+              selectedCandidate.timeSec === curT2TimeSec &&
+              selectedCandidate.price === curT2Price
+            ) {
+              console.log(`[refinement] candidate ${selectedCandidate.id} matches current T2 — stopping`);
+              break;
+            }
+
+            curT2TimeSec = selectedCandidate.timeSec;
+            curT2Date = formatUtcDateFromSec(selectedCandidate.timeSec);
+            curT2Price = selectedCandidate.price;
 
             setActionLabel(args.sessionId, `Pass ${pass + 2} — redrawing T1=${curT1Date} T2=${curT2Date}`);
-            const refineDrawPoints: SwingPointsForBrowser = { ...drawPoints, t1Price: curT1Price, t2Price: curT2Price };
+            const refineDrawPoints: SwingPointsForBrowser = {
+              ...drawPoints,
+              t1Price: curT1Price,
+              t1TimeSec: curT1TimeSec,
+              t2Price: curT2Price,
+              t2TimeSec: curT2TimeSec,
+            };
             await identifySwingPointsOnChart(args.sessionId, page, refineDrawPoints, {
-              structureStatus: decision.structureStatus, verdict: decision.verdict,
-              t1ViewSixPos: undefined, t2ViewSixPos: undefined,
-              t1Date: curT1Date, t2Date: curT2Date,
+              structureStatus: decision.structureStatus,
+              verdict: decision.verdict,
+              t1ExactTimeSec: curT1TimeSec,
+              t2ExactTimeSec: curT2TimeSec,
+              skipHaikuLocate: true,
             });
             await capture(args.sessionId);
             console.log(`[refinement] pass ${pass + 2} redraw complete`);
@@ -2987,6 +3005,132 @@ function shiftFibonacciLegsByBars(
     lowTimeSec: leg.lowTimeSec + shiftSec,
     highTimeSec: leg.highTimeSec + shiftSec,
   }));
+}
+
+function formatUtcDateFromSec(timeSec: number) {
+  return new Date(timeSec * 1000).toISOString().slice(0, 10);
+}
+
+function deriveThirdTouchT2Candidates(args: {
+  candles: DerivProbeCandle[];
+  direction: "long" | "short";
+  t1TimeSec?: number;
+  t1Price: number;
+  t2TimeSec?: number;
+  t2Price: number;
+  t3TimeSec?: number;
+  granularitySec: number;
+}): ThirdTouchT2Candidate[] {
+  const {
+    candles,
+    direction,
+    t1TimeSec,
+    t1Price,
+    t2TimeSec,
+    t2Price,
+    t3TimeSec,
+    granularitySec,
+  } = args;
+
+  if (!t1TimeSec || candles.length < 5) {
+    return t2TimeSec
+      ? [{
+          id: "C0",
+          timeSec: t2TimeSec,
+          price: t2Price,
+          note: `Current exact T2 (${formatUtcDateFromSec(t2TimeSec)})`,
+        }]
+      : [];
+  }
+
+  const searchEndSec = t3TimeSec ?? candles[candles.length - 1]?.epoch ?? t1TimeSec;
+  const minGapBars = 4;
+  const maxCandidates = 6;
+
+  const candidates: Array<ThirdTouchT2Candidate & { score: number }> = [];
+  const currentKey = t2TimeSec ? `${t2TimeSec}:${t2Price}` : null;
+
+  for (let i = 2; i < candles.length - 2; i += 1) {
+    const candle = candles[i];
+    if (candle.epoch <= t1TimeSec + granularitySec * minGapBars) continue;
+    if (candle.epoch >= searchEndSec) break;
+
+    const prev1 = candles[i - 1];
+    const prev2 = candles[i - 2];
+    const next1 = candles[i + 1];
+    const next2 = candles[i + 2];
+
+    if (direction === "long") {
+      const isLocalLow =
+        candle.low <= prev1.low &&
+        candle.low <= prev2.low &&
+        candle.low <= next1.low &&
+        candle.low <= next2.low &&
+        candle.low > t1Price;
+      if (!isLocalLow) continue;
+
+      const rebound = Math.max(
+        ...candles.slice(i + 1, Math.min(candles.length, i + 9)).map((entry) => entry.high),
+      ) - candle.low;
+      const separationBars = (candle.epoch - t1TimeSec) / granularitySec;
+      const score = rebound + Math.min(separationBars, 24) * 0.02;
+      candidates.push({
+        id: `C${candidates.length + 1}`,
+        timeSec: candle.epoch,
+        price: candle.low,
+        note: `Higher-low candidate on ${formatUtcDateFromSec(candle.epoch)}`,
+        score,
+      });
+      continue;
+    }
+
+    const isLocalHigh =
+      candle.high >= prev1.high &&
+      candle.high >= prev2.high &&
+      candle.high >= next1.high &&
+      candle.high >= next2.high &&
+      candle.high < t1Price;
+    if (!isLocalHigh) continue;
+
+    const rejection =
+      candle.high - Math.min(
+        ...candles.slice(i + 1, Math.min(candles.length, i + 9)).map((entry) => entry.low),
+      );
+    const separationBars = (candle.epoch - t1TimeSec) / granularitySec;
+    const score = rejection + Math.min(separationBars, 24) * 0.02;
+    candidates.push({
+      id: `C${candidates.length + 1}`,
+      timeSec: candle.epoch,
+      price: candle.high,
+      note: `Lower-high candidate on ${formatUtcDateFromSec(candle.epoch)}`,
+      score,
+    });
+  }
+
+  const deduped = candidates
+    .sort((left, right) => left.timeSec - right.timeSec || right.score - left.score)
+    .filter((candidate, index, all) =>
+      index === 0 ||
+      Math.abs(candidate.timeSec - all[index - 1].timeSec) >= granularitySec * 4,
+    )
+    .sort((left, right) => right.score - left.score)
+    .slice(0, maxCandidates - (currentKey ? 1 : 0))
+    .sort((left, right) => left.timeSec - right.timeSec)
+    .map(({ score: _score, ...candidate }) => candidate);
+
+  const withCurrent = t2TimeSec
+    ? [
+        {
+          id: "C0",
+          timeSec: t2TimeSec,
+          price: t2Price,
+          note: `Current exact T2 (${formatUtcDateFromSec(t2TimeSec)})`,
+        },
+        ...deduped.filter((candidate) => `${candidate.timeSec}:${candidate.price}` !== currentKey),
+      ]
+    : deduped;
+
+  return withCurrent.slice(0, maxCandidates);
 }
 
 async function drawFibonacciWithChartApiLegacy(
