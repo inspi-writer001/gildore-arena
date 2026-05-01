@@ -2477,7 +2477,15 @@ export async function startControlledBrowserSession(args: {
         );
         await page.waitForTimeout(1200);
         setActionLabel(args.sessionId, undefined);
-        return;
+        console.log("[browser-session-runtime] session ready without third-touch drawing", {
+          sessionId: args.sessionId,
+          screenshotPath,
+        });
+        return {
+          ok: true,
+          screenshotPath,
+          reused: false,
+        };
       }
       const t1Price = base?.t1Price ?? decision.correctedT1?.price;
       const t2Price = base?.t2Price ?? decision.correctedT2?.price;

@@ -149,6 +149,8 @@ export async function POST(request: Request) {
           sessionId: body.sessionId,
           agentSlug: body.agentSlug,
           marketSymbol: body.agentMarketSymbol,
+          traceFound: Boolean(trace),
+          annotationCount: trace?.annotations?.length ?? 0,
           recovered: Boolean(swingPoints),
         });
       } catch (fallbackError) {
