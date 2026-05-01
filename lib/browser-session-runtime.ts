@@ -4,11 +4,18 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Buffer } from "node:buffer";
 import bundledChromium from "@sparticuz/chromium";
-import { chromium, type Browser, type Frame, type Locator, type Page } from "playwright-core";
+import { chromium, type Browser, type Frame, type Locator, type Page, type Response } from "playwright-core";
 import Anthropic from "@anthropic-ai/sdk";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "@/convex/_generated/api";
-import { analyzeChartWithVision, verifyChartDrawing, confirmStructureWithSonnet, verifyFibonacciDrawing, type ChartVisionDecision } from "./chart-vision-analysis";
+import {
+  analyzeChartWithVision,
+  verifyChartDrawing,
+  confirmStructureWithSonnet,
+  verifyFibonacciDrawing,
+  estimateFibonacciPlacementError,
+  type ChartVisionDecision,
+} from "./chart-vision-analysis";
 
 type BrowserStepStatus = "queued" | "running" | "completed" | "failed";
 
@@ -86,6 +93,454 @@ async function ensureScreenshotDir() {
 
 function screenshotPathFor(sessionId: string) {
   return path.join(SCREENSHOT_ROOT, `${sessionId}.png`);
+}
+
+function isDerivChartProbeUrl(url: string) {
+  return (
+    url.includes("charts.deriv.com") ||
+    url.includes("deriv.com") ||
+    url.includes("tradingview") ||
+    url.includes("charting_library") ||
+    url.includes("tv-widget")
+  );
+}
+
+function isLikelyChartDataUrl(url: string) {
+  const normalizedUrl = url.toLowerCase();
+  return (
+    normalizedUrl.includes("history") ||
+    normalizedUrl.includes("bar") ||
+    normalizedUrl.includes("candle") ||
+    normalizedUrl.includes("tick") ||
+    normalizedUrl.includes("ohlc") ||
+    normalizedUrl.includes("timescale") ||
+    normalizedUrl.includes("resolve") ||
+    normalizedUrl.includes("symbol") ||
+    normalizedUrl.includes("quote") ||
+    normalizedUrl.includes("feed") ||
+    normalizedUrl.includes("datafeed")
+  );
+}
+
+function summarizeJsonShape(value: unknown, depth = 0): unknown {
+  if (value === null) return null;
+  if (depth >= 2) {
+    if (Array.isArray(value)) {
+      return { type: "array", length: value.length };
+    }
+    if (typeof value === "object") {
+      return { type: "object", keys: Object.keys(value as Record<string, unknown>).slice(0, 8) };
+    }
+    return typeof value;
+  }
+
+  if (Array.isArray(value)) {
+    return {
+      type: "array",
+      length: value.length,
+      sample:
+        value.length > 0 ? summarizeJsonShape(value[0], depth + 1) : "empty",
+    };
+  }
+
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>).slice(0, 12);
+    return Object.fromEntries(
+      entries.map(([key, nested]) => [key, summarizeJsonShape(nested, depth + 1)]),
+    );
+  }
+
+  return typeof value;
+}
+
+function summarizeTextShape(text: string) {
+  return text
+    .slice(0, 260)
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function logDerivChartResponseProbe(sessionId: string, response: Response) {
+  const url = response.url();
+  if (!isDerivChartProbeUrl(url)) {
+    return;
+  }
+
+  const contentType = response.headers()["content-type"] ?? "unknown";
+  console.log("[fib-probe][response-url]", {
+    sessionId,
+    status: response.status(),
+    resourceType: response.request().resourceType(),
+    contentType,
+    url,
+  });
+
+  if (!response.ok() || !isLikelyChartDataUrl(url)) {
+    return;
+  }
+
+  const contentLengthHeader = response.headers()["content-length"];
+  const contentLength = contentLengthHeader ? Number(contentLengthHeader) : null;
+  if (contentLength !== null && Number.isFinite(contentLength) && contentLength > 250_000) {
+    console.log("[fib-probe][payload-shape]", {
+      sessionId,
+      url,
+      skipped: "content-too-large",
+      contentLength,
+    });
+    return;
+  }
+
+  try {
+    const bodyText = await response.text();
+    if (!bodyText) {
+      console.log("[fib-probe][payload-shape]", {
+        sessionId,
+        url,
+        shape: "empty-body",
+      });
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(bodyText) as unknown;
+      console.log("[fib-probe][payload-shape]", {
+        sessionId,
+        url,
+        shape: summarizeJsonShape(parsed),
+      });
+      return;
+    } catch {
+      console.log("[fib-probe][payload-shape]", {
+        sessionId,
+        url,
+        shape: summarizeTextShape(bodyText),
+      });
+    }
+  } catch (error) {
+    console.log("[fib-probe][payload-shape]", {
+      sessionId,
+      url,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function attachFibonacciBrowserApiProbe(page: Page) {
+  void page.addInitScript(`
+    (() => {
+      const probeVerbose = window.__fibProbeVerbose === true;
+      const ensureDerivHistoryStore = () => {
+        const root = window;
+        if (!root.__fibProbeDerivHistory) {
+          root.__fibProbeDerivHistory = {};
+        }
+        return root.__fibProbeDerivHistory;
+      };
+
+      const shouldLogUrl = (url) => {
+        if (typeof url !== "string") return false;
+        const value = url.toLowerCase();
+        return value.includes("history")
+          || value.includes("bar")
+          || value.includes("candle")
+          || value.includes("tick")
+          || value.includes("ohlc")
+          || value.includes("resolve")
+          || value.includes("symbol")
+          || value.includes("quote")
+          || value.includes("feed")
+          || value.includes("datafeed")
+          || value.includes("frontend.derivws.com");
+      };
+
+      const shouldLogMessage = (payload) => {
+        if (typeof payload !== "string") return false;
+        const value = payload.toLowerCase();
+        return value.includes("history")
+          || value.includes("candles")
+          || value.includes("ohlc")
+          || value.includes("tick")
+          || value.includes("granularity")
+          || value.includes("symbol")
+          || value.includes("frxxauusd")
+          || value.includes("frxxagusd")
+          || value.includes("frxeurusd")
+          || value.includes("frxgbpusd");
+      };
+
+      const log = (kind, payload) => {
+        if (!probeVerbose) return;
+        try {
+          console.log("[fib-probe][browser-api]", JSON.stringify({ kind, ...payload }));
+        } catch {}
+      };
+
+      const originalFetch = window.fetch;
+      window.fetch = async (...args) => {
+        const input = args[0];
+        const url = typeof input === "string" ? input : input instanceof Request ? input.url : "";
+        if (shouldLogUrl(url)) {
+          log("fetch", { url });
+        }
+        return originalFetch(...args);
+      };
+
+      const originalOpen = XMLHttpRequest.prototype.open;
+      XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+        if (shouldLogUrl(String(url))) {
+          log("xhr", { method, url: String(url) });
+        }
+        return originalOpen.call(this, method, url, ...rest);
+      };
+
+      const OriginalWebSocket = window.WebSocket;
+      window.WebSocket = function(url, protocols) {
+        const socket = new OriginalWebSocket(url, protocols);
+        const socketUrl = String(url);
+        if (shouldLogUrl(socketUrl) || socketUrl.includes("ws")) {
+          log("websocket", { url: socketUrl });
+        }
+
+        const originalSend = socket.send.bind(socket);
+        socket.send = (data) => {
+          const text =
+            typeof data === "string"
+              ? data
+              : data instanceof ArrayBuffer
+                ? "[arraybuffer]"
+                : ArrayBuffer.isView(data)
+                  ? "[typed-array]"
+                  : String(data);
+          if (shouldLogMessage(text)) {
+            log("websocket-send", { url: socketUrl, payload: text.slice(0, 1200) });
+          }
+          return originalSend(data);
+        };
+
+        socket.addEventListener("message", (event) => {
+          const text =
+            typeof event.data === "string"
+              ? event.data
+              : event.data instanceof ArrayBuffer
+                ? "[arraybuffer]"
+                : ArrayBuffer.isView(event.data)
+                  ? "[typed-array]"
+                  : String(event.data);
+          try {
+            const parsed = JSON.parse(text);
+            const historySymbol = parsed?.echo_req?.ticks_history ?? parsed?.ohlc?.symbol;
+            const historyGranularity = Number(
+              parsed?.echo_req?.granularity ?? parsed?.ohlc?.granularity,
+            );
+            if (historySymbol && Number.isFinite(historyGranularity)) {
+              const store = ensureDerivHistoryStore();
+              const key = historySymbol + ":" + historyGranularity;
+              const existing = store[key] ?? { candles: [], latestOhlc: null };
+
+              if (Array.isArray(parsed?.candles)) {
+                existing.candles = parsed.candles;
+              }
+
+              if (parsed?.msg_type === "ohlc" && parsed?.ohlc) {
+                existing.latestOhlc = parsed.ohlc;
+              }
+
+              store[key] = existing;
+            }
+          } catch {}
+          if (shouldLogMessage(text)) {
+            log("websocket-message", { url: socketUrl, payload: text.slice(0, 1600) });
+          }
+        });
+
+        return socket;
+      };
+      window.WebSocket.prototype = OriginalWebSocket.prototype;
+      Object.setPrototypeOf(window.WebSocket, OriginalWebSocket);
+    })();
+  `);
+}
+
+function attachFibonacciNetworkProbe(sessionId: string, page: Page) {
+  const seenRequestUrls = new Set<string>();
+  const seenResponseUrls = new Set<string>();
+  const seenWebsocketUrls = new Set<string>();
+
+  page.on("console", (message) => {
+    const text = message.text();
+    if (!text.startsWith("[fib-probe][browser-api]")) {
+      return;
+    }
+
+    if (process.env.FIB_VERBOSE_PROBE === "1") {
+      console.log(text);
+    }
+  });
+
+  page.on("request", (request) => {
+    const url = request.url();
+    const resourceType = request.resourceType();
+    if (
+      !isLikelyChartDataUrl(url) ||
+      seenRequestUrls.has(url) ||
+      (resourceType !== "xhr" && resourceType !== "fetch" && resourceType !== "websocket")
+    ) {
+      return;
+    }
+
+    seenRequestUrls.add(url);
+    console.log("[fib-probe][request]", {
+      sessionId,
+      resourceType,
+      method: request.method(),
+      url,
+    });
+  });
+
+  page.on("websocket", (websocket) => {
+    const url = websocket.url();
+    if (!isDerivChartProbeUrl(url) || seenWebsocketUrls.has(url)) {
+      return;
+    }
+
+    seenWebsocketUrls.add(url);
+    console.log("[fib-probe][websocket-url]", { sessionId, url });
+  });
+
+  page.on("response", (response) => {
+    const url = response.url();
+    const resourceType = response.request().resourceType();
+    if (
+      !isDerivChartProbeUrl(url) ||
+      !isLikelyChartDataUrl(url) ||
+      (resourceType !== "xhr" && resourceType !== "fetch")
+    ) {
+      return;
+    }
+
+    if (!seenResponseUrls.has(url)) {
+      seenResponseUrls.add(url);
+      console.log("[fib-probe][response-seen]", {
+        sessionId,
+        status: response.status(),
+        resourceType,
+        url,
+      });
+    }
+
+    const shouldInspectPayload =
+      response.ok();
+
+    if (shouldInspectPayload) {
+      void logDerivChartResponseProbe(sessionId, response);
+    }
+  });
+}
+
+async function inspectFibonacciChartInternals(sessionId: string, page: Page) {
+  let chartFrame: ReturnType<typeof getChartFrame>;
+  try {
+    chartFrame = getChartFrame(page);
+  } catch (error) {
+    console.log("[fib-probe][widget-introspection]", {
+      sessionId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
+
+  const result = await chartFrame.evaluate(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const w = window as any;
+    const summarizeKeys = (value: unknown, limit = 40) => {
+      if (!value || (typeof value !== "object" && typeof value !== "function")) {
+        return [];
+      }
+      return Object.getOwnPropertyNames(value).slice(0, limit);
+    };
+    const findInterestingMethodNames = (value: unknown) => {
+      if (!value) return [];
+      const keys = summarizeKeys(value, 120);
+      return keys.filter((key) =>
+        /time|coord|point|bar|range|index|scale/i.test(key),
+      );
+    };
+
+    let widget = w.__gildoreWidget;
+    if (!widget) {
+      const tvMethods = ["activeChart", "chart", "onChartReady", "headerReady", "subscribe"];
+      for (const key of Object.getOwnPropertyNames(w)) {
+        if (key.startsWith("__") || key === "window" || key === "self") continue;
+        try {
+          const val = w[key];
+          if (val && typeof val === "object" && !Array.isArray(val)) {
+            const matches = tvMethods.filter((m) => typeof val[m] === "function").length;
+            if (matches >= 3) {
+              widget = val;
+              break;
+            }
+          }
+        } catch {}
+      }
+    }
+
+    if (!widget) {
+      return { hasWidget: false };
+    }
+
+    const chart = typeof widget.activeChart === "function" ? widget.activeChart() : null;
+    const model = chart && typeof chart.model === "function" ? chart.model() : null;
+    const mainSeries =
+      model && typeof model.mainSeries === "function" ? model.mainSeries() : null;
+    const chartWidget = chart?._chartWidget ?? null;
+    const datafeedCandidate =
+      widget._options?.datafeed ??
+      widget._datafeed ??
+      chart?._dataUpdatesConsumer?._datafeed ??
+      model?._dataSourceCollection?._datafeed ??
+      null;
+
+    return {
+      hasWidget: true,
+      widgetKeys: summarizeKeys(widget),
+      widgetProtoKeys: summarizeKeys(Object.getPrototypeOf(widget)),
+      chartKeys: summarizeKeys(chart),
+      chartProtoKeys: summarizeKeys(chart ? Object.getPrototypeOf(chart) : null),
+      modelKeys: summarizeKeys(model),
+      modelProtoKeys: summarizeKeys(model ? Object.getPrototypeOf(model) : null),
+      mainSeriesKeys: summarizeKeys(mainSeries),
+      mainSeriesProtoKeys: summarizeKeys(mainSeries ? Object.getPrototypeOf(mainSeries) : null),
+      chartWidgetKeys: summarizeKeys(chartWidget),
+      chartWidgetProtoKeys: summarizeKeys(
+        chartWidget ? Object.getPrototypeOf(chartWidget) : null,
+      ),
+      datafeedKeys: summarizeKeys(datafeedCandidate),
+      datafeedProtoKeys: summarizeKeys(
+        datafeedCandidate ? Object.getPrototypeOf(datafeedCandidate) : null,
+      ),
+      chartInterestingMethods: findInterestingMethodNames(
+        chart ? Object.getPrototypeOf(chart) : null,
+      ),
+      chartWidgetInterestingMethods: findInterestingMethodNames(
+        chartWidget ? Object.getPrototypeOf(chartWidget) : null,
+      ),
+      modelInterestingMethods: findInterestingMethodNames(
+        model ? Object.getPrototypeOf(model) : null,
+      ),
+      mainSeriesInterestingMethods: findInterestingMethodNames(
+        mainSeries ? Object.getPrototypeOf(mainSeries) : null,
+      ),
+      chartSymbol:
+        chart && typeof chart.symbol === "function" ? chart.symbol() : null,
+      chartResolution:
+        chart && typeof chart.resolution === "function" ? chart.resolution() : null,
+    };
+  }).catch((error) => ({
+    error: error instanceof Error ? error.message : String(error),
+  }));
+
+  console.log("[fib-probe][widget-introspection]", { sessionId, result });
 }
 
 function buildSteps(marketSymbol: string, timeframe: string) {
@@ -2281,6 +2736,371 @@ export type FibonacciLegForBrowser = {
   isMuted: boolean;
 };
 
+type DerivProbeCandle = {
+  epoch: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+};
+
+type DerivProbeOhlc = {
+  symbol: string;
+  granularity: number;
+  open_time: number;
+  epoch: number;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  pip_size?: number;
+};
+
+type DerivHistorySnapshot = {
+  symbol: string;
+  granularity: number;
+  candles: DerivProbeCandle[];
+  latestOhlc: DerivProbeOhlc | null;
+};
+
+function timeframeToDerivGranularity(timeframe: string) {
+  const granularityMap: Record<string, number> = {
+    "15m": 900,
+    "1h": 3600,
+    "4h": 14400,
+    "8h": 28800,
+    "1d": 86400,
+  };
+
+  return granularityMap[timeframe] ?? 900;
+}
+
+async function collectDerivHistorySnapshot(
+  sessionId: string,
+  page: Page,
+  granularity: number,
+): Promise<DerivHistorySnapshot | null> {
+  const collectFromContext = async (target: Page | Frame) =>
+    await target.evaluate(({ granularity }) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const w = window as any;
+      let widget = w.__gildoreWidget;
+      if (!widget) {
+        const tvMethods = ["activeChart", "chart", "onChartReady", "headerReady", "subscribe"];
+        for (const key of Object.getOwnPropertyNames(w)) {
+          if (key.startsWith("__") || key === "window" || key === "self") continue;
+          try {
+            const val = w[key];
+            if (val && typeof val === "object" && !Array.isArray(val)) {
+              const matches = tvMethods.filter((m) => typeof val[m] === "function").length;
+              if (matches >= 3) {
+                widget = val;
+                break;
+              }
+            }
+          } catch {}
+        }
+      }
+
+      if (!widget || typeof widget.activeChart !== "function") {
+        return null;
+      }
+
+      const chart = widget.activeChart();
+      const symbol =
+        chart && typeof chart.symbol === "function" ? chart.symbol() : null;
+      if (!symbol) {
+        return null;
+      }
+
+      const store = w.__fibProbeDerivHistory ?? {};
+      const entry = store[`${symbol}:${granularity}`];
+      if (!entry) {
+        return { symbol, granularity, candles: [], latestOhlc: null };
+      }
+
+      return {
+        symbol,
+        granularity,
+        candles: Array.isArray(entry.candles) ? entry.candles : [],
+        latestOhlc: entry.latestOhlc ?? null,
+      };
+    }, { granularity }).catch(() => null);
+
+  const contexts: Array<Page | Frame> = [page, ...page.frames()];
+  const snapshots = await Promise.all(contexts.map((context) => collectFromContext(context)));
+  const snapshot = snapshots.find(
+    (candidate) => candidate && (candidate.candles.length > 0 || candidate.latestOhlc),
+  ) ?? snapshots.find((candidate) => candidate?.symbol);
+
+  if (!snapshot) {
+    console.warn("[fib-resolve] no deriv snapshot available", {
+      sessionId,
+      granularity,
+    });
+    return null;
+  }
+
+  return snapshot as DerivHistorySnapshot;
+}
+
+function mergeDerivCandles(snapshot: DerivHistorySnapshot): DerivProbeCandle[] {
+  const merged = new Map<number, DerivProbeCandle>();
+
+  for (const candle of snapshot.candles) {
+    if (
+      !Number.isFinite(candle.epoch) ||
+      !Number.isFinite(candle.open) ||
+      !Number.isFinite(candle.high) ||
+      !Number.isFinite(candle.low) ||
+      !Number.isFinite(candle.close)
+    ) {
+      continue;
+    }
+
+    merged.set(candle.epoch, {
+      epoch: candle.epoch,
+      open: candle.open,
+      high: candle.high,
+      low: candle.low,
+      close: candle.close,
+    });
+  }
+
+  if (snapshot.latestOhlc) {
+    const openTime = snapshot.latestOhlc.open_time;
+    if (Number.isFinite(openTime)) {
+      merged.set(openTime, {
+        epoch: openTime,
+        open: Number(snapshot.latestOhlc.open),
+        high: Number(snapshot.latestOhlc.high),
+        low: Number(snapshot.latestOhlc.low),
+        close: Number(snapshot.latestOhlc.close),
+      });
+    }
+  }
+
+  return [...merged.values()].sort((left, right) => left.epoch - right.epoch);
+}
+
+function scoreDerivPivotCandidate(args: {
+  candle: DerivProbeCandle;
+  targetTimeSec: number;
+  targetPrice: number;
+  pivotKind: "low" | "high";
+}) {
+  const price = args.pivotKind === "low" ? args.candle.low : args.candle.high;
+  const priceDelta = Math.abs(price - args.targetPrice);
+  const priceWeight = Math.max(Math.abs(args.targetPrice) * 0.0025, 2.5);
+  const timeDeltaHours = Math.abs(args.candle.epoch - args.targetTimeSec) / 3600;
+  return priceDelta / priceWeight + timeDeltaHours / 24;
+}
+
+function resolveNearestDerivPivot(args: {
+  candles: DerivProbeCandle[];
+  targetTimeSec: number;
+  targetPrice: number;
+  pivotKind: "low" | "high";
+  timeWindowSec: number;
+}) {
+  const candidates = args.candles.filter(
+    (candle) =>
+      Math.abs(candle.epoch - args.targetTimeSec) <= args.timeWindowSec,
+  );
+  const searchSpace = candidates.length > 0 ? candidates : args.candles;
+
+  let best: DerivProbeCandle | null = null;
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  for (const candle of searchSpace) {
+    const score = scoreDerivPivotCandidate({
+      candle,
+      targetTimeSec: args.targetTimeSec,
+      targetPrice: args.targetPrice,
+      pivotKind: args.pivotKind,
+    });
+    if (score < bestScore) {
+      bestScore = score;
+      best = candle;
+    }
+  }
+
+  return best;
+}
+
+function resolveFibonacciLegsToDerivCandles(args: {
+  legs: FibonacciLegForBrowser[];
+  candles: DerivProbeCandle[];
+  direction?: "long" | "short";
+  granularity: number;
+}) {
+  const resolvedLegs: FibonacciLegForBrowser[] = [];
+
+  for (const leg of args.legs) {
+    const timeWindowSec = Math.max(args.granularity * 96, 7 * 24 * 3600);
+    const lowCandidate = resolveNearestDerivPivot({
+      candles: args.candles,
+      targetTimeSec: leg.lowTimeSec,
+      targetPrice: leg.lowPrice,
+      pivotKind: args.direction === "short" ? "high" : "low",
+      timeWindowSec,
+    });
+    const highCandidate = resolveNearestDerivPivot({
+      candles: args.candles.filter((candle) =>
+        lowCandidate ? candle.epoch >= lowCandidate.epoch : true,
+      ),
+      targetTimeSec: leg.highTimeSec,
+      targetPrice: leg.highPrice,
+      pivotKind: args.direction === "short" ? "low" : "high",
+      timeWindowSec,
+    });
+
+    if (!lowCandidate || !highCandidate) {
+      return null;
+    }
+
+    const resolvedLowTimeSec = lowCandidate.epoch;
+    const resolvedHighTimeSec = highCandidate.epoch;
+    if (resolvedHighTimeSec <= resolvedLowTimeSec) {
+      return null;
+    }
+
+    resolvedLegs.push({
+      ...leg,
+      lowTimeSec: resolvedLowTimeSec,
+      highTimeSec: resolvedHighTimeSec,
+    });
+  }
+
+  return resolvedLegs;
+}
+
+function shiftFibonacciLegsByBars(
+  legs: FibonacciLegForBrowser[],
+  shiftBars: number,
+  granularitySec: number,
+) {
+  if (shiftBars === 0) return legs;
+  const shiftSec = shiftBars * granularitySec;
+  return legs.map((leg) => ({
+    ...leg,
+    lowTimeSec: leg.lowTimeSec + shiftSec,
+    highTimeSec: leg.highTimeSec + shiftSec,
+  }));
+}
+
+async function drawFibonacciWithChartApiLegacy(
+  page: Page,
+  sessionId: string,
+  legs: FibonacciLegForBrowser[],
+  preferredZone?: { low: number; high: number },
+  direction?: "long" | "short",
+): Promise<boolean> {
+  let chartFrame: ReturnType<typeof getChartFrame>;
+  try {
+    chartFrame = getChartFrame(page);
+  } catch (err) {
+    console.error("[fib-drawing-api] chart frame not found:", err);
+    return false;
+  }
+
+  const result = await chartFrame.evaluate(
+    ({ legs, preferredZone, isShort }: {
+      legs: FibonacciLegForBrowser[];
+      preferredZone?: { low: number; high: number };
+      isShort: boolean;
+    }) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const w = window as any;
+      let widget = w.__gildoreWidget;
+
+      if (!widget) {
+        const tvMethods = ["activeChart", "chart", "onChartReady", "headerReady", "subscribe"];
+        for (const key of Object.getOwnPropertyNames(w)) {
+          if (key.startsWith("__") || key === "window" || key === "self") continue;
+          try {
+            const val = w[key];
+            if (val && typeof val === "object" && !Array.isArray(val)) {
+              const matches = tvMethods.filter((m) => typeof val[m] === "function").length;
+              if (matches >= 3) {
+                w.__gildoreWidget = val;
+                widget = val;
+                break;
+              }
+            }
+          } catch {}
+        }
+      }
+
+      if (!widget) return { ok: false, reason: "widget not found in iframe" };
+
+      let chart: ReturnType<typeof widget.activeChart>;
+      try { chart = widget.activeChart(); } catch (e) {
+        return { ok: false, reason: "activeChart() failed: " + String(e) };
+      }
+
+      const range = chart.getVisibleRange() as { from: number; to: number } | null;
+      if (!range?.from || !range?.to) return { ok: false, reason: "no visible range" };
+
+      const nowSec = Math.floor(Date.now() / 1000);
+      const chartUtcOffset = range.to - nowSec;
+      const earliest = Math.min(...legs.map((l) => l.lowTimeSec));
+      const fromChart = (earliest - 15 * 86400) + chartUtcOffset;
+      const toChart = nowSec + chartUtcOffset + 7 * 86400;
+      try {
+        chart.setVisibleRange({ from: Math.round(fromChart), to: Math.round(toChart) });
+      } catch {}
+
+      try { chart.removeAllShapes(); } catch {}
+
+      let drawn = 0;
+      for (const leg of legs) {
+        const lowTime = Math.round(leg.lowTimeSec + chartUtcOffset);
+        const highTime = Math.round(leg.highTimeSec + chartUtcOffset);
+        const points = isShort
+          ? [{ time: lowTime, price: leg.highPrice }, { time: highTime, price: leg.lowPrice }]
+          : [{ time: lowTime, price: leg.lowPrice }, { time: highTime, price: leg.highPrice }];
+        try {
+          chart.createMultipointShape(points, {
+            shape: "fib_retracement",
+            lock: false,
+            disableSelection: false,
+            overrides: leg.isMuted
+              ? { transparency: 85, linecolor: "rgba(120,120,120,0.4)" }
+              : { transparency: 70 },
+          });
+          drawn += 1;
+        } catch {}
+      }
+
+      if (preferredZone) {
+        const zoneFrom = Math.round(nowSec + chartUtcOffset - 3 * 86400);
+        const zoneTo = Math.round(nowSec + chartUtcOffset + 10 * 86400);
+        try {
+          chart.createMultipointShape(
+            [
+              { time: zoneFrom, price: preferredZone.high },
+              { time: zoneTo, price: preferredZone.low },
+            ],
+            {
+              shape: "rectangle",
+              lock: false,
+              disableSelection: false,
+              overrides: { fillBackground: true, transparency: 85 },
+            },
+          );
+        } catch {}
+      }
+
+      return { ok: drawn > 0, drawn, total: legs.length, chartUtcOffset };
+    },
+    { legs, preferredZone, isShort: direction === "short" },
+  ).catch((err) => ({ ok: false, reason: String(err), drawn: 0, total: legs.length }));
+
+  console.log("[fib-drawing-api][legacy] result:", result, { sessionId });
+  return result.ok;
+}
+
 async function drawFibonacciWithChartApi(
   page: Page,
   sessionId: string,
@@ -2341,37 +3161,63 @@ async function drawFibonacciWithChartApi(
         return { ok: false, reason: "activeChart() failed: " + String(e) };
       }
 
-      const range = chart.getVisibleRange() as { from: number; to: number } | null;
-      if (!range?.from || !range?.to) return { ok: false, reason: "no visible range" };
+      const convertFeedTimeToChartTime = (feedTime: number) => {
+        const roundedFeedTime = Math.round(feedTime);
 
-      // Calibrate chart-native vs UTC: chart.getVisibleRange().to ≈ current time
-      const nowSec = Math.floor(Date.now() / 1000);
-      const chartUtcOffset = range.to - nowSec;
-      console.log("[fib-drawing-api] chartUtcOffset:", chartUtcOffset, "seconds");
+        try {
+          if (typeof chart.endOfPeriodToBarTime === "function") {
+            const converted = chart.endOfPeriodToBarTime(roundedFeedTime);
+            if (typeof converted === "number" && Number.isFinite(converted)) {
+              return Math.round(converted);
+            }
+          }
+        } catch {}
 
-      // Set visible range: earliest low - 15 days → now + 7 days
+        try {
+          if (typeof chart.barTimeToEndOfPeriod === "function") {
+            const endOfPeriod = chart.barTimeToEndOfPeriod(roundedFeedTime);
+            if (typeof endOfPeriod === "number" && Number.isFinite(endOfPeriod)) {
+              const maybeBarTime =
+                typeof chart.endOfPeriodToBarTime === "function"
+                  ? chart.endOfPeriodToBarTime(endOfPeriod)
+                  : null;
+              if (typeof maybeBarTime === "number" && Number.isFinite(maybeBarTime)) {
+                return Math.round(maybeBarTime);
+              }
+            }
+          }
+        } catch {}
+
+        return roundedFeedTime;
+      };
+
       const earliest = Math.min(...legs.map((l) => l.lowTimeSec));
-      const fromChart = (earliest - 15 * 86400) + chartUtcOffset;
-      const toChart = nowSec + chartUtcOffset + 7 * 86400;
+      const latest = Math.max(...legs.map((l) => l.highTimeSec));
+      const rangeFrom = convertFeedTimeToChartTime(earliest - 15 * 86400);
+      const rangeTo = convertFeedTimeToChartTime(latest + 7 * 86400);
       try {
-        chart.setVisibleRange({ from: Math.round(fromChart), to: Math.round(toChart) });
+        chart.setVisibleRange({ from: rangeFrom, to: rangeTo });
       } catch { /* non-fatal */ }
+      const normalizedRange = chart.getVisibleRange() as { from: number; to: number } | null;
 
       // Clear any previous shapes
       try { chart.removeAllShapes(); } catch { /* non-fatal */ }
 
       let drawn = 0;
+      const conversions: Array<{ feedLowTime: number; chartLowTime: number; feedHighTime: number; chartHighTime: number }> = [];
       for (const leg of legs) {
-        const lowTime = Math.round(leg.lowTimeSec + chartUtcOffset);
-        const highTime = Math.round(leg.highTimeSec + chartUtcOffset);
+        const lowTime = convertFeedTimeToChartTime(leg.lowTimeSec);
+        const highTime = convertFeedTimeToChartTime(leg.highTimeSec);
+        conversions.push({
+          feedLowTime: leg.lowTimeSec,
+          chartLowTime: lowTime,
+          feedHighTime: leg.highTimeSec,
+          chartHighTime: highTime,
+        });
 
-        // For bullish: draw low→high (P1=swing low, P2=swing high)
-        // For bearish: draw high→low (P1=swing high, P2=swing low)
-        // In the geometry, startTimeSec=highPivot.time for bearish legs so lowTimeSec holds
-        // the high's timestamp — using highPrice with lowTimeSec gives the correct P1.
         const points = isShort
           ? [{ time: lowTime, price: leg.highPrice }, { time: highTime, price: leg.lowPrice }]
-          : [{ time: lowTime, price: leg.lowPrice },  { time: highTime, price: leg.highPrice }];
+          : [{ time: lowTime, price: leg.lowPrice }, { time: highTime, price: leg.highPrice }];
 
         try {
           chart.createMultipointShape(
@@ -2393,8 +3239,9 @@ async function drawFibonacciWithChartApi(
 
       // Draw the preferred reaction zone as a rectangle spanning now - 3 days → now + 10 days
       if (preferredZone) {
-        const zoneFrom = Math.round(nowSec + chartUtcOffset - 3 * 86400);
-        const zoneTo   = Math.round(nowSec + chartUtcOffset + 10 * 86400);
+        const zoneAnchor = convertFeedTimeToChartTime(latest);
+        const zoneFrom = Math.round(zoneAnchor - 3 * 86400);
+        const zoneTo   = Math.round(zoneAnchor + 10 * 86400);
         try {
           chart.createMultipointShape(
             [
@@ -2413,7 +3260,16 @@ async function drawFibonacciWithChartApi(
         }
       }
 
-      return { ok: drawn > 0, drawn, total: legs.length, chartUtcOffset };
+      return {
+        ok: drawn > 0,
+        drawn,
+        total: legs.length,
+        exactTimeMode: true,
+        conversions,
+        normalizedRange,
+        rangeFrom,
+        rangeTo,
+      };
     },
     { legs, preferredZone, isShort: direction === "short" },
   ).catch((err) => ({ ok: false, reason: String(err), drawn: 0, total: legs.length }));
@@ -2449,6 +3305,8 @@ export async function startFibonacciBrowserSession(args: {
   const screenshotPath = screenshotPathFor(args.sessionId);
   const browser = await launchBrowser();
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  attachFibonacciBrowserApiProbe(page);
+  attachFibonacciNetworkProbe(args.sessionId, page);
 
   // Intercept the TradingView widget constructor (same init script as the main session)
   await page.addInitScript(`
@@ -2514,17 +3372,160 @@ export async function startFibonacciBrowserSession(args: {
 
     // Wait for chart to fully settle before drawing
     await page.waitForTimeout(2000);
+    await inspectFibonacciChartInternals(args.sessionId, page);
     await autoScaleYAxis(page);
     await page.waitForTimeout(500);
 
     if (args.legs.length > 0) {
       setActionLabel(args.sessionId, "Drawing fibonacci retracements via chart API");
-      const drawn = await drawFibonacciWithChartApi(page, args.sessionId, args.legs, args.preferredZone, args.direction);
+      const granularity = timeframeToDerivGranularity(args.timeframe);
+      const derivSnapshot = await collectDerivHistorySnapshot(
+        args.sessionId,
+        page,
+        granularity,
+      );
+      const derivCandles = derivSnapshot ? mergeDerivCandles(derivSnapshot) : [];
+      console.log("[fib-resolve] deriv snapshot", {
+        sessionId: args.sessionId,
+        symbol: derivSnapshot?.symbol ?? null,
+        granularity,
+        candleCount: derivCandles.length,
+        latestOhlcOpenTime: derivSnapshot?.latestOhlc?.open_time ?? null,
+      });
+
+      const resolvedLegs =
+        derivCandles.length > 0
+          ? resolveFibonacciLegsToDerivCandles({
+              legs: args.legs,
+              candles: derivCandles,
+              direction: args.direction,
+              granularity,
+            })
+          : null;
+
+      if (resolvedLegs) {
+        console.log("[fib-resolve] resolved legs", {
+          sessionId: args.sessionId,
+          original: args.legs.map((leg) => ({
+            lowTimeSec: leg.lowTimeSec,
+            lowPrice: leg.lowPrice,
+            highTimeSec: leg.highTimeSec,
+            highPrice: leg.highPrice,
+          })),
+          resolved: resolvedLegs.map((leg) => ({
+            lowTimeSec: leg.lowTimeSec,
+            lowPrice: leg.lowPrice,
+            highTimeSec: leg.highTimeSec,
+            highPrice: leg.highPrice,
+          })),
+        });
+      } else {
+        console.warn("[fib-resolve] failed to resolve deriv anchors, falling back", {
+          sessionId: args.sessionId,
+          granularity,
+          candleCount: derivCandles.length,
+        });
+      }
+
+      let drawLegs = resolvedLegs ?? args.legs;
+      let drawn = resolvedLegs
+        ? await drawFibonacciWithChartApi(
+            page,
+            args.sessionId,
+            drawLegs,
+            args.preferredZone,
+            args.direction,
+          )
+        : await drawFibonacciWithChartApiLegacy(
+            page,
+            args.sessionId,
+            drawLegs,
+            args.preferredZone,
+            args.direction,
+          );
       console.log("[fib-browser-session] fibonacci draw result:", { drawn, sessionId: args.sessionId });
       await page.waitForTimeout(1200);
 
+      if (drawn && resolvedLegs && granularity > 0) {
+        const MAX_FIB_ADJUSTMENT_PASSES = 3;
+        let cumulativeShiftBars = 0;
+
+        for (let pass = 0; pass < MAX_FIB_ADJUSTMENT_PASSES; pass += 1) {
+          const activeLeg = drawLegs.find((l) => !l.isMuted);
+          if (!activeLeg) break;
+
+          setActionLabel(args.sessionId, `Measuring fibonacci placement (${pass + 1}/${MAX_FIB_ADJUSTMENT_PASSES})`);
+          const adjustBuf = await captureToBuffer(page);
+          const estimate = await estimateFibonacciPlacementError(adjustBuf, {
+            direction: args.direction ?? "long",
+            timeframe: args.timeframe,
+            granularitySec: granularity,
+            activeLeg: {
+              lowTimeSec: activeLeg.lowTimeSec,
+              lowPrice: activeLeg.lowPrice,
+              highTimeSec: activeLeg.highTimeSec,
+              highPrice: activeLeg.highPrice,
+            },
+          });
+          console.log("[fib-adjust] estimate", {
+            sessionId: args.sessionId,
+            pass: pass + 1,
+            cumulativeShiftBars,
+            estimate,
+          });
+
+          const converged =
+            estimate.anchorCycle === "intended_latest_swing" &&
+            Math.abs(estimate.averageBarError) <= 1 &&
+            Math.abs(estimate.leftAnchorBarError) <= 2 &&
+            Math.abs(estimate.rightAnchorBarError) <= 2;
+          if (converged) {
+            console.log("[fib-adjust] converged", {
+              sessionId: args.sessionId,
+              pass: pass + 1,
+              cumulativeShiftBars,
+              estimate,
+            });
+            break;
+          }
+
+          const shouldAdjust =
+            estimate.shouldAdjust &&
+            estimate.confidence >= 0.45 &&
+            (
+              estimate.anchorCycle === "older_left_swing" ||
+              Math.abs(estimate.averageBarError) >= 3
+            );
+          if (!shouldAdjust) {
+            break;
+          }
+
+          const shiftBars = Math.max(-96, Math.min(96, estimate.averageBarError));
+          cumulativeShiftBars += shiftBars;
+          drawLegs = shiftFibonacciLegsByBars(resolvedLegs, cumulativeShiftBars, granularity);
+
+          setActionLabel(args.sessionId, `Redrawing fibonacci (${shiftBars > 0 ? "+" : ""}${shiftBars} bars)`);
+          drawn = await drawFibonacciWithChartApi(
+            page,
+            args.sessionId,
+            drawLegs,
+            args.preferredZone,
+            args.direction,
+          );
+          console.log("[fib-adjust] redraw result", {
+            sessionId: args.sessionId,
+            pass: pass + 1,
+            shiftBars,
+            cumulativeShiftBars,
+            drawn,
+          });
+          await page.waitForTimeout(1200);
+          if (!drawn) break;
+        }
+      }
+
       // Vision revalidation: quick Haiku pass to confirm the drawing looks correct
-      const activeLeg = args.legs.find((l) => !l.isMuted);
+      const activeLeg = drawLegs.find((l) => !l.isMuted);
       if (drawn && activeLeg) {
         setActionLabel(args.sessionId, "Revalidating structure with vision agent");
         const verifyBuf = await captureToBuffer(page);
