@@ -2465,6 +2465,20 @@ export async function startControlledBrowserSession(args: {
       // Build draw points — prefer AI corrections, fall back to deterministic if available.
       // Structure mapping is independent from trade verdict: even rejects should be drawable.
       const base = args.swingPoints;
+      if (args.agentSlug === "third-touch" && !base) {
+        console.warn("[browser-session-runtime] exact swingPoints missing for third-touch — skipping drawing", {
+          sessionId: args.sessionId,
+          agentSlug: args.agentSlug,
+          marketSymbol: args.agentMarketSymbol,
+        });
+        setActionLabel(
+          args.sessionId,
+          "Third-touch exact anchors unavailable — skipping chart draw",
+        );
+        await page.waitForTimeout(1200);
+        setActionLabel(args.sessionId, undefined);
+        return;
+      }
       const t1Price = base?.t1Price ?? decision.correctedT1?.price;
       const t2Price = base?.t2Price ?? decision.correctedT2?.price;
       const projectedPrice =

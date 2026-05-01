@@ -319,7 +319,7 @@ export async function confirmStructureWithSonnet(
   t2Candidates: ThirdTouchT2Candidate[],
 ): Promise<SonnetConfirmation> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return { confirmed: true, note: "ANTHROPIC_API_KEY missing", t1Correct: true, t2Correct: true };
+  if (!apiKey) return { confirmed: false, note: "ANTHROPIC_API_KEY missing", t1Correct: false, t2Correct: false };
 
   const client = new Anthropic({ apiKey });
 
@@ -391,7 +391,7 @@ JSON only:
     console.log("[sonnet-confirm] raw:", text.trim());
 
     const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return { confirmed: true, note: "parse failed", t1Correct: true, t2Correct: true };
+    if (!jsonMatch) return { confirmed: false, note: "parse failed", t1Correct: false, t2Correct: false };
 
     const raw = JSON.parse(jsonMatch[0]) as Partial<SonnetConfirmation>;
     return {
@@ -408,7 +408,7 @@ JSON only:
     };
   } catch (err) {
     console.error("[sonnet-confirm] error:", err);
-    return { confirmed: true, note: "confirm call failed", t1Correct: true, t2Correct: true };
+    return { confirmed: false, note: "confirm call failed", t1Correct: false, t2Correct: false };
   }
 }
 

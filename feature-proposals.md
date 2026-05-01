@@ -1,0 +1,4 @@
+- [ ] Add a public strategy submission page where anyone can submit their trading strategy for listing on the platform.
+- [ ] Add a future revenue-share system so strategy authors earn a commission from profits made by traders who subscribed to their strategy.
+- [ ] Apply the commission during trader withdrawals, not at trade execution time.
+- [ ] Define the later implementation details for strategy review, approval, subscription tracking, profit attribution, and withdrawal-based payout accounting.
