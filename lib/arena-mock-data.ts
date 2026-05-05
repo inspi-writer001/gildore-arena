@@ -66,6 +66,15 @@ export const markets: Market[] = [
     dailyRange: "1.0688 - 1.0726",
     sessionBias: "mixed",
   },
+  {
+    symbol: "Volatility 15 (1s) Index",
+    displayName: "Volatility 15 (1s) Index",
+    assetClass: "synthetic",
+    price: 13096.4,
+    changePercent: -0.84,
+    dailyRange: "12220.0 - 13512.0",
+    sessionBias: "mixed",
+  },
 ];
 
 export const newsContexts: NewsContext[] = [
@@ -118,6 +127,26 @@ export const watchlistItems: WatchlistItem[] = [
     status: "armed",
     triggerNote: "News risk is elevated, hold until post-event volatility settles.",
     confluenceState: "risk",
+  },
+  {
+    id: "watch-3",
+    agentId: "third-touch",
+    marketSymbol: "Volatility 15 (1s) Index",
+    setupLabel: "Third-touch structure test on live synthetic flow",
+    timeframe: "1h",
+    status: "watching",
+    triggerNote: "Use this market for weekend third-touch testing without closed-session gaps.",
+    confluenceState: "neutral",
+  },
+  {
+    id: "watch-4",
+    agentId: "fibonacci-trend",
+    marketSymbol: "Volatility 15 (1s) Index",
+    setupLabel: "Synthetic retracement test leg",
+    timeframe: "15m",
+    status: "watching",
+    triggerNote: "Use this market for live fib/session validation while metals are closed.",
+    confluenceState: "neutral",
   },
 ];
 

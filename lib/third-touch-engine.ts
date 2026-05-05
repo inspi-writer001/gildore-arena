@@ -286,6 +286,82 @@ function findDominantBearishPair(
   return best;
 }
 
+function findFallbackTrendlinePair(args: {
+  candles: PythCandle[];
+  swingLows: SwingPoint[];
+  swingHighs: SwingPoint[];
+  direction: TradeDirection;
+}): TrendlinePair | null {
+  const { candles, swingLows, swingHighs, direction } = args;
+  const minSpan = 4;
+
+  if (direction === "long") {
+    const touch1 =
+      swingLows.reduce<SwingPoint | null>(
+        (lowest, swing) => (!lowest || swing.price < lowest.price ? swing : lowest),
+        null,
+      ) ??
+      candles.reduce<SwingPoint | null>(
+        (lowest, candle, barIndex) =>
+          !lowest || candle.low < lowest.price ? { barIndex, price: candle.low } : lowest,
+        null,
+      );
+    if (!touch1) return null;
+
+    let bestTouch2: SwingPoint | null = null;
+    let bestScore = Number.NEGATIVE_INFINITY;
+    const candidates = swingLows.length > 0
+      ? swingLows.filter((swing) => swing.barIndex >= touch1.barIndex + minSpan)
+      : candles
+          .map((candle, barIndex) => ({ barIndex, price: candle.low }))
+          .filter((swing) => swing.barIndex >= touch1.barIndex + minSpan);
+
+    for (const candidate of candidates) {
+      if (candidate.price <= touch1.price) continue;
+      const span = candidate.barIndex - touch1.barIndex;
+      const score = span * 0.1 + (candidate.price - touch1.price);
+      if (score > bestScore) {
+        bestScore = score;
+        bestTouch2 = candidate;
+      }
+    }
+
+    return bestTouch2 ? { touch1, touch2: bestTouch2, score: bestScore } : null;
+  }
+
+  const touch1 =
+    swingHighs.reduce<SwingPoint | null>(
+      (highest, swing) => (!highest || swing.price > highest.price ? swing : highest),
+      null,
+    ) ??
+    candles.reduce<SwingPoint | null>(
+      (highest, candle, barIndex) =>
+        !highest || candle.high > highest.price ? { barIndex, price: candle.high } : highest,
+      null,
+    );
+  if (!touch1) return null;
+
+  let bestTouch2: SwingPoint | null = null;
+  let bestScore = Number.NEGATIVE_INFINITY;
+  const candidates = swingHighs.length > 0
+    ? swingHighs.filter((swing) => swing.barIndex >= touch1.barIndex + minSpan)
+    : candles
+        .map((candle, barIndex) => ({ barIndex, price: candle.high }))
+        .filter((swing) => swing.barIndex >= touch1.barIndex + minSpan);
+
+  for (const candidate of candidates) {
+    if (candidate.price >= touch1.price) continue;
+    const span = candidate.barIndex - touch1.barIndex;
+    const score = span * 0.1 + (touch1.price - candidate.price);
+    if (score > bestScore) {
+      bestScore = score;
+      bestTouch2 = candidate;
+    }
+  }
+
+  return bestTouch2 ? { touch1, touch2: bestTouch2, score: bestScore } : null;
+}
+
 function findBestThirdTouchCandidate(
   candles: PythCandle[],
   touch1: SwingPoint,
@@ -650,6 +726,18 @@ export function deriveThirdTouchArenaState({
     swingHighs.length >= 2
       ? findDominantBearishPair(window, swingHighs, provisionalTolerance)
       : null;
+  const fallbackLongPair = findFallbackTrendlinePair({
+    candles: window,
+    swingLows,
+    swingHighs,
+    direction: "long",
+  });
+  const fallbackShortPair = findFallbackTrendlinePair({
+    candles: window,
+    swingLows,
+    swingHighs,
+    direction: "short",
+  });
 
   let direction: TradeDirection;
   let touch1: SwingPoint | null = null;
@@ -666,17 +754,28 @@ export function deriveThirdTouchArenaState({
     (fullWindowDrift < -averageRange * 1.5 ? 2 : fullWindowDrift < 0 ? 0.75 : -2);
 
   if (!bullishPair && !bearishPair) {
-    return null;
-  }
-
-  if (bearishScore > bullishScore) {
+    direction =
+      regime === "bearish"
+        ? "short"
+        : regime === "bullish"
+          ? "long"
+          : fullWindowDrift <= 0
+            ? "short"
+            : "long";
+    const fallbackPair = direction === "short" ? fallbackShortPair : fallbackLongPair;
+    if (!fallbackPair) {
+      return null;
+    }
+    touch1 = fallbackPair.touch1;
+    touch2 = fallbackPair.touch2;
+  } else if (bearishScore > bullishScore) {
     direction = "short";
-    touch1 = bearishPair?.touch1 ?? null;
-    touch2 = bearishPair?.touch2 ?? null;
+    touch1 = bearishPair?.touch1 ?? fallbackShortPair?.touch1 ?? null;
+    touch2 = bearishPair?.touch2 ?? fallbackShortPair?.touch2 ?? null;
   } else {
     direction = "long";
-    touch1 = bullishPair?.touch1 ?? null;
-    touch2 = bullishPair?.touch2 ?? null;
+    touch1 = bullishPair?.touch1 ?? fallbackLongPair?.touch1 ?? null;
+    touch2 = bullishPair?.touch2 ?? fallbackLongPair?.touch2 ?? null;
   }
 
   if (!touch1 || !touch2) return null;
