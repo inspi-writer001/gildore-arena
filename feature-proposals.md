@@ -2,3 +2,5 @@
 - [ ] Add a future revenue-share system so strategy authors earn a commission from profits made by traders who subscribed to their strategy.
 - [ ] Apply the commission during trader withdrawals, not at trade execution time.
 - [ ] Define the later implementation details for strategy review, approval, subscription tracking, profit attribution, and withdrawal-based payout accounting.
+- [ ] Agents can subscribe to trade notifications too and place trades on perps from this agentic subscription- so we expose a way for agents to hook up to this notif and they can do whatever they want?
+- [ ] Allow users connect from allover but funds will be bridged to solana and trade executions are on Flashtrade

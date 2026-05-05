@@ -192,21 +192,6 @@ function resolveBrowserReviewTarget(args: {
   marketSymbol: string;
   timeframe: "15m" | "1h" | "4h";
 }) {
-  const forexMetals = ["XAG/USD", "XAU/USD", "EUR/USD"];
-  if (forexMetals.includes(args.marketSymbol)) {
-    // Forex and metals markets are closed on weekends. Fall back to VIX10 so
-    // the browser session still has a live chart to analyse.
-    const dayOfWeek = new Date().getUTCDay(); // 0 = Sunday, 6 = Saturday
-    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-    if (isWeekend) {
-      return {
-        browserTargetSymbol: "Volatility 10 (1s) Index",
-        browserTargetTimeframe: "4h",
-        reason: "Weekend fallback — metals/FX session closed, using VIX10 as a live reference chart.",
-      };
-    }
-  }
-
   return {
     browserTargetSymbol: args.marketSymbol,
     browserTargetTimeframe: args.timeframe,
@@ -295,6 +280,7 @@ export const getArenaSnapshot = query({
         (row) => row.capturedAt,
       ).map((row) => ({
         ...row,
+        structureVerdict: row.structureVerdict ?? "none",
         structureStatus: row.structureStatus ?? "none",
       })),
     };
@@ -1290,6 +1276,12 @@ export const persistVisionDecision = mutation({
     marketSymbol: v.string(),
     regime: v.union(v.literal("bullish"), v.literal("bearish"), v.literal("mixed")),
     verdict: v.union(v.literal("valid"), v.literal("staged"), v.literal("invalid"), v.literal("reject")),
+    structureVerdict: v.union(
+      v.literal("drawable"),
+      v.literal("watch_future_touch"),
+      v.literal("broken"),
+      v.literal("none"),
+    ),
     direction: v.union(v.literal("long"), v.literal("short"), v.literal("none")),
     structureStatus: v.union(
       v.literal("clean"),
@@ -1344,6 +1336,7 @@ export const persistVisionDecision = mutation({
     const significantChange =
       !existing ||
       existing.regime !== args.regime ||
+      existing.structureVerdict !== args.structureVerdict ||
       existing.direction !== args.direction ||
       existing.structureStatus !== args.structureStatus ||
       existing.verdict !== args.verdict ||

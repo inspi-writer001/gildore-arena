@@ -2,12 +2,19 @@ import { NextResponse } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "@/convex/_generated/api";
 import { startControlledBrowserSession, type SwingPointsForBrowser } from "@/lib/browser-session-runtime";
+import type { TradeTimeframe } from "@/lib/arena-types";
+import { fetchPythHistory } from "@/lib/pyth-history";
+import { deriveThirdTouchArenaState } from "@/lib/third-touch-engine";
 
 const CANDLE_SECONDS: Record<string, number> = {
   "15m": 900,
   "1h": 3600,
   "4h": 14400,
 };
+
+function isTradeTimeframe(value: string): value is TradeTimeframe {
+  return value === "15m" || value === "1h" || value === "4h";
+}
 
 function getConvexClient() {
   const url = process.env.NEXT_PUBLIC_CONVEX_URL;
@@ -110,7 +117,6 @@ export async function POST(request: Request) {
       swingPoints?: SwingPointsForBrowser;
     };
     sessionId = body.sessionId;
-
     console.log("[browser-session/start] request received", {
       sessionId: body.sessionId,
       agentSlug: body.agentSlug,
@@ -153,6 +159,30 @@ export async function POST(request: Request) {
           annotationCount: trace?.annotations?.length ?? 0,
           recovered: Boolean(swingPoints),
         });
+
+        if (!swingPoints && isTradeTimeframe(body.timeframe)) {
+          const candles = await fetchPythHistory(
+            body.agentMarketSymbol,
+            body.timeframe,
+          );
+          const derived = candles
+            ? deriveThirdTouchArenaState({
+                agentId: body.agentSlug,
+                marketSymbol: body.agentMarketSymbol,
+                timeframe: body.timeframe,
+                candles,
+              })
+            : null;
+          swingPoints = extractSwingPointsFromTrace(derived?.trace, body.timeframe);
+
+          console.log("[browser-session/start] on-demand third-touch fallback", {
+            sessionId: body.sessionId,
+            marketSymbol: body.agentMarketSymbol,
+            candleCount: candles?.length ?? 0,
+            derived: Boolean(derived),
+            recovered: Boolean(swingPoints),
+          });
+        }
       } catch (fallbackError) {
         console.warn("[browser-session/start] swingPoints fallback failed", {
           sessionId: body.sessionId,
@@ -163,6 +193,7 @@ export async function POST(request: Request) {
 
     console.log("[browser-session/start] starting controlled browser session", {
       sessionId: body.sessionId,
+      marketSymbol: body.marketSymbol,
       hasSwingPoints: Boolean(swingPoints),
     });
     const result = await startControlledBrowserSession({

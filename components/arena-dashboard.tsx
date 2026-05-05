@@ -181,6 +181,7 @@ type ArenaSnapshot = {
     marketSymbol: string;
     regime: "bullish" | "bearish" | "mixed";
     verdict: "valid" | "staged" | "invalid" | "reject";
+    structureVerdict: "drawable" | "watch_future_touch" | "broken" | "none";
     direction: "long" | "short" | "none";
     structureStatus: "clean" | "weak" | "broken" | "none";
     confidence: number;
@@ -1072,9 +1073,7 @@ export default function ArenaDashboard() {
     setAutoRestartedConjureSelectionKey,
   ] = useState<string | null>(null);
   const isWideWorkspace = true;
-  const [conjureDitheringSize, setConjureDitheringSize] = useState(2);
-  const conjureRafRef = useRef<number | null>(null);
-  const conjureStartRef = useRef<number | null>(null);
+  const conjureDitheringSize = 2;
   const didRenameRef = useRef(false);
 
   // One-time migration: rename agents to mythical names if they still have old names
@@ -1090,20 +1089,6 @@ export default function ArenaDashboard() {
     didRenameRef.current = true;
     void updateAgentDisplayNames({});
   }, [snapshot, updateAgentDisplayNames]);
-
-  useEffect(() => {
-    function tick(ts: number) {
-      if (conjureStartRef.current === null) conjureStartRef.current = ts;
-      const elapsed = (ts - conjureStartRef.current) / 1000;
-      setConjureDitheringSize(2 + 1.5 * Math.sin(elapsed * 0.7));
-      conjureRafRef.current = requestAnimationFrame(tick);
-    }
-    conjureRafRef.current = requestAnimationFrame(tick);
-    return () => {
-      if (conjureRafRef.current !== null)
-        cancelAnimationFrame(conjureRafRef.current);
-    };
-  }, []);
 
   const selectedAgentSlug = searchParams.get("agent");
   const selectedMarketParam = searchParams.get("market");
