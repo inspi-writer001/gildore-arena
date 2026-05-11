@@ -95,7 +95,6 @@ export async function POST(request: Request) {
       direction?: "long" | "short";
     };
     sessionId = body.sessionId;
-
     let { legs, preferredZone, direction } = {
       legs: body.legs ?? [],
       preferredZone: body.preferredZone,

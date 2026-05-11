@@ -181,6 +181,7 @@ type ArenaSnapshot = {
     marketSymbol: string;
     regime: "bullish" | "bearish" | "mixed";
     verdict: "valid" | "staged" | "invalid" | "reject";
+    structureVerdict: "drawable" | "watch_future_touch" | "broken" | "none";
     direction: "long" | "short" | "none";
     structureStatus: "clean" | "weak" | "broken" | "none";
     confidence: number;
@@ -1072,9 +1073,7 @@ export default function ArenaDashboard() {
     setAutoRestartedConjureSelectionKey,
   ] = useState<string | null>(null);
   const isWideWorkspace = true;
-  const [conjureDitheringSize, setConjureDitheringSize] = useState(2);
-  const conjureRafRef = useRef<number | null>(null);
-  const conjureStartRef = useRef<number | null>(null);
+  const conjureDitheringSize = 2;
   const didRenameRef = useRef(false);
 
   // One-time migration: rename agents to mythical names if they still have old names
@@ -1090,20 +1089,6 @@ export default function ArenaDashboard() {
     didRenameRef.current = true;
     void updateAgentDisplayNames({});
   }, [snapshot, updateAgentDisplayNames]);
-
-  useEffect(() => {
-    function tick(ts: number) {
-      if (conjureStartRef.current === null) conjureStartRef.current = ts;
-      const elapsed = (ts - conjureStartRef.current) / 1000;
-      setConjureDitheringSize(2 + 1.5 * Math.sin(elapsed * 0.7));
-      conjureRafRef.current = requestAnimationFrame(tick);
-    }
-    conjureRafRef.current = requestAnimationFrame(tick);
-    return () => {
-      if (conjureRafRef.current !== null)
-        cancelAnimationFrame(conjureRafRef.current);
-    };
-  }, []);
 
   const selectedAgentSlug = searchParams.get("agent");
   const selectedMarketParam = searchParams.get("market");
@@ -1728,13 +1713,44 @@ export default function ArenaDashboard() {
                     {selectedAgent.lastAction}
                   </p>
                 </div>
-                <div className="flex flex-wrap gap-[10px] justify-end">
-                  <span className={cn(chipClass, "font-barlow")}>
-                    {statusLabelMap[selectedAgent.status]}
-                  </span>
-                  <span className={cn(chipClass, "font-barlow")}>
-                    {selectedAgent.timeframe}
-                  </span>
+                <div className="flex flex-col items-end gap-[10px]">
+                  <div className="flex flex-wrap gap-[10px] justify-end">
+                    <span className={cn(chipClass, "font-barlow")}>
+                      {selectedAgent.timeframe}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className="relative h-[52px] w-[210px] p-0 border-0 rounded-[14px] overflow-hidden cursor-pointer bg-[#f5f5f2] shadow-[inset_0_1px_0_rgba(255,255,255,0.88),inset_0_-1px_0_rgba(0,0,0,0.08)] transition-transform duration-[120ms] hover:-translate-y-px active:scale-[0.985]"
+                    onClick={() => {
+                      console.log(
+                        "[prediction] Enter Prediction clicked for agent:",
+                        selectedAgent.id,
+                      );
+                    }}
+                  >
+                    <LiquidMetal
+                      className="!absolute inset-0 !w-full !h-full pointer-events-none"
+                      colorBack="#a9a9ab"
+                      colorTint="#ffffff"
+                      shape="none"
+                      repetition={2.6}
+                      softness={0.12}
+                      shiftRed={0.18}
+                      shiftBlue={0.22}
+                      distortion={0.08}
+                      contour={0.52}
+                      angle={70}
+                      speed={1}
+                      scale={1}
+                      fit="cover"
+                      width="100%"
+                      height="100%"
+                    />
+                    <span className="absolute inset-[6px] z-[2] inline-flex items-center justify-center rounded-[9px] border border-[rgba(255,255,255,0.42)] bg-[rgba(255,255,255,0.16)] px-4 text-[17px] font-medium tracking-[0.02em] !text-[#121212] [text-shadow:0_1px_0_rgba(255,255,255,0.34)] shadow-[inset_0_1px_0_rgba(255,255,255,0.34),inset_0_-1px_0_rgba(255,255,255,0.08)] backdrop-blur-[14px] pointer-events-none font-instrument whitespace-nowrap">
+                      Enter Prediction
+                    </span>
+                  </button>
                 </div>
               </div>
 
@@ -1996,14 +2012,14 @@ export default function ArenaDashboard() {
                 return (
                   <div
                     className={cn(
-                      "h-[80px] rounded-[20px] overflow-hidden transition-[height] duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]",
+                      "h-[80px] rounded-[10px] overflow-hidden transition-[height] duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]",
                       (isConjureActive || isConjureLoading) && "h-[600px]",
                     )}
                   >
                     {isConjureIdle ? (
                       <button
                         type="button"
-                        className="relative block w-full h-full p-0 border-0 rounded-[20px] overflow-hidden cursor-pointer bg-[#f5f5f2] shadow-[inset_0_1px_0_rgba(255,255,255,0.88),inset_0_-1px_0_rgba(0,0,0,0.08)] transition-transform duration-[120ms] hover:-translate-y-px active:scale-[0.985]"
+                        className="relative block w-full h-full p-0 border-0 rounded-[10px] overflow-hidden cursor-pointer bg-[#f5f5f2] shadow-[inset_0_1px_0_rgba(255,255,255,0.88),inset_0_-1px_0_rgba(0,0,0,0.08)] transition-transform duration-[120ms] hover:-translate-y-px active:scale-[0.985]"
                         onClick={() => void launchBrowserSession()}
                       >
                         <LiquidMetal
@@ -2024,7 +2040,7 @@ export default function ArenaDashboard() {
                           width="100%"
                           height="100%"
                         />
-                        <span className="absolute inset-[18px] z-[2] inline-flex min-h-[44px] items-center justify-center rounded-md border border-[rgba(255,255,255,0.42)] bg-[rgba(255,255,255,0.16)] px-6 text-[clamp(22px,2vw,30px)] font-medium tracking-[0.02em] !text-[#121212] [text-shadow:0_1px_0_rgba(255,255,255,0.34)] shadow-[inset_0_1px_0_rgba(255,255,255,0.34),inset_0_-1px_0_rgba(255,255,255,0.08),0_18px_40px_rgba(0,0,0,0.08)] backdrop-blur-[14px] pointer-events-none font-instrument">
+                        <span className="absolute inset-[8px] z-[2] inline-flex min-h-[44px] items-center justify-center rounded-md border border-[rgba(255,255,255,0.42)] bg-[rgba(255,255,255,0.16)] px-6 text-[clamp(22px,2vw,30px)] font-medium tracking-[0.02em] !text-[#121212] [text-shadow:0_1px_0_rgba(255,255,255,0.34)] shadow-[inset_0_1px_0_rgba(255,255,255,0.34),inset_0_-1px_0_rgba(255,255,255,0.08),0_18px_40px_rgba(0,0,0,0.08)] backdrop-blur-[14px] pointer-events-none font-instrument">
                           Conjure {agentName}
                         </span>
                       </button>

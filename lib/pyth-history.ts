@@ -14,6 +14,10 @@ const historySymbolMap: Record<string, string> = {
   "XAU/USD": "Metal.XAU/USD",
   "XAG/USD": "Metal.XAG/USD",
   "EUR/USD": "FX.EUR/USD",
+  "GBP/USD": "FX.GBP/USD",
+  "USD/JPY": "FX.USD/JPY",
+  "NAS100/USD": "Equity.US.QQQ/USD",
+  "US30/USD": "Equity.US.DIA/USD",
 };
 
 export const pythResolutionMap: Record<TradeTimeframe, string> = {

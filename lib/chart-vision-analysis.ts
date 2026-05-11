@@ -1,7 +1,7 @@
 import "server-only";
 
 import Anthropic from "@anthropic-ai/sdk";
-import type { SwingPointsForBrowser } from "./browser-session-runtime";
+import type { SwingPointsForBrowser, ThirdTouchT2Candidate } from "./browser-session-runtime";
 
 // Pixel position within the 1440×900 final-view screenshot (View 6).
 // xPct=0 is left edge, xPct=1 is right edge. yPct=0 is top, yPct=1 is bottom.
@@ -17,9 +17,15 @@ export type DrawingVerification = {
   correctedT2?: { price: number; date: string; viewPos?: ScreenPos };
 };
 
+export type TrendlinePresenceCheck = {
+  visible: boolean;
+  note: string;
+};
+
 export type ChartVisionDecision = {
   regime: "bullish" | "bearish" | "mixed";
   verdict: "valid" | "staged" | "invalid" | "reject";
+  structureVerdict: "drawable" | "watch_future_touch" | "broken" | "none";
   direction: "long" | "short" | "none";
   structureStatus: "clean" | "weak" | "broken" | "none";
   confidence: number; // 0–1
@@ -45,11 +51,17 @@ const STRATEGY_SYSTEM_PROMPT = `You are a disciplined technical analysis agent s
 - Bullish regime: higher lows, close drift upward → look for ascending support lines, long setups only.
 - Bearish regime: lower highs, close drift downward → look for descending resistance lines, short setups only.
 - Mixed regime: conflicted or range-bound → return regime=mixed, verdict=reject for the trade decision.
+- A rejected trade can still have a drawable or future-watch structure.
 - NEVER draw a rising support line in a falling market or a falling resistance line in a rising market.
 
 ### Structure mapping is separate from trade decision
 - Your \`verdict\` is the trade decision only.
+- Your \`structureVerdict\` is the drawing decision.
 - Even when verdict is \`reject\` or \`invalid\`, you should still map the most dominant visible structure if one can be inferred.
+- Use \`structureVerdict="drawable"\` when the line is worth drawing now.
+- Use \`structureVerdict="watch_future_touch"\` when the line is structurally meaningful but price has not yet reached a useful third-touch reaction. This is still drawable.
+- Use \`structureVerdict="broken"\` when the dominant structure can be mapped but has already failed.
+- Use \`structureVerdict="none"\` only when there is truly no drawable structure at all.
 - If the best visible structure is broken, still return the failed \`T1\`, \`T2\`, projected line/zone, and an invalidation region when possible.
 - Only return \`structureStatus="none"\` and null anchors/zones when there is truly no drawable structure at all.
 
@@ -61,6 +73,8 @@ const STRATEGY_SYSTEM_PROMPT = `You are a disciplined technical analysis agent s
 - Do NOT mention "Screenshot 1", "Screenshot 2", or similar wording. Refer to the chart naturally, e.g. "From what I can see..."
 - Prioritise returning complete valid JSON over extra explanation.
 - If token budget is getting tight, shorten rationale and issues first. Never leave the JSON unfinished.
+- The FIRST character of your response must be { and the LAST character must be }.
+- Do not write analysis before the JSON. Put everything inside the JSON fields.
 
 ### Multi-timeframe discovery flow
 The screenshots follow a deliberate multi-timeframe sequence:
@@ -127,6 +141,7 @@ Respond ONLY with a valid JSON object matching this exact schema. No markdown fe
 {
   "regime": "bullish" | "bearish" | "mixed",
   "verdict": "valid" | "staged" | "invalid" | "reject",
+  "structureVerdict": "drawable" | "watch_future_touch" | "broken" | "none",
   "direction": "long" | "short" | "none",
   "structureStatus": "clean" | "weak" | "broken" | "none",
   "confidence": <number 0 to 1>,
@@ -160,9 +175,14 @@ Your task:
 2. From Views 3–4 (trading TF zoomed out): confirm T1 is the lowest point BEFORE the rally — not a correction low mid-rally. Then identify T2 — the first significant higher low that sets the slope. T2 is typically 10–30+ days after T1.
 3. **Slope sanity check**: Project the T1→T2 line to the rightmost visible candle. For a bullish setup, the projected line should be at or below current price — price is above support or touching it. If the line is well ABOVE current price, your T2 is wrong (line is too steep). Adjust until the projection makes contact sense with current price.
 4. From Views 5–6: Assess the T3 zone — is current price approaching or touching the projected line?
-5. Return your verdict: valid, staged, invalid, or reject.
-6. Even if verdict is reject, still map the dominant structure when visible.
-7. In View 6 (DRAWING CANVAS), report viewSixPos for T1 and T2 if visible. If T1 is off-screen, set viewSixPos to null — use the correct price and date from the 8h analysis, not a substitute candle.
+5. Return your trade verdict: valid, staged, invalid, or reject.
+6. Separately return structureVerdict:
+   - drawable = line worth drawing now
+   - watch_future_touch = line worth drawing for a later third touch in the future
+   - broken = dominant line is visible but failed
+   - none = nothing worth drawing
+7. Even if trade verdict is reject, still map the dominant structure when visible.
+8. In View 6 (DRAWING CANVAS), report viewSixPos for T1 and T2 if visible. If T1 is off-screen, set viewSixPos to null — use the correct price and date from the 8h analysis, not a substitute candle.
 
 Be honest. Lower confidence if ambiguous, but always attempt to map the dominant structure.`;
 }
@@ -212,16 +232,23 @@ export async function analyzeChartWithVision(
 Important output rules:
 - Never mention screenshot numbers in the JSON.
 - Keep notes concise.
+- The response must start with { and end with }.
+- Do not write analysis outside the JSON.
 - Finish the JSON fully even if you must shorten rationale and issues.`,
   });
 
   const response = await client.messages.create({
     model: "claude-sonnet-4-6",
-    max_tokens: 1400,
+    max_tokens: 1800,
     system: [
       {
         type: "text",
-        text: STRATEGY_SYSTEM_PROMPT,
+        text: `${STRATEGY_SYSTEM_PROMPT}
+
+Output guardrails:
+- Return exactly one valid JSON object.
+- No prose before or after the JSON.
+- If you run short on tokens, shorten rationale and issues first, but finish the JSON object.`,
         cache_control: { type: "ephemeral" },
       },
     ],
@@ -268,14 +295,28 @@ Important output rules:
       };
     };
 
+    const correctedT1 = parseAnchor(raw.correctedT1);
+    const correctedT2 = parseAnchor(raw.correctedT2);
+
     return {
       regime: raw.regime ?? "mixed",
       verdict: raw.verdict ?? "reject",
+      structureVerdict:
+        raw.structureVerdict === "drawable" ||
+        raw.structureVerdict === "watch_future_touch" ||
+        raw.structureVerdict === "broken" ||
+        raw.structureVerdict === "none"
+          ? raw.structureVerdict
+          : raw.structureStatus === "broken"
+            ? "broken"
+            : correctedT1 && correctedT2
+              ? "drawable"
+              : "none",
       direction: raw.direction ?? "none",
       structureStatus: raw.structureStatus ?? "none",
       confidence: typeof raw.confidence === "number" ? Math.max(0, Math.min(1, raw.confidence)) : 0.5,
-      correctedT1: parseAnchor(raw.correctedT1),
-      correctedT2: parseAnchor(raw.correctedT2),
+      correctedT1,
+      correctedT2,
       correctedZone: raw.correctedZone ?? undefined,
       invalidationZone: raw.invalidationZone ?? undefined,
       invalidationNote: raw.invalidationNote ?? undefined,
@@ -286,6 +327,7 @@ Important output rules:
     return {
       regime: "mixed",
       verdict: "reject",
+      structureVerdict: "none",
       direction: "none",
       structureStatus: "none",
       confidence: 0,
@@ -309,25 +351,43 @@ export type SonnetConfirmation = {
   t2Correct: boolean;
   suggestedT1Date?: string;
   suggestedT1Price?: number;
-  suggestedT2Date?: string;
-  suggestedT2Price?: number;
+  selectedT2CandidateId?: string;
 };
 
 export async function confirmStructureWithSonnet(
   screenshot: Buffer,
   t1: { price: number; date?: string },
   t2: { price: number; date?: string },
+  t2Candidates: ThirdTouchT2Candidate[],
 ): Promise<SonnetConfirmation> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return { confirmed: true, note: "ANTHROPIC_API_KEY missing", t1Correct: true, t2Correct: true };
+  if (!apiKey) return { confirmed: false, note: "ANTHROPIC_API_KEY missing", t1Correct: false, t2Correct: false };
 
   const client = new Anthropic({ apiKey });
 
-  const prompt = `This is the current chart with a blue ascending trendline drawn.
+  const candidateList = t2Candidates.length > 0
+    ? t2Candidates
+        .map((candidate) =>
+          `- ${candidate.id}: ${new Date(candidate.timeSec * 1000).toISOString()} @ ${candidate.price} (${candidate.note})`,
+        )
+        .join("\n")
+    : "- C0: keep the current T2";
+
+  const prompt = `CRITICAL OUTPUT RULES:
+- Return ONE complete JSON object only.
+- The FIRST character of your response must be {.
+- Do NOT write analysis, headings, markdown, or code fences.
+- If token budget is tight, shorten "note" first. Never leave the JSON unfinished.
+- If uncertain, return conservative booleans/nulls inside the JSON. Never write prose outside the JSON.
+
+This is the current chart with a blue ascending trendline drawn.
 
 Current anchors:
 - T1: ~${t1.date ?? "unknown"}, price ~${t1.price}
 - T2: ~${t2.date ?? "unknown"}, price ~${t2.price}
+
+Exact T2 candidates from market data:
+${candidateList}
 
 ## What to verify:
 
@@ -342,6 +402,9 @@ Current anchors:
 - T2 should be at least 10 days after T1 (closer than 8 days = likely wrong)
 - T2 is the inflection point: before T2 price was still correcting, after T2 the rally accelerated
 - NOT a random slightly-higher candle mid-correction — it must be a CLEAN BOUNCE POINT
+- Choose T2 from the exact candidate list above. Do NOT invent a new T2 date outside that list unless every candidate is invalid.
+- If the current T2 is already correct, return "selectedT2CandidateId": "KEEP_CURRENT".
+- If a different candidate is better, return its candidate id exactly as listed, like "C2".
 
 **Line quality:**
 - Line must run BELOW ALL candle bodies between T1 and current price
@@ -352,19 +415,25 @@ Return confirmed=true ONLY if all three criteria are met. Otherwise return corre
 JSON only:
 {
   "confirmed": true | false,
-  "note": "<one sentence>",
+  "note": "<very short sentence>",
   "t1Correct": true | false,
   "t2Correct": true | false,
   "suggestedT1Date": "<YYYY-MM-DD>" | null,
   "suggestedT1Price": <wick low price number> | null,
-  "suggestedT2Date": "<YYYY-MM-DD>" | null,
-  "suggestedT2Price": <number> | null
+  "selectedT2CandidateId": "KEEP_CURRENT" | "<candidate id>" | null
 }`;
 
   try {
     const response = await client.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 300,
+      max_tokens: 220,
+      system: [
+        {
+          type: "text",
+          text:
+            "You are a JSON emitter. Reply with exactly one valid JSON object. No prose before or after the JSON. The first output character must be { and the last must be }.",
+        },
+      ],
       messages: [{
         role: "user",
         content: [
@@ -377,23 +446,28 @@ JSON only:
     const text = response.content.find((b) => b.type === "text")?.text ?? "";
     console.log("[sonnet-confirm] raw:", text.trim());
 
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return { confirmed: true, note: "parse failed", t1Correct: true, t2Correct: true };
+    const firstBrace = text.indexOf("{");
+    const lastBrace = text.lastIndexOf("}");
+    if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+      return { confirmed: false, note: "parse failed", t1Correct: false, t2Correct: false };
+    }
 
-    const raw = JSON.parse(jsonMatch[0]) as Partial<SonnetConfirmation>;
+    const raw = JSON.parse(text.slice(firstBrace, lastBrace + 1)) as Partial<SonnetConfirmation>;
     return {
-      confirmed: raw.confirmed ?? true,
+      confirmed: raw.confirmed ?? false,
       note: raw.note ?? "",
-      t1Correct: raw.t1Correct ?? true,
-      t2Correct: raw.t2Correct ?? true,
+      t1Correct: raw.t1Correct ?? false,
+      t2Correct: raw.t2Correct ?? false,
       suggestedT1Date: raw.suggestedT1Date ?? undefined,
       suggestedT1Price: raw.suggestedT1Price ?? undefined,
-      suggestedT2Date: raw.suggestedT2Date ?? undefined,
-      suggestedT2Price: raw.suggestedT2Price ?? undefined,
+      selectedT2CandidateId:
+        typeof (raw as { selectedT2CandidateId?: unknown }).selectedT2CandidateId === "string"
+          ? (raw as { selectedT2CandidateId: string }).selectedT2CandidateId
+          : undefined,
     };
   } catch (err) {
     console.error("[sonnet-confirm] error:", err);
-    return { confirmed: true, note: "confirm call failed", t1Correct: true, t2Correct: true };
+    return { confirmed: false, note: "confirm call failed", t1Correct: false, t2Correct: false };
   }
 }
 
@@ -495,6 +569,73 @@ Note: yPct must be between 0.20 and 0.88 (chart canvas only, not toolbar/axis ar
   } catch (err) {
     console.error("[verify] error:", err);
     return { assessment: "correct", note: "verify call failed — treating as correct" };
+  }
+}
+
+export async function confirmTrendlineVisible(
+  screenshot: Buffer,
+): Promise<TrendlinePresenceCheck> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return { visible: true, note: "ANTHROPIC_API_KEY missing — skipping trendline presence check" };
+  }
+
+  const client = new Anthropic({ apiKey });
+
+  const prompt = `Look at this trading chart screenshot and answer one narrow question:
+
+Is a blue diagonal trendline visibly present on the chart canvas?
+
+Rules:
+- Ignore horizontal grid lines and price markers.
+- Ignore the purple rectangle.
+- A valid positive result requires a clearly visible slanted blue line segment on the chart.
+- If the line is missing, imperceptible, or only horizontal elements are visible, return visible=false.
+
+Respond ONLY with valid JSON:
+{
+  "visible": true | false,
+  "note": "<one short sentence>"
+}`;
+
+  try {
+    const response = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 120,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "image",
+              source: { type: "base64", media_type: "image/png", data: screenshot.toString("base64") },
+            },
+            { type: "text", text: prompt },
+          ],
+        },
+      ],
+    });
+
+    const text = response.content.find((b) => b.type === "text")?.text ?? "";
+    console.log("[trendline-presence] raw:", text.trim());
+
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return { visible: false, note: "parse failed" };
+    }
+
+    const raw = JSON.parse(jsonMatch[0]) as {
+      visible?: boolean;
+      note?: string;
+    };
+
+    return {
+      visible: raw.visible === true,
+      note: typeof raw.note === "string" ? raw.note : "",
+    };
+  } catch (err) {
+    console.error("[trendline-presence] error:", err);
+    return { visible: false, note: "presence check failed" };
   }
 }
 

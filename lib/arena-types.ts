@@ -37,7 +37,7 @@ export type Agent = {
 export type Market = {
   symbol: string;
   displayName: string;
-  assetClass: "commodity" | "forex";
+  assetClass: "commodity" | "forex" | "synthetic";
   price: number;
   changePercent: number;
   dailyRange: string;

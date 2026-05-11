@@ -1,0 +1,962 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gildore Arena - Grant and Intro Pitch Deck</title>
+  <style>
+    :root {
+      --c-bg: #0c1825;
+      --c-bg-alt: #122235;
+      --c-bg-card: #16263a;
+      --c-surface: #1e324d;
+      --c-border: rgba(255, 255, 255, 0.1);
+      --c-primary: #f97316;
+      --c-primary-dim: rgba(249, 115, 22, 0.15);
+      --c-accent: #38bdf8;
+      --c-accent-dim: rgba(56, 189, 248, 0.14);
+      --c-danger: #ef4444;
+      --c-warning: #f59e0b;
+      --c-text: #f8fafc;
+      --c-text-secondary: rgba(248, 250, 252, 0.72);
+      --c-text-muted: rgba(248, 250, 252, 0.46);
+      --f-hero: 88px;
+      --f-h1: 58px;
+      --f-h2: 42px;
+      --f-h3: 30px;
+      --f-body: 25px;
+      --f-small: 18px;
+      --f-caption: 14px;
+      --font-display: Inter, -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-mono: "JetBrains Mono", "SF Mono", Consolas, monospace;
+      --s-xs: 8px;
+      --s-sm: 16px;
+      --s-md: 28px;
+      --s-lg: 42px;
+      --s-xl: 56px;
+      --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      height: 100%;
+      overflow: hidden;
+      background: var(--c-bg);
+      color: var(--c-text);
+      font-family: var(--font-display);
+    }
+
+    body {
+      min-height: 100vh;
+    }
+
+    .deck {
+      width: 100vw;
+      height: 100vh;
+      position: relative;
+      overflow: hidden;
+      background: var(--c-bg);
+    }
+
+    .slide {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 72px 88px 118px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.45s var(--ease-out);
+      background: transparent;
+    }
+
+    .slide.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .slide.active .animate-in {
+      animation: slideUp 0.55s var(--ease-out) both;
+    }
+
+    .slide.active .animate-in:nth-child(2) { animation-delay: 0.06s; }
+    .slide.active .animate-in:nth-child(3) { animation-delay: 0.12s; }
+    .slide.active .animate-in:nth-child(4) { animation-delay: 0.18s; }
+    .slide.active .animate-in:nth-child(5) { animation-delay: 0.24s; }
+    .slide.active .animate-in:nth-child(6) { animation-delay: 0.3s; }
+
+    @keyframes slideUp {
+      from {
+        opacity: 0;
+        transform: translateY(18px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .hero {
+      font-size: var(--f-hero);
+      line-height: 1.02;
+      letter-spacing: -0.04em;
+      font-weight: 850;
+    }
+
+    .h1 {
+      font-size: var(--f-h1);
+      line-height: 1.08;
+      letter-spacing: -0.03em;
+      font-weight: 780;
+    }
+
+    .h2 {
+      font-size: var(--f-h2);
+      line-height: 1.15;
+      letter-spacing: -0.02em;
+      font-weight: 720;
+    }
+
+    .h3 {
+      font-size: var(--f-h3);
+      line-height: 1.25;
+      font-weight: 650;
+    }
+
+    .body {
+      font-size: var(--f-body);
+      line-height: 1.45;
+      color: var(--c-text-secondary);
+    }
+
+    .small {
+      font-size: var(--f-small);
+      line-height: 1.45;
+      color: var(--c-text-secondary);
+    }
+
+    .caption {
+      font-size: var(--f-caption);
+      text-transform: uppercase;
+      letter-spacing: 0.18em;
+      color: var(--c-text-muted);
+      font-weight: 700;
+    }
+
+    .text-primary { color: var(--c-primary); }
+    .text-accent { color: var(--c-accent); }
+    .text-danger { color: var(--c-danger); }
+    .text-muted { color: var(--c-text-muted); }
+    .mono { font-family: var(--font-mono); }
+
+    .divider {
+      width: 74px;
+      height: 4px;
+      background: var(--c-primary);
+      border-radius: 999px;
+      margin: 18px 0 26px;
+      opacity: 0.8;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: var(--s-lg);
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: var(--s-md);
+    }
+
+    .grid-4 {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: var(--s-sm);
+    }
+
+    .stack-sm { display: flex; flex-direction: column; gap: var(--s-sm); }
+    .stack-md { display: flex; flex-direction: column; gap: var(--s-md); }
+    .stack-lg { display: flex; flex-direction: column; gap: var(--s-lg); }
+    .row {
+      display: flex;
+      align-items: center;
+      gap: var(--s-md);
+    }
+
+    .card {
+      background: rgba(22, 38, 58, 0.86);
+      border: 1px solid var(--c-border);
+      border-radius: 20px;
+      padding: 28px;
+      backdrop-filter: blur(10px);
+    }
+
+    .metric-card {
+      background: rgba(18, 34, 53, 0.9);
+      border: 1px solid var(--c-border);
+      border-radius: 20px;
+      padding: 28px 24px;
+    }
+
+    .metric-value {
+      font-size: 54px;
+      line-height: 1;
+      font-weight: 850;
+      letter-spacing: -0.05em;
+      color: var(--c-text);
+      margin-bottom: 8px;
+    }
+
+    .metric-label {
+      font-size: 17px;
+      line-height: 1.35;
+      color: var(--c-text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-weight: 700;
+    }
+
+    .metric-note {
+      font-size: 16px;
+      line-height: 1.4;
+      color: var(--c-text-secondary);
+      margin-top: 10px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 14px;
+      border-radius: 999px;
+      border: 1px solid var(--c-border);
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-weight: 700;
+      width: fit-content;
+    }
+
+    .badge-primary {
+      color: var(--c-primary);
+      background: var(--c-primary-dim);
+      border-color: rgba(249, 115, 22, 0.28);
+    }
+
+    .badge-accent {
+      color: var(--c-accent);
+      background: var(--c-accent-dim);
+      border-color: rgba(56, 189, 248, 0.24);
+    }
+
+    .bullets {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      list-style: none;
+    }
+
+    .bullets li {
+      position: relative;
+      padding-left: 24px;
+      font-size: 25px;
+      line-height: 1.35;
+      color: var(--c-text-secondary);
+    }
+
+    .bullets li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 13px;
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: var(--c-primary);
+      box-shadow: 0 0 0 5px rgba(249, 115, 22, 0.12);
+    }
+
+    .hero-layout {
+      display: grid;
+      grid-template-columns: 1.08fr 0.92fr;
+      gap: var(--s-lg);
+      align-items: center;
+    }
+
+    .screenshot-frame {
+      border-radius: 24px;
+      border: 1px solid var(--c-border);
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.03);
+      min-height: 360px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 24px 90px rgba(0, 0, 0, 0.25);
+    }
+
+    .screenshot-frame img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .comparison-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 18px;
+      margin-top: 8px;
+    }
+
+    .comparison-grid .card {
+      min-height: 250px;
+    }
+
+    .phase-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 18px;
+    }
+
+    .phase-step {
+      border-left: 3px solid var(--c-primary);
+      padding-left: 18px;
+    }
+
+    .footnote {
+      position: absolute;
+      left: 88px;
+      right: 88px;
+      bottom: 66px;
+      font-size: 13px;
+      line-height: 1.35;
+      color: var(--c-text-muted);
+    }
+
+    .slide-index {
+      position: absolute;
+      right: 88px;
+      bottom: 30px;
+      font-size: 13px;
+      color: var(--c-text-muted);
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .notes {
+      position: absolute;
+      left: 88px;
+      right: 88px;
+      bottom: 92px;
+      padding: 14px 16px;
+      border-radius: 14px;
+      border: 1px solid rgba(56, 189, 248, 0.18);
+      background: rgba(7, 14, 24, 0.88);
+      color: var(--c-text-secondary);
+      font-size: 14px;
+      line-height: 1.4;
+      display: none;
+    }
+
+    .notes strong {
+      color: var(--c-accent);
+    }
+
+    .show-notes .notes {
+      display: block;
+    }
+
+    .controls {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      display: flex;
+      gap: 10px;
+      z-index: 10;
+    }
+
+    .controls button {
+      border: 1px solid var(--c-border);
+      background: rgba(7, 14, 24, 0.82);
+      color: var(--c-text-secondary);
+      border-radius: 999px;
+      padding: 10px 14px;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+
+    .controls button:hover {
+      color: var(--c-text);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    .callout {
+      padding: 20px 22px;
+      border-radius: 18px;
+      background: rgba(249, 115, 22, 0.08);
+      border: 1px solid rgba(249, 115, 22, 0.22);
+    }
+
+    .warning {
+      padding: 18px 20px;
+      border-radius: 18px;
+      background: rgba(245, 158, 11, 0.1);
+      border: 1px solid rgba(245, 158, 11, 0.24);
+      color: var(--c-text-secondary);
+      font-size: 18px;
+      line-height: 1.45;
+    }
+
+    .source-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      font-size: 16px;
+      line-height: 1.45;
+      color: var(--c-text-secondary);
+    }
+
+    a {
+      color: inherit;
+      text-decoration-color: rgba(56, 189, 248, 0.45);
+    }
+
+    @media (max-width: 1280px) {
+      .hero-layout,
+      .grid-2,
+      .grid-3,
+      .grid-4,
+      .comparison-grid,
+      .phase-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .slide {
+        padding: 44px 32px 120px;
+      }
+
+      .hero {
+        font-size: 54px;
+      }
+
+      .h1 {
+        font-size: 40px;
+      }
+
+      .body,
+      .bullets li {
+        font-size: 20px;
+      }
+
+      .footnote,
+      .notes {
+        left: 32px;
+        right: 32px;
+      }
+
+      .slide-index {
+        right: 32px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="controls">
+    <button type="button" id="prevBtn">Prev</button>
+    <button type="button" id="nextBtn">Next</button>
+    <button type="button" id="notesBtn">Notes</button>
+  </div>
+
+  <main class="deck" id="deck">
+    <section class="slide active">
+      <div class="hero-layout">
+        <div class="stack-lg">
+          <div class="badge badge-primary animate-in">Hackathon + Grant Deck</div>
+          <div class="stack-sm animate-in">
+            <div class="caption">Gildore Arena</div>
+            <h1 class="hero">You can fire your <span class="text-primary">fund manager.</span></h1>
+          </div>
+          <p class="body animate-in">
+            Gildore Arena lets users follow real-time trading agents with visible strategy logic,
+            compare them on a public weekly leaderboard, and eventually subscribe to or predict
+            which agent finishes on top.
+          </p>
+          <div class="row animate-in">
+            <div class="badge badge-accent">Live demo exists</div>
+            <div class="badge">2 working agents</div>
+            <div class="badge">Solana settlement roadmap</div>
+          </div>
+          <p class="small animate-in">
+            Goal: win an ecosystem grant and secure intros to Solana teams working on perps,
+            prediction rails, and onchain consumer finance.
+          </p>
+        </div>
+        <div class="screenshot-frame animate-in">
+          <img src="public/landing_image_html_seo.png" alt="Gildore Arena preview" />
+        </div>
+      </div>
+      <div class="notes">
+        <strong>Speaking note:</strong> Open fast: "Retail traders lose because humans hesitate, sleep, panic,
+        and hide mistakes. We built an arena where strategies stay on, performance is visible, and users can back the best agent."
+      </div>
+      <div class="slide-index">01 / 10</div>
+    </section>
+
+    <section class="slide">
+      <div class="stack-md">
+        <div class="badge badge-primary animate-in">Problem</div>
+        <div class="animate-in">
+          <h2 class="h1">Retail trading is still driven by <span class="text-primary">fatigue, emotion, and opacity.</span></h2>
+          <div class="divider"></div>
+        </div>
+        <div class="grid-2">
+          <div class="card animate-in">
+            <h3 class="h3">What breaks today</h3>
+            <ul class="bullets" style="margin-top: 18px;">
+              <li>Humans miss entries while offline.</li>
+              <li>Emotion ruins disciplined execution.</li>
+              <li>Signal groups hide process and accountability.</li>
+              <li>Fund managers feel expensive and opaque.</li>
+            </ul>
+          </div>
+          <div class="card animate-in">
+            <h3 class="h3">What users actually want</h3>
+            <ul class="bullets" style="margin-top: 18px;">
+              <li>Strategies that stay active 24/7.</li>
+              <li>A visible trail behind every decision.</li>
+              <li>A simple way to compare winners weekly.</li>
+              <li>A path from paper trust to verifiable performance.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="notes">
+        <strong>Speaking note:</strong> Keep this personal. Do not say "the trading market is large." Say
+        "people lose because they cannot execute with machine discipline, and most alternatives still ask them to trust a black box."
+        <br />
+        <strong>Objection prep:</strong> If asked whether this is "just another signal app," answer that the wedge is not alerts, it is a visible strategy arena with public state and eventually onchain settlement.
+      </div>
+      <div class="slide-index">02 / 10</div>
+    </section>
+
+    <section class="slide">
+      <div class="stack-md">
+        <div class="badge badge-primary animate-in">Why Now</div>
+        <div class="animate-in">
+          <h2 class="h1">The rails for <span class="text-accent">internet-speed trading products</span> are finally here.</h2>
+          <div class="divider"></div>
+        </div>
+        <div class="grid-4">
+          <div class="metric-card animate-in">
+            <div class="metric-value">$5.78B</div>
+            <div class="metric-label">Solana DeFi TVL</div>
+            <div class="metric-note">Current chain depth for financial apps.</div>
+          </div>
+          <div class="metric-card animate-in">
+            <div class="metric-value">$2.34B</div>
+            <div class="metric-label">Perps volume / 24h</div>
+            <div class="metric-note">Evidence that trading demand is already native on Solana.</div>
+          </div>
+          <div class="metric-card animate-in">
+            <div class="metric-value">2.13M</div>
+            <div class="metric-label">Active addresses / 24h</div>
+            <div class="metric-note">The audience is already on-chain.</div>
+          </div>
+          <div class="metric-card animate-in">
+            <div class="metric-value">150ms</div>
+            <div class="metric-label">Target finality</div>
+            <div class="metric-note">Alpenglow is designed for near-instant responsiveness.</div>
+          </div>
+        </div>
+        <div class="callout animate-in">
+          <p class="body">
+            The shift is not "AI is hot." The shift is that trading agents, public leaderboards,
+            prediction markets, and low-latency settlement can now live in one ecosystem instead of four disconnected products.
+          </p>
+        </div>
+      </div>
+      <div class="footnote">
+        Sources current as of May 11, 2026: DefiLlama Solana chain page for TVL, perps volume, and active addresses;
+        Solana Foundation and Anza materials for Alpenglow and sub-150ms target finality.
+      </div>
+      <div class="notes">
+        <strong>Speaking note:</strong> The timing argument is that Solana is becoming fast enough for products that feel like live markets rather than slow crypto dashboards.
+      </div>
+      <div class="slide-index">03 / 10</div>
+    </section>
+
+    <section class="slide">
+      <div class="stack-md">
+        <div class="badge badge-primary animate-in">Solution</div>
+        <div class="animate-in">
+          <h2 class="h1">Gildore Arena is a <span class="text-primary">competitive trading workspace</span> for real-time agents.</h2>
+          <div class="divider"></div>
+        </div>
+        <div class="grid-2">
+          <div class="stack-md animate-in">
+            <p class="body">
+              Instead of asking users to trust one "expert," Gildore Arena turns strategies into a visible competition.
+              Users can inspect what each agent is seeing, what setup it is waiting for, and which agent is leading by week-end.
+            </p>
+            <ul class="bullets">
+              <li>Agents scan structure first, not hype.</li>
+              <li>News is treated as confluence, not noise.</li>
+              <li>Every watchlist, idea, and position is logged as public state.</li>
+              <li>Performance is designed to become subscription- and market-ready.</li>
+            </ul>
+          </div>
+          <div class="grid-2 animate-in">
+            <div class="card">
+              <div class="caption">Agent 01</div>
+              <h3 class="h3">Auron</h3>
+              <p class="small">Fibonacci trend continuation</p>
+            </div>
+            <div class="card">
+              <div class="caption">Agent 02</div>
+              <h3 class="h3">Kairos</h3>
+              <p class="small">Third-touch trendline</p>
+            </div>
+            <div class="card" style="grid-column: span 2;">
+              <div class="caption">Core product thesis</div>
+              <p class="small">
+                The best trading product is not a black-box bot. It is a transparent arena where strategies leave a visible trail before money ever touches the market.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="notes">
+        <strong>Speaking note:</strong> Say "arena," "leaderboard," and "visible trail" repeatedly. That is the memory hook.
+      </div>
+      <div class="slide-index">04 / 10</div>
+    </section>
+
+    <section class="slide">
+      <div class="stack-md">
+        <div class="badge badge-primary animate-in">Demo + Product</div>
+        <div class="animate-in">
+          <h2 class="h1">Already working as a <span class="text-accent">research-grade live prototype.</span></h2>
+          <div class="divider"></div>
+        </div>
+        <div class="hero-layout">
+          <div class="screenshot-frame animate-in">
+            <img src="public/landing_image_html_seo.png" alt="Gildore Arena dashboard preview" />
+          </div>
+          <div class="stack-md animate-in">
+            <div class="card">
+              <h3 class="h3">What exists today</h3>
+              <ul class="bullets" style="margin-top: 16px;">
+                <li>Live Loom demo of the product.</li>
+                <li>Two active strategy agents in the arena.</li>
+                <li>Browser-assisted chart inspection flow.</li>
+                <li>Realtime state stored and streamed through Convex.</li>
+              </ul>
+            </div>
+            <div class="card">
+              <h3 class="h3">Proof beyond slides</h3>
+              <ul class="bullets" style="margin-top: 16px;">
+                <li>Backtests already exist.</li>
+                <li>Large screenshot evidence archive exists.</li>
+                <li>Public weekly comparison is core to the UX.</li>
+              </ul>
+            </div>
+            <p class="small">
+              Demo link: <a href="https://www.loom.com/share/1dabfcc459384b2896bf89818301747a">loom.com/share/1dabfcc459384b2896bf89818301747a</a>
+            </p>
+          </div>
+        </div>
+      </div>
+      <div class="notes">
+        <strong>Speaking note:</strong> Spend most of the live pitch here. Judges care more that the system feels real than that the deck sounds clever.
+      </div>
+      <div class="slide-index">05 / 10</div>
+    </section>
+
+    <section class="slide">
+      <div class="stack-md">
+        <div class="badge badge-primary animate-in">Why Solana</div>
+        <div class="animate-in">
+          <h2 class="h1">The full vision only works when <span class="text-primary">performance, subscriptions, and prediction settle onchain.</span></h2>
+          <div class="divider"></div>
+        </div>
+        <div class="phase-grid">
+          <div class="card animate-in">
+            <div class="caption">Now</div>
+            <div class="phase-step">
+              <h3 class="h3">Visible agent arena</h3>
+              <p class="small">
+                Strategy logic, watchlists, and paper-trading state are already exposed as a product users can inspect.
+              </p>
+            </div>
+          </div>
+          <div class="card animate-in">
+            <div class="caption">Next</div>
+            <div class="phase-step">
+              <h3 class="h3">Onchain subscriptions + records</h3>
+              <p class="small">
+                Users subscribe to agents, and performance history becomes verifiable instead of screenshot-based.
+              </p>
+            </div>
+          </div>
+          <div class="card animate-in">
+            <div class="caption">Then</div>
+            <div class="phase-step">
+              <h3 class="h3">Perps + prediction markets</h3>
+              <p class="small">
+                Users can back the best agent directly, and markets can price which agent wins the week.
+              </p>
+            </div>
+          </div>
+        </div>
+        <div class="warning animate-in">
+          Honest version: the Solana-native wedge is <span class="text-primary">not fully shipped yet.</span>
+          That is exactly why this is a good grant-stage project. The prototype proves the UX and agent loop first,
+          while the grant funds the move into verifiable Solana rails.
+        </div>
+      </div>
+      <div class="notes">
+        <strong>Speaking note:</strong> Do not overclaim. Say clearly: "Today the arena is live. The grant accelerates the move from visible state to verifiable onchain financial products."
+      </div>
+      <div class="slide-index">06 / 10</div>
+    </section>
+
+    <section class="slide">
+      <div class="stack-md">
+        <div class="badge badge-primary animate-in">Ecosystem Impact</div>
+        <div class="animate-in">
+          <h2 class="h1">Gildore Arena can become a <span class="text-accent">consumer gateway</span> into Solana perps, prediction, and social finance.</h2>
+          <div class="divider"></div>
+        </div>
+        <div class="grid-3">
+          <div class="card animate-in">
+            <h3 class="h3">For users</h3>
+            <p class="small" style="margin-top: 14px;">
+              A more intuitive entry point than raw exchanges: watch agents, compare outcomes, then choose what to back.
+            </p>
+          </div>
+          <div class="card animate-in">
+            <h3 class="h3">For builders</h3>
+            <p class="small" style="margin-top: 14px;">
+              A new surface area for integrations across perps venues, wallets, prediction rails, and onchain subscription tools.
+            </p>
+          </div>
+          <div class="card animate-in">
+            <h3 class="h3">For Solana</h3>
+            <p class="small" style="margin-top: 14px;">
+              A product narrative that combines AI agents, public competition, and internet-speed capital markets in one consumer-friendly loop.
+            </p>
+          </div>
+        </div>
+        <div class="callout animate-in">
+          <p class="body">
+            Grant fit: this is not only a trading app. It is a way to turn agent performance into a reusable public primitive for subscriptions,
+            reputation, and prediction on Solana.
+          </p>
+        </div>
+      </div>
+      <div class="notes">
+        <strong>Speaking note:</strong> Grant reviewers care less about "how big this startup gets" and more about whether it makes Solana more useful. Anchor on reusable rails and consumer pull.
+      </div>
+      <div class="slide-index">07 / 10</div>
+    </section>
+
+    <section class="slide">
+      <div class="stack-md">
+        <div class="badge badge-primary animate-in">Traction</div>
+        <div class="animate-in">
+          <h2 class="h1">Strongest proof today: <span class="text-primary">the product works end-to-end.</span></h2>
+          <div class="divider"></div>
+        </div>
+        <div class="grid-4">
+          <div class="metric-card animate-in">
+            <div class="metric-value">1</div>
+            <div class="metric-label">Live demo</div>
+            <div class="metric-note">Not a concept video. A working walkthrough exists now.</div>
+          </div>
+          <div class="metric-card animate-in">
+            <div class="metric-value">2</div>
+            <div class="metric-label">Active agents</div>
+            <div class="metric-note">Distinct live strategy identities in one arena.</div>
+          </div>
+          <div class="metric-card animate-in">
+            <div class="metric-value">11</div>
+            <div class="metric-label">Tracked markets</div>
+            <div class="metric-note">Current repo state covers metals, FX, and synthetic indices.</div>
+          </div>
+          <div class="metric-card animate-in">
+            <div class="metric-value">TBD</div>
+            <div class="metric-label">Users / waitlist</div>
+            <div class="metric-note">Not claimed yet. Should be added once measured.</div>
+          </div>
+        </div>
+        <div class="warning animate-in">
+          Honest traction framing: pre-user and pre-revenue is acceptable at grant stage if the technical execution is real.
+          The next milestone is not "go viral." It is proving that users want to follow, compare, and eventually back these agents.
+        </div>
+      </div>
+      <div class="notes">
+        <strong>Speaking note:</strong> Do not fake adoption numbers. Present the working demo as the strongest current evidence.
+        <br />
+        <strong>Objection prep:</strong> If asked "where are the users?", answer that this is exactly what the grant unlocks: turning a strong prototype into a measured pilot with verifiable demand.
+      </div>
+      <div class="slide-index">08 / 10</div>
+    </section>
+
+    <section class="slide">
+      <div class="stack-md">
+        <div class="badge badge-primary animate-in">Landscape</div>
+        <div class="animate-in">
+          <h2 class="h1">We sit between <span class="text-accent">copy trading, signal products, and prediction markets</span> without being identical to any of them.</h2>
+          <div class="divider"></div>
+        </div>
+        <div class="comparison-grid">
+          <div class="card animate-in">
+            <div class="caption">Current substitutes</div>
+            <h3 class="h3" style="margin-top: 8px;">Fund managers + signal groups</h3>
+            <p class="small" style="margin-top: 14px;">
+              High trust requirement. Process is usually hidden. Little public weekly competition.
+            </p>
+          </div>
+          <div class="card animate-in">
+            <div class="caption">Adjacent products</div>
+            <h3 class="h3" style="margin-top: 8px;">eToro / Bybit copy trading</h3>
+            <p class="small" style="margin-top: 14px;">
+              Lets users mirror traders, but the identity is the trader, not the inspectable strategy arena.
+            </p>
+          </div>
+          <div class="card animate-in">
+            <div class="caption">Future adjacency</div>
+            <h3 class="h3" style="margin-top: 8px;">Polymarket / Kalshi</h3>
+            <p class="small" style="margin-top: 14px;">
+              Great at market pricing, but not designed around live trading agents competing for attention and subscriptions.
+            </p>
+          </div>
+        </div>
+        <div class="callout animate-in">
+          <p class="body">
+            Positioning: Gildore Arena turns agent performance into a spectator sport first, then a financial product.
+          </p>
+        </div>
+      </div>
+      <div class="notes">
+        <strong>Speaking note:</strong> This slide is about category clarity, not claiming perfect uniqueness. Say the incumbents solve adjacent jobs, but none combine visible strategy logic, weekly competition, and Solana-native settlement.
+      </div>
+      <div class="slide-index">09 / 10</div>
+    </section>
+
+    <section class="slide">
+      <div class="stack-md">
+        <div class="badge badge-primary animate-in">Ask</div>
+        <div class="animate-in">
+          <h2 class="h1">Use a grant to turn the arena into a <span class="text-primary">verifiable Solana product.</span></h2>
+          <div class="divider"></div>
+        </div>
+        <div class="grid-2">
+          <div class="stack-md animate-in">
+            <div class="card">
+              <h3 class="h3">Proposed ask</h3>
+              <p class="body" style="margin-top: 14px;">
+                <span class="text-primary">$40K-$60K ecosystem grant</span> plus intros to Solana teams in perps,
+                prediction infrastructure, and onchain consumer products.
+              </p>
+              <p class="small" style="margin-top: 14px;">
+                This amount is a proposed range because the exact grant number was not provided yet.
+              </p>
+            </div>
+            <div class="card">
+              <h3 class="h3">90-day delivery plan</h3>
+              <ul class="bullets" style="margin-top: 16px;">
+                <li>Ship verifiable agent performance records.</li>
+                <li>Launch early subscription flow for agent access.</li>
+                <li>Design first weekly "who wins" market prototype.</li>
+                <li>Run a measured pilot and collect user demand signals.</li>
+              </ul>
+            </div>
+          </div>
+          <div class="stack-md animate-in">
+            <div class="card">
+              <h3 class="h3">What success looks like</h3>
+              <ul class="bullets" style="margin-top: 16px;">
+                <li>A public agent leaderboard users can trust.</li>
+                <li>A credible Solana-native wedge, not just a frontend demo.</li>
+                <li>Partner conversations with perps and prediction teams.</li>
+                <li>A stronger case for seed or strategic follow-on support.</li>
+              </ul>
+            </div>
+            <div class="card">
+              <h3 class="h3">Links to include before presenting</h3>
+              <div class="source-list" style="margin-top: 14px;">
+                <div>Demo: <a href="https://www.loom.com/share/1dabfcc459384b2896bf89818301747a">Loom walkthrough</a></div>
+                <div>Code: add your GitHub repository URL</div>
+                <div>Contact: add founder email, X, or Telegram</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="notes">
+        <strong>Speaking note:</strong> Ask for money and intros in the same sentence. Grant reviewers can fund the build, and intros accelerate distribution.
+        <br />
+        <strong>Objection prep:</strong> If they push on the grant size, say the scope can scale down, but the priority is getting to verifiable onchain records and one working subscription path.
+      </div>
+      <div class="slide-index">10 / 10</div>
+    </section>
+  </main>
+
+  <script>
+    const slides = Array.from(document.querySelectorAll(".slide"));
+    const deck = document.getElementById("deck");
+    const prevBtn = document.getElementById("prevBtn");
+    const nextBtn = document.getElementById("nextBtn");
+    const notesBtn = document.getElementById("notesBtn");
+    let index = 0;
+
+    function renderSlide() {
+      slides.forEach((slide, slideIndex) => {
+        slide.classList.toggle("active", slideIndex === index);
+      });
+    }
+
+    function goNext() {
+      index = (index + 1) % slides.length;
+      renderSlide();
+    }
+
+    function goPrev() {
+      index = (index - 1 + slides.length) % slides.length;
+      renderSlide();
+    }
+
+    prevBtn.addEventListener("click", goPrev);
+    nextBtn.addEventListener("click", goNext);
+    notesBtn.addEventListener("click", () => {
+      deck.classList.toggle("show-notes");
+    });
+
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowRight" || event.key === "PageDown" || event.key === " ") {
+        event.preventDefault();
+        goNext();
+      }
+      if (event.key === "ArrowLeft" || event.key === "PageUp") {
+        event.preventDefault();
+        goPrev();
+      }
+      if (event.key.toLowerCase() === "n") {
+        deck.classList.toggle("show-notes");
+      }
+    });
+  </script>
+</body>
+</html>

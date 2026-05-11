@@ -192,21 +192,6 @@ function resolveBrowserReviewTarget(args: {
   marketSymbol: string;
   timeframe: "15m" | "1h" | "4h";
 }) {
-  const forexMetals = ["XAG/USD", "XAU/USD", "EUR/USD"];
-  if (forexMetals.includes(args.marketSymbol)) {
-    // Forex and metals markets are closed on weekends. Fall back to VIX10 so
-    // the browser session still has a live chart to analyse.
-    const dayOfWeek = new Date().getUTCDay(); // 0 = Sunday, 6 = Saturday
-    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-    if (isWeekend) {
-      return {
-        browserTargetSymbol: "Volatility 10 (1s) Index",
-        browserTargetTimeframe: "4h",
-        reason: "Weekend fallback — metals/FX session closed, using VIX10 as a live reference chart.",
-      };
-    }
-  }
-
   return {
     browserTargetSymbol: args.marketSymbol,
     browserTargetTimeframe: args.timeframe,
@@ -295,6 +280,7 @@ export const getArenaSnapshot = query({
         (row) => row.capturedAt,
       ).map((row) => ({
         ...row,
+        structureVerdict: row.structureVerdict ?? "none",
         structureStatus: row.structureStatus ?? "none",
       })),
     };
@@ -1290,6 +1276,12 @@ export const persistVisionDecision = mutation({
     marketSymbol: v.string(),
     regime: v.union(v.literal("bullish"), v.literal("bearish"), v.literal("mixed")),
     verdict: v.union(v.literal("valid"), v.literal("staged"), v.literal("invalid"), v.literal("reject")),
+    structureVerdict: v.union(
+      v.literal("drawable"),
+      v.literal("watch_future_touch"),
+      v.literal("broken"),
+      v.literal("none"),
+    ),
     direction: v.union(v.literal("long"), v.literal("short"), v.literal("none")),
     structureStatus: v.union(
       v.literal("clean"),
@@ -1344,6 +1336,7 @@ export const persistVisionDecision = mutation({
     const significantChange =
       !existing ||
       existing.regime !== args.regime ||
+      existing.structureVerdict !== args.structureVerdict ||
       existing.direction !== args.direction ||
       existing.structureStatus !== args.structureStatus ||
       existing.verdict !== args.verdict ||
@@ -1385,6 +1378,78 @@ export const updateAgentDisplayNames = mutation({
         .unique();
       if (agent) {
         await ctx.db.patch(agent._id, display);
+        updated += 1;
+      }
+    }
+    return { updated };
+  },
+});
+
+export const addMissingMarkets = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const newMarkets = [
+      { symbol: "GBP/USD", displayName: "Pound / US Dollar", assetClass: "forex", price: 1.2734, changePercent: 0.08, dailyRange: "1.2698 - 1.2751", sessionBias: "mixed" },
+      { symbol: "USD/JPY", displayName: "US Dollar / Yen", assetClass: "forex", price: 153.42, changePercent: -0.14, dailyRange: "152.88 - 153.74", sessionBias: "mixed" },
+      { symbol: "Volatility 10 Index", displayName: "Volatility 10 Index", assetClass: "synthetic", price: 9842.3, changePercent: 0.22, dailyRange: "9710.0 - 9890.0", sessionBias: "mixed" },
+      { symbol: "Volatility 25 Index", displayName: "Volatility 25 Index", assetClass: "synthetic", price: 34182.6, changePercent: -0.41, dailyRange: "33640.0 - 34520.0", sessionBias: "mixed" },
+      { symbol: "Volatility 75 Index", displayName: "Volatility 75 Index", assetClass: "synthetic", price: 102340.5, changePercent: 0.67, dailyRange: "101200.0 - 103100.0", sessionBias: "bullish" },
+      { symbol: "Crash 1000 Index", displayName: "Crash 1000 Index", assetClass: "synthetic", price: 8120.44, changePercent: -0.09, dailyRange: "8040.0 - 8180.0", sessionBias: "mixed" },
+      { symbol: "Boom 500 Index", displayName: "Boom 500 Index", assetClass: "synthetic", price: 19874.2, changePercent: 0.31, dailyRange: "19640.0 - 20010.0", sessionBias: "bullish" },
+    ] as const;
+
+    let added = 0;
+    for (const market of newMarkets) {
+      const existing = await ctx.db
+        .query("markets")
+        .filter((q) => q.eq(q.field("symbol"), market.symbol))
+        .unique();
+      if (!existing) {
+        await ctx.db.insert("markets", {
+          ...market,
+          source: "seed",
+          lastUpdatedAt: Date.now(),
+          newsState: "neutral",
+          newsRationale: "Placeholder. Replace after first live news scan.",
+          newsUpdatedAt: Date.now(),
+        });
+        added += 1;
+      }
+    }
+    return { added };
+  },
+});
+
+export const updateAgentTrackedMarkets = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const marketsByAgent: Record<string, string[]> = {
+      "fibonacci-trend": [
+        "XAU/USD",
+        "XAG/USD",
+        "EUR/USD",
+        "GBP/USD",
+        "Volatility 75 Index",
+        "Volatility 25 Index",
+      ],
+      "third-touch": [
+        "XAG/USD",
+        "XAU/USD",
+        "EUR/USD",
+        "GBP/USD",
+        "Volatility 10 Index",
+        "Crash 1000 Index",
+      ],
+    };
+
+    let updated = 0;
+    for (const [slug, trackedMarkets] of Object.entries(marketsByAgent)) {
+      const agent = await ctx.db
+        .query("agents")
+        .withIndex("by_slug", (q) => q.eq("slug", slug))
+        .unique();
+      if (agent) {
+        await ctx.db.patch(agent._id, { trackedMarkets });
         updated += 1;
       }
     }

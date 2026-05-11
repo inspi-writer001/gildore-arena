@@ -108,7 +108,7 @@ export default defineSchema({
   markets: defineTable({
     symbol: v.string(),
     displayName: v.string(),
-    assetClass: v.union(v.literal("commodity"), v.literal("forex")),
+    assetClass: v.union(v.literal("commodity"), v.literal("forex"), v.literal("synthetic")),
     price: v.number(),
     changePercent: v.number(),
     dailyRange: v.string(),
@@ -310,6 +310,12 @@ export default defineSchema({
     marketSymbol: v.string(),
     regime: v.union(v.literal("bullish"), v.literal("bearish"), v.literal("mixed")),
     verdict: v.union(v.literal("valid"), v.literal("staged"), v.literal("invalid"), v.literal("reject")),
+    structureVerdict: v.optional(v.union(
+      v.literal("drawable"),
+      v.literal("watch_future_touch"),
+      v.literal("broken"),
+      v.literal("none"),
+    )),
     direction: v.union(v.literal("long"), v.literal("short"), v.literal("none")),
     structureStatus: v.optional(v.union(
       v.literal("clean"),
