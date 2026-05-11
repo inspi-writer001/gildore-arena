@@ -873,7 +873,15 @@ const DERIV_SYMBOL_SEARCH: Record<string, { term: string; selectPattern: RegExp;
   "XAG/USD": { term: "xag", selectPattern: /FRXXAGUSD|SILVER|XAG/i, category: "Commodities" },
   "EUR/USD": { term: "eurusd", selectPattern: /EURUSD|EUR\/USD/i, category: "Forex" },
   "GBP/USD": { term: "gbpusd", selectPattern: /GBPUSD|GBP\/USD/i, category: "Forex" },
+  "USD/JPY": { term: "usdjpy", selectPattern: /USDJPY|USD\/JPY/i, category: "Forex" },
+  "NAS100/USD": { term: "nas100", selectPattern: /NAS100|NASDAQ|QQQ/i, category: "Indices" },
+  "US30/USD": { term: "us30", selectPattern: /US30|DOW|DJI/i, category: "Indices" },
+  "Volatility 10 Index": { term: "volatility 10 index", selectPattern: /VOLATILITY\s*10\s*INDEX|R_10(?!\()/i, category: "Derived" },
+  "Volatility 25 Index": { term: "volatility 25 index", selectPattern: /VOLATILITY\s*25\s*INDEX|R_25(?!\()/i, category: "Derived" },
+  "Volatility 75 Index": { term: "volatility 75", selectPattern: /VOLATILITY\s*75\s*INDEX|R_75(?!\()/i, category: "Derived" },
   "Volatility 15 (1s) Index": { term: "volatility 15", selectPattern: /VOLATILITY\s*15\s*\(1S\)|R_15/i, category: "Derived" },
+  "Crash 1000 Index": { term: "crash 1000", selectPattern: /CRASH\s*1000|CRASH1000/i, category: "Derived" },
+  "Boom 500 Index": { term: "boom 500", selectPattern: /BOOM\s*500|BOOM500/i, category: "Derived" },
 };
 
 async function switchDerivSymbol(
