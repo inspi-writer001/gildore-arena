@@ -63,7 +63,7 @@ type ArenaSnapshot = {
     _id: string;
     symbol: string;
     displayName: string;
-    assetClass: "commodity" | "forex";
+    assetClass: "commodity" | "forex" | "synthetic";
     price: number;
     changePercent: number;
     dailyRange: string;
@@ -860,6 +860,12 @@ const surfaceCard =
 const chipClass =
   "inline-flex items-center min-h-[32px] px-3 rounded-full border border-[rgba(18,18,18,0.08)] bg-[rgba(255,255,255,0.88)] text-[rgba(18,18,18,0.48)] text-[11px] font-semibold tracking-[0.14em] uppercase";
 
+const liquidActionShellClass =
+  "relative h-[52px] min-w-[210px] p-0 border-0 rounded-[14px] overflow-hidden cursor-pointer shadow-[inset_0_1px_0_rgba(255,255,255,0.88),inset_0_-1px_0_rgba(0,0,0,0.08)] transition-transform duration-[120ms] hover:-translate-y-px active:scale-[0.985]";
+
+const liquidActionLabelClass =
+  "absolute inset-[6px] z-[2] inline-flex items-center justify-center rounded-[9px] border border-[rgba(255,255,255,0.42)] bg-[rgba(255,255,255,0.16)] px-4 text-[17px] font-medium tracking-[0.02em] !text-[#121212] [text-shadow:0_1px_0_rgba(255,255,255,0.34)] shadow-[inset_0_1px_0_rgba(255,255,255,0.34),inset_0_-1px_0_rgba(255,255,255,0.08)] backdrop-blur-[14px] pointer-events-none font-instrument whitespace-nowrap";
+
 const skelBase =
   "rounded-[6px] bg-gradient-to-r from-[rgba(18,18,18,0.07)] via-[rgba(18,18,18,0.13)] to-[rgba(18,18,18,0.07)] bg-[length:200%_100%] animate-skel-sweep";
 
@@ -875,6 +881,48 @@ function pillClass(state: ConfluenceState) {
 
 function truncateWalletAddress(address: string) {
   return `${address.slice(0, 4)}...${address.slice(-4)}`;
+}
+
+function LiquidActionButton({
+  label,
+  onClick,
+  colorBack,
+  colorTint,
+  type = "button",
+}: {
+  label: string;
+  onClick: () => void;
+  colorBack: string;
+  colorTint: string;
+  type?: "button" | "submit";
+}) {
+  return (
+    <button
+      type={type}
+      className={cn(liquidActionShellClass, "bg-[#f5f5f2]")}
+      onClick={onClick}
+    >
+      <LiquidMetal
+        className="!absolute inset-0 !w-full !h-full pointer-events-none"
+        colorBack={colorBack}
+        colorTint={colorTint}
+        shape="none"
+        repetition={2.6}
+        softness={0.12}
+        shiftRed={0.18}
+        shiftBlue={0.22}
+        distortion={0.08}
+        contour={0.52}
+        angle={70}
+        speed={1}
+        scale={1}
+        fit="cover"
+        width="100%"
+        height="100%"
+      />
+      <span className={liquidActionLabelClass}>{label}</span>
+    </button>
+  );
 }
 
 function WalletChoice({
@@ -1075,6 +1123,8 @@ export default function ArenaDashboard() {
   const isWideWorkspace = true;
   const conjureDitheringSize = 2;
   const didRenameRef = useRef(false);
+  const [isSubscribeModalOpen, setIsSubscribeModalOpen] = useState(false);
+  const [depositAmount, setDepositAmount] = useState("");
 
   // One-time migration: rename agents to mythical names if they still have old names
   useEffect(() => {
@@ -1092,6 +1142,20 @@ export default function ArenaDashboard() {
 
   const selectedAgentSlug = searchParams.get("agent");
   const selectedMarketParam = searchParams.get("market");
+
+  const handleSubscribeSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedAgent || !depositAmount.trim()) {
+      return;
+    }
+
+    console.log("[subscription] Deposit submitted for agent:", {
+      agentId: selectedAgent.id,
+      amount: depositAmount.trim(),
+    });
+    setIsSubscribeModalOpen(false);
+    setDepositAmount("");
+  };
 
   const derived = useMemo(() => {
     if (!snapshot) return null;
@@ -1719,38 +1783,25 @@ export default function ArenaDashboard() {
                       {selectedAgent.timeframe}
                     </span>
                   </div>
-                  <button
-                    type="button"
-                    className="relative h-[52px] w-[210px] p-0 border-0 rounded-[14px] overflow-hidden cursor-pointer bg-[#f5f5f2] shadow-[inset_0_1px_0_rgba(255,255,255,0.88),inset_0_-1px_0_rgba(0,0,0,0.08)] transition-transform duration-[120ms] hover:-translate-y-px active:scale-[0.985]"
-                    onClick={() => {
-                      console.log(
-                        "[prediction] Enter Prediction clicked for agent:",
-                        selectedAgent.id,
-                      );
-                    }}
-                  >
-                    <LiquidMetal
-                      className="!absolute inset-0 !w-full !h-full pointer-events-none"
+                  <div className="flex flex-wrap justify-end gap-3">
+                    <LiquidActionButton
+                      label="Subscribe to trader"
+                      colorBack="#9a6f26"
+                      colorTint="#ffe9a8"
+                      onClick={() => setIsSubscribeModalOpen(true)}
+                    />
+                    <LiquidActionButton
+                      label="Enter Prediction"
                       colorBack="#a9a9ab"
                       colorTint="#ffffff"
-                      shape="none"
-                      repetition={2.6}
-                      softness={0.12}
-                      shiftRed={0.18}
-                      shiftBlue={0.22}
-                      distortion={0.08}
-                      contour={0.52}
-                      angle={70}
-                      speed={1}
-                      scale={1}
-                      fit="cover"
-                      width="100%"
-                      height="100%"
+                      onClick={() => {
+                        console.log(
+                          "[prediction] Enter Prediction clicked for agent:",
+                          selectedAgent.id,
+                        );
+                      }}
                     />
-                    <span className="absolute inset-[6px] z-[2] inline-flex items-center justify-center rounded-[9px] border border-[rgba(255,255,255,0.42)] bg-[rgba(255,255,255,0.16)] px-4 text-[17px] font-medium tracking-[0.02em] !text-[#121212] [text-shadow:0_1px_0_rgba(255,255,255,0.34)] shadow-[inset_0_1px_0_rgba(255,255,255,0.34),inset_0_-1px_0_rgba(255,255,255,0.08)] backdrop-blur-[14px] pointer-events-none font-instrument whitespace-nowrap">
-                      Enter Prediction
-                    </span>
-                  </button>
+                  </div>
                 </div>
               </div>
 
@@ -2400,6 +2451,92 @@ export default function ArenaDashboard() {
           </section>
         ) : null}
       </section>
+      {selectedAgent && isSubscribeModalOpen ? (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center px-5 py-8">
+          <button
+            type="button"
+            aria-label="Close subscribe modal"
+            className="absolute inset-0 bg-[rgba(10,8,4,0.52)] backdrop-blur-[12px]"
+            onClick={() => setIsSubscribeModalOpen(false)}
+          />
+          <div className="relative z-[1] w-full max-w-[540px] overflow-hidden rounded-[28px] border border-[rgba(255,236,176,0.22)] bg-[#120d08] shadow-[0_32px_90px_rgba(0,0,0,0.46)]">
+            <div className="pointer-events-none absolute inset-x-0 top-0 h-[140px] bg-[radial-gradient(circle_at_top,rgba(255,214,120,0.34),transparent_70%)]" />
+            <div className="relative grid gap-6 p-6 sm:p-7">
+              <div className="flex items-start justify-between gap-4">
+                <div className="grid gap-2">
+                  <span className="w-fit rounded-full border border-[rgba(255,223,153,0.18)] bg-[rgba(255,214,120,0.12)] px-3 py-1 font-barlow text-[11px] font-semibold uppercase tracking-[0.16em] text-[#f3d48d]">
+                    Trader vault
+                  </span>
+                  <div>
+                    <h3 className="m-0 font-instrument text-[34px] font-normal leading-[0.92] text-[#fff5de]">
+                      Subscribe to {selectedAgent.name}
+                    </h3>
+                    <p className="mt-3 mb-0 max-w-[42ch] font-inter text-[14px] leading-[1.65] text-[rgba(255,245,222,0.68)]">
+                      Fund this trader with a clean deposit amount and enter
+                      their next trade in the arena&apos;s high-conviction
+                      competition.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[rgba(255,223,153,0.16)] bg-[rgba(255,255,255,0.04)] font-barlow text-[12px] font-semibold uppercase tracking-[0.1em] text-[rgba(255,245,222,0.72)] transition hover:bg-[rgba(255,255,255,0.08)]"
+                  onClick={() => setIsSubscribeModalOpen(false)}
+                >
+                  x
+                </button>
+              </div>
+
+              <form className="grid gap-5" onSubmit={handleSubscribeSubmit}>
+                <div className="grid gap-2">
+                  <label
+                    htmlFor="subscribe-deposit-amount"
+                    className="font-barlow text-[11px] font-semibold uppercase tracking-[0.16em] text-[rgba(255,232,188,0.62)]"
+                  >
+                    Deposit amount
+                  </label>
+                  <div className="grid gap-3 rounded-[22px] border border-[rgba(255,223,153,0.12)] bg-[linear-gradient(180deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+                    <div className="flex items-baseline justify-between gap-3">
+                      <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.14em] text-[rgba(255,232,188,0.45)]">
+                        USDC
+                      </span>
+                      <span className="font-inter text-[13px] text-[rgba(255,245,222,0.42)]">
+                        Live vault preview
+                      </span>
+                    </div>
+                    <input
+                      id="subscribe-deposit-amount"
+                      type="text"
+                      inputMode="decimal"
+                      value={depositAmount}
+                      onChange={(event) => setDepositAmount(event.target.value)}
+                      placeholder="0.00"
+                      className="h-[76px] rounded-[18px] border border-[rgba(255,223,153,0.1)] bg-[rgba(7,5,3,0.56)] px-5 font-instrument text-[36px] font-normal text-[#fff3d7] outline-none transition placeholder:text-[rgba(255,245,222,0.18)] focus:border-[rgba(255,223,153,0.34)] focus:bg-[rgba(13,9,5,0.82)]"
+                    />
+                    <p className="m-0 font-inter text-[13px] leading-[1.6] text-[rgba(255,245,222,0.46)]">
+                      Deposit into the mirrored trader vault and enter the same
+                      trade calls they make.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.14em] text-[rgba(255,232,188,0.45)]">
+                    Trader status · {selectedAgent.status}
+                  </span>
+                  <LiquidActionButton
+                    label="Deposit"
+                    colorBack="#9a6f26"
+                    colorTint="#ffe9a8"
+                    type="submit"
+                    onClick={() => {}}
+                  />
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

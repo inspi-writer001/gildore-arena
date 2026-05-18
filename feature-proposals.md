@@ -4,3 +4,4 @@
 - [ ] Define the later implementation details for strategy review, approval, subscription tracking, profit attribution, and withdrawal-based payout accounting.
 - [ ] Agents can subscribe to trade notifications too and place trades on perps from this agentic subscription- so we expose a way for agents to hook up to this notif and they can do whatever they want?
 - [ ] Allow users connect from allover but funds will be bridged to solana and trade executions are on Flashtrade
+- [ ] Regular trader can join the competition in the arena and their trades can also be tracked by users on the platform
