@@ -4,8 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build1": "cd gildore-arena-vault/target/client/typescript/gildore-vault && pnpm i && cd ../../../../../ && next build",
-    "build": "git submodule update --init --recursive --remote && cd gildore-arena-vault/target/client/typescript/gildore-vault && pnpm i && cd ../../../../../ && next build",
+    "build1": "cd gildore-arena-vault/target/client/typescript/gildore_vault && pnpm i && cd ../../../../../ && next build",
+    "build": "git submodule update --init --recursive --remote && cd gildore-arena-vault/target/client/typescript/gildore_vault && pnpm i && cd ../../../../../ && next build",
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit"
