@@ -1,26 +1,25 @@
 "use client";
 
-import {
-  createContext,
-  useContext,
-  useMemo,
-  useState,
-  type ReactNode,
-} from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { ConvexProvider, ConvexReactClient } from "convex/react";
 import {
   createSolanaRpc,
   createSolanaRpcSubscriptions,
 } from "@solana/kit";
 import {
+  PrivyProvider,
+  useLogin,
+  useLogout,
+  usePrivy,
+} from "@privy-io/react-auth";
+import {
   useWallets,
-  type UiWallet,
-  type UiWalletAccount,
-} from "@wallet-standard/react";
+  type ConnectedStandardSolanaWallet,
+} from "@privy-io/react-auth/solana";
 
 const solanaRpcUrl =
   process.env.NEXT_PUBLIC_SOLANA_RPC_URL ??
-  "https://api.mainnet-beta.solana.com";
+  "https://api.devnet.solana.com";
 const solanaSubscriptionsUrl =
   process.env.NEXT_PUBLIC_SOLANA_RPC_SUBSCRIPTIONS_URL ??
   solanaRpcUrl.replace(/^https:/, "wss:").replace(/^http:/, "ws:");
@@ -29,33 +28,72 @@ const solanaChain = solanaRpcUrl.includes("devnet")
   : solanaRpcUrl.includes("testnet")
     ? "solana:testnet"
     : "solana:mainnet";
+const privyAppId = process.env.NEXT_PUBLIC_PRIVY_APP_ID;
+const privyClientId = process.env.NEXT_PUBLIC_PRIVY_CLIENT_ID;
+const solanaRpc = createSolanaRpc(
+  solanaRpcUrl as Parameters<typeof createSolanaRpc>[0],
+);
+const solanaRpcSubscriptions = createSolanaRpcSubscriptions(
+  solanaSubscriptionsUrl as Parameters<typeof createSolanaRpcSubscriptions>[0],
+);
 
-type SolanaWalletContextValue = {
-  rpc: ReturnType<typeof createSolanaRpc>;
-  rpcSubscriptions: ReturnType<typeof createSolanaRpcSubscriptions>;
+export type SolanaWalletState = {
+  rpc: typeof solanaRpc;
+  rpcSubscriptions: typeof solanaRpcSubscriptions;
   chain: typeof solanaChain;
-  wallets: UiWallet[];
-  selectedWallet: UiWallet | null;
-  selectedAccount: UiWalletAccount | null;
+  ready: boolean;
+  isAuthenticated: boolean;
   isConnected: boolean;
-  setWalletAndAccount: (
-    wallet: UiWallet | null,
-    account: UiWalletAccount | null,
-  ) => void;
+  userEmail: string | null;
+  selectedWallet: ConnectedStandardSolanaWallet | null;
+  selectedAccount: { address: string } | null;
+  wallets: ConnectedStandardSolanaWallet[];
+  login: () => void;
+  logout: () => Promise<void>;
 };
 
-const SolanaWalletContext = createContext<SolanaWalletContextValue | null>(null);
+function selectPreferredWallet(
+  wallets: ConnectedStandardSolanaWallet[],
+): ConnectedStandardSolanaWallet | null {
+  return (
+    wallets.find((wallet) => wallet.standardWallet.name === "Privy") ??
+    wallets.at(0) ??
+    null
+  );
+}
 
-export function useSolanaWallet() {
-  const context = useContext(SolanaWalletContext);
+export function useSolanaWallet(): SolanaWalletState {
+  const { ready, authenticated, user } = usePrivy();
+  const { login } = useLogin();
+  const { logout } = useLogout();
+  const { ready: walletsReady, wallets } = useWallets();
+  const selectedWallet = useMemo(
+    () => selectPreferredWallet(wallets),
+    [wallets],
+  );
+  const userEmail =
+    user?.email?.address ??
+    user?.google?.email ??
+    user?.github?.email ??
+    user?.discord?.email ??
+    null;
 
-  if (!context) {
-    throw new Error(
-      "useSolanaWallet must be used within ConvexClientProvider.",
-    );
-  }
-
-  return context;
+  return {
+    rpc: solanaRpc,
+    rpcSubscriptions: solanaRpcSubscriptions,
+    chain: solanaChain,
+    ready: ready && walletsReady,
+    isAuthenticated: authenticated,
+    isConnected: authenticated && Boolean(selectedWallet),
+    userEmail,
+    selectedWallet,
+    selectedAccount: selectedWallet
+      ? { address: selectedWallet.address }
+      : null,
+    wallets,
+    login: () => login(),
+    logout,
+  };
 }
 
 export default function ConvexClientProvider({
@@ -72,61 +110,39 @@ export default function ConvexClientProvider({
 
     return new ConvexReactClient(url);
   });
-  const [rpc] = useState(() =>
-    createSolanaRpc(solanaRpcUrl as Parameters<typeof createSolanaRpc>[0]),
-  );
-  const [rpcSubscriptions] = useState(() =>
-    createSolanaRpcSubscriptions(
-      solanaSubscriptionsUrl as Parameters<
-        typeof createSolanaRpcSubscriptions
-      >[0],
-    ),
-  );
-  const [selectedWalletName, setSelectedWalletName] = useState<string | null>(
-    null,
-  );
-  const [selectedAccountAddress, setSelectedAccountAddress] = useState<
-    string | null
-  >(null);
-  const discoveredWallets = useWallets();
-  const wallets = useMemo(
-    () =>
-      discoveredWallets.filter((wallet) =>
-        wallet.chains.some((chain) => chain.startsWith("solana:")),
-      ),
-    [discoveredWallets],
-  );
-  const selectedWallet = useMemo(
-    () => wallets.find((wallet) => wallet.name === selectedWalletName) ?? null,
-    [selectedWalletName, wallets],
-  );
-  const selectedAccount = useMemo(
-    () =>
-      selectedWallet?.accounts.find(
-        (account) => account.address === selectedAccountAddress,
-      ) ?? null,
-    [selectedAccountAddress, selectedWallet],
-  );
-  const solanaWalletContextValue = useMemo<SolanaWalletContextValue>(
-    () => ({
-      rpc,
-      rpcSubscriptions,
-      chain: solanaChain,
-      wallets,
-      selectedWallet,
-      selectedAccount,
-      isConnected: Boolean(selectedWallet && selectedAccount),
-      setWalletAndAccount: (wallet, account) => {
-        setSelectedWalletName(wallet?.name ?? null);
-        setSelectedAccountAddress(account?.address ?? null);
-      },
-    }),
-    [rpc, rpcSubscriptions, wallets, selectedWallet, selectedAccount],
-  );
+
+  if (!privyAppId) {
+    throw new Error("NEXT_PUBLIC_PRIVY_APP_ID is not configured.");
+  }
 
   return (
-    <SolanaWalletContext.Provider value={solanaWalletContextValue}>
+    <PrivyProvider
+      appId={privyAppId}
+      clientId={privyClientId}
+      config={{
+        appearance: {
+          theme: "dark",
+          walletChainType: "solana-only",
+          landingHeader: "Enter Gildore Arena",
+          loginMessage: "Create your embedded Solana vault wallet to fund agents.",
+          showWalletLoginFirst: false,
+        },
+        embeddedWallets: {
+          solana: {
+            createOnLogin: "users-without-wallets",
+          },
+        },
+        solana: {
+          rpcs: {
+            [solanaChain]: {
+              rpc: solanaRpc as never,
+              rpcSubscriptions: solanaRpcSubscriptions as never,
+            },
+          },
+        },
+      }}
+    >
       <ConvexProvider client={client}>{children}</ConvexProvider>
-    </SolanaWalletContext.Provider>
+    </PrivyProvider>
   );
 }

@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as agentVault from "../agentVault.js";
 import type * as arena from "../arena.js";
 
 import type {
@@ -17,6 +18,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  agentVault: typeof agentVault;
   arena: typeof arena;
 }>;
 
