@@ -1,14 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAction, useMutation, useQuery } from "convex/react";
-import {
-  useConnect,
-  useDisconnect,
-  type UiWallet,
-} from "@wallet-standard/react";
+import { useSignTransaction } from "@privy-io/react-auth/solana";
 import {
   Activity,
   ArrowLeft,
@@ -31,6 +27,7 @@ import type {
 } from "@/lib/browser-session-runtime";
 import { cn } from "@/lib/utils";
 import { useSolanaWallet } from "@/components/convex-client-provider";
+import { encodeBase64 } from "@/lib/base64";
 import type {
   BrowserSession,
   BrowserSessionEvent,
@@ -889,17 +886,23 @@ function LiquidActionButton({
   colorBack,
   colorTint,
   type = "button",
+  disabled = false,
 }: {
   label: string;
   onClick: () => void;
   colorBack: string;
   colorTint: string;
   type?: "button" | "submit";
+  disabled?: boolean;
 }) {
   return (
     <button
       type={type}
-      className={cn(liquidActionShellClass, "bg-[#f5f5f2]")}
+      disabled={disabled}
+      className={cn(
+        liquidActionShellClass,
+        "bg-[#f5f5f2] disabled:cursor-not-allowed disabled:opacity-60",
+      )}
       onClick={onClick}
     >
       <LiquidMetal
@@ -925,96 +928,70 @@ function LiquidActionButton({
   );
 }
 
-function WalletChoice({
-  wallet,
-  onConnected,
-}: {
-  wallet: UiWallet;
-  onConnected: () => void;
-}) {
-  const { setWalletAndAccount } = useSolanaWallet();
-  const [isConnecting, connect] = useConnect(wallet);
+function formatUnknownError(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
 
-  const handleConnect = async () => {
-    if (isConnecting) {
-      return;
-    }
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof error.message === "string"
+  ) {
+    return error.message;
+  }
 
-    try {
-      const accounts = await connect();
-      const nextAccount = accounts.at(0);
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "cause" in error &&
+    typeof error.cause === "string"
+  ) {
+    return error.cause;
+  }
 
-      if (nextAccount) {
-        setWalletAndAccount(wallet, nextAccount);
-        onConnected();
-      }
-    } catch (error) {
-      console.error(`Failed to connect ${wallet.name}`, error);
-    }
-  };
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "err" in error &&
+    error.err !== null &&
+    error.err !== undefined
+  ) {
+    return formatUnknownError(error.err);
+  }
 
-  return (
-    <button
-      type="button"
-      onClick={handleConnect}
-      disabled={isConnecting}
-      className="flex w-full items-center justify-between rounded-[14px] border border-[rgba(255,255,255,0.16)] bg-[rgba(255,255,255,0.08)] px-3 py-2 text-left transition hover:bg-[rgba(255,255,255,0.14)] disabled:cursor-wait disabled:opacity-70"
-    >
-      <span className="flex items-center gap-2">
-        <span className="flex size-8 items-center justify-center rounded-full bg-[rgba(255,255,255,0.16)] text-[11px] font-semibold uppercase text-[#f7efe7]">
-          {wallet.name.slice(0, 2)}
-        </span>
-        <span className="font-barlow text-[13px] font-semibold tracking-[0.04em] text-[#f7efe7]">
-          {wallet.name}
-        </span>
-      </span>
-      <span className="font-barlow text-[11px] uppercase tracking-[0.14em] text-[rgba(247,239,231,0.72)]">
-        {isConnecting ? "Connecting" : "Connect"}
-      </span>
-    </button>
-  );
-}
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "logs" in error &&
+    Array.isArray(error.logs) &&
+    error.logs.length > 0
+  ) {
+    return error.logs.join(" | ");
+  }
 
-function DisconnectWalletButton({ wallet }: { wallet: UiWallet }) {
-  const { setWalletAndAccount } = useSolanaWallet();
-  const [isDisconnecting, disconnect] = useDisconnect(wallet);
-
-  const handleDisconnect = async () => {
-    try {
-      await disconnect();
-      setWalletAndAccount(null, null);
-    } catch (error) {
-      console.error(`Failed to disconnect ${wallet.name}`, error);
-    }
-  };
-
-  return (
-    <button
-      type="button"
-      onClick={handleDisconnect}
-      disabled={isDisconnecting}
-      className="inline-flex items-center gap-2 rounded-full border border-[rgba(255,255,255,0.18)] px-3 py-1.5 font-barlow text-[11px] font-semibold uppercase tracking-[0.14em] text-[#f7efe7] transition hover:bg-[rgba(255,255,255,0.08)] disabled:cursor-wait disabled:opacity-70"
-    >
-      <LogOut size={14} aria-hidden="true" />
-      {isDisconnecting ? "Disconnecting" : "Disconnect"}
-    </button>
-  );
+  try {
+    const serialized = JSON.stringify(error, null, 2);
+    return serialized === undefined ? String(error) : serialized;
+  } catch {
+    return String(error);
+  }
 }
 
 function SignInCard() {
   const {
-    wallets,
+    ready,
+    isAuthenticated,
     selectedWallet,
     selectedAccount,
+    userEmail,
     isConnected,
-    setWalletAndAccount,
+    login,
+    logout,
   } = useSolanaWallet();
   const [isOpen, setIsOpen] = useState(false);
-
-  const handleClearSelection = () => {
-    setWalletAndAccount(null, null);
-    setIsOpen(false);
-  };
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   return (
     <div
@@ -1056,42 +1033,78 @@ function SignInCard() {
                   Connected
                 </span>
                 <span className="font-barlow text-[14px] font-semibold tracking-[0.04em] text-[#f7efe7]">
-                  {selectedWallet.name}
+                  {selectedWallet.standardWallet.name}
                 </span>
                 <span className="font-mono text-[12px] text-[rgba(247,239,231,0.78)]">
                   {selectedAccount.address}
                 </span>
+                {userEmail ? (
+                  <span className="font-barlow text-[12px] text-[rgba(247,239,231,0.68)]">
+                    {userEmail}
+                  </span>
+                ) : null}
               </div>
               <div className="flex flex-wrap gap-2">
-                <DisconnectWalletButton wallet={selectedWallet} />
                 <button
                   type="button"
-                  onClick={handleClearSelection}
+                  onClick={async () => {
+                    try {
+                      setIsLoggingOut(true);
+                      await logout();
+                      setIsOpen(false);
+                    } catch (error) {
+                      console.error("Failed to disconnect Privy wallet", error);
+                    } finally {
+                      setIsLoggingOut(false);
+                    }
+                  }}
+                  disabled={isLoggingOut}
+                  className="inline-flex items-center gap-2 rounded-full border border-[rgba(255,255,255,0.18)] px-3 py-1.5 font-barlow text-[11px] font-semibold uppercase tracking-[0.14em] text-[#f7efe7] transition hover:bg-[rgba(255,255,255,0.08)] disabled:cursor-wait disabled:opacity-70"
+                >
+                  <LogOut size={14} aria-hidden="true" />
+                  {isLoggingOut ? "Disconnecting" : "Disconnect"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsOpen(false)}
                   className="inline-flex items-center rounded-full border border-[rgba(255,255,255,0.18)] px-3 py-1.5 font-barlow text-[11px] font-semibold uppercase tracking-[0.14em] text-[rgba(247,239,231,0.72)] transition hover:bg-[rgba(255,255,255,0.08)]"
                 >
                   Close
                 </button>
               </div>
             </>
-          ) : wallets.length > 0 ? (
+          ) : ready ? (
             <>
               <p className="font-barlow text-[11px] font-semibold uppercase tracking-[0.14em] text-[rgba(247,239,231,0.68)]">
-                Available wallets
+                Trader Vault
               </p>
-              <div className="grid gap-2">
-                {wallets.map((wallet) => (
-                  <WalletChoice
-                    key={wallet.name}
-                    wallet={wallet}
-                    onConnected={() => setIsOpen(false)}
-                  />
-                ))}
-              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  login();
+                  setIsOpen(false);
+                }}
+                className="flex w-full items-center justify-between rounded-[14px] border border-[rgba(255,255,255,0.16)] bg-[rgba(255,255,255,0.08)] px-3 py-2 text-left transition hover:bg-[rgba(255,255,255,0.14)]"
+              >
+                <span className="flex items-center gap-2">
+                  <span className="flex size-8 items-center justify-center rounded-full bg-[rgba(255,255,255,0.16)] text-[11px] font-semibold uppercase text-[#f7efe7]">
+                    PR
+                  </span>
+                  <span className="font-barlow text-[13px] font-semibold tracking-[0.04em] text-[#f7efe7]">
+                    {isAuthenticated ? "Finish wallet setup" : "Continue with Privy"}
+                  </span>
+                </span>
+                <span className="font-barlow text-[11px] uppercase tracking-[0.14em] text-[rgba(247,239,231,0.72)]">
+                  Enter
+                </span>
+              </button>
+              <p className="font-barlow text-[12px] leading-5 text-[rgba(247,239,231,0.72)]">
+                Privy will create an embedded Solana wallet for agent funding.
+              </p>
             </>
           ) : (
             <p className="font-barlow text-[12px] leading-5 text-[rgba(247,239,231,0.8)]">
-              No Solana wallet detected. Install a Wallet Standard wallet like
-              Phantom or Solflare, then try again.
+              Initializing Privy and your Solana wallet context.
             </p>
           )}
         </div>
@@ -1103,6 +1116,9 @@ function SignInCard() {
 export default function ArenaDashboard() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { rpc, chain, selectedWallet, selectedAccount, isConnected } =
+    useSolanaWallet();
+  const { signTransaction } = useSignTransaction();
   const snapshot = useQuery(api.arena.getArenaSnapshot, {}) as
     | ArenaSnapshot
     | undefined;
@@ -1112,6 +1128,10 @@ export default function ArenaDashboard() {
   const startBrowserReviewSession = useAction(
     api.arena.startBrowserReviewSession,
   );
+  const prepareFundAgentVault = useAction(
+    api.agentVault.prepareFundAgentVault,
+  );
+  const submitFundAgentVault = useAction(api.agentVault.submitFundAgentVault);
   const [isStartingBrowserSession, setIsStartingBrowserSession] =
     useState(false);
   const [revealedConjureSelectionKey, setRevealedConjureSelectionKey] =
@@ -1125,6 +1145,11 @@ export default function ArenaDashboard() {
   const didRenameRef = useRef(false);
   const [isSubscribeModalOpen, setIsSubscribeModalOpen] = useState(false);
   const [depositAmount, setDepositAmount] = useState("");
+  const [isFundingAgent, setIsFundingAgent] = useState(false);
+  const [fundingError, setFundingError] = useState<string | null>(null);
+  const [lastFundingSignature, setLastFundingSignature] = useState<
+    string | null
+  >(null);
 
   // One-time migration: rename agents to mythical names if they still have old names
   useEffect(() => {
@@ -1143,18 +1168,68 @@ export default function ArenaDashboard() {
   const selectedAgentSlug = searchParams.get("agent");
   const selectedMarketParam = searchParams.get("market");
 
-  const handleSubscribeSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+  const handleSubscribeSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!selectedAgent || !depositAmount.trim()) {
       return;
     }
+    if (!selectedWallet || !selectedAccount || !isConnected) {
+      setFundingError("Connect a Solana wallet before funding this agent.");
+      return;
+    }
 
-    console.log("[subscription] Deposit submitted for agent:", {
-      agentId: selectedAgent.id,
-      amount: depositAmount.trim(),
-    });
-    setIsSubscribeModalOpen(false);
-    setDepositAmount("");
+    setIsFundingAgent(true);
+    setFundingError(null);
+
+    try {
+      const preparedFunding = await prepareFundAgentVault({
+        walletAddress: selectedAccount.address,
+        agentName: selectedAgent.name,
+        amountUi: depositAmount.trim(),
+      });
+      const signedFunding = await signTransaction({
+        chain,
+        wallet: selectedWallet,
+        transaction: Uint8Array.from(
+          atob(preparedFunding.transactionBase64),
+          (character) => character.charCodeAt(0),
+        ),
+      });
+      const result = await submitFundAgentVault({
+        walletAddress: selectedAccount.address,
+        signedTransactionBase64: encodeBase64(
+          signedFunding.signedTransaction,
+        ),
+      });
+
+      setLastFundingSignature(result.signature);
+      setDepositAmount("");
+      setIsSubscribeModalOpen(false);
+      console.log("[subscription] Funded agent vault:", {
+        agentId: selectedAgent.id,
+        mint: preparedFunding.mint,
+        amountBaseUnits: preparedFunding.amountBaseUnits,
+        signature: result.signature,
+      });
+    } catch (error) {
+      console.error("[fund-agent-vault] failed", {
+        agentId: selectedAgent.id,
+        agentName: selectedAgent.name,
+        amountUi: depositAmount.trim(),
+        chain,
+        walletName: selectedWallet.standardWallet.name,
+        accountAddress: selectedAccount.address,
+        error,
+      });
+      const nextMessage = formatUnknownError(error) || "Failed to fund agent vault.";
+      setFundingError(
+        nextMessage.includes("Configured fee destination")
+          ? `${nextMessage} Reinitialize the vault global state on this cluster with a valid fee token account.`
+          : nextMessage,
+      );
+    } finally {
+      setIsFundingAgent(false);
+    }
   };
 
   const derived = useMemo(() => {
@@ -1785,7 +1860,7 @@ export default function ArenaDashboard() {
                   </div>
                   <div className="flex flex-wrap justify-end gap-3">
                     <LiquidActionButton
-                      label="Subscribe to trader"
+                      label="Fund this agent"
                       colorBack="#9a6f26"
                       colorTint="#ffe9a8"
                       onClick={() => setIsSubscribeModalOpen(true)}
@@ -2469,7 +2544,7 @@ export default function ArenaDashboard() {
                   </span>
                   <div>
                     <h3 className="m-0 font-instrument text-[34px] font-normal leading-[0.92] text-[#fff5de]">
-                      Subscribe to {selectedAgent.name}
+                      Fund {selectedAgent.name}
                     </h3>
                     <p className="mt-3 mb-0 max-w-[42ch] font-inter text-[14px] leading-[1.65] text-[rgba(255,245,222,0.68)]">
                       Fund this trader with a clean deposit amount and enter
@@ -2498,7 +2573,7 @@ export default function ArenaDashboard() {
                   <div className="grid gap-3 rounded-[22px] border border-[rgba(255,223,153,0.12)] bg-[linear-gradient(180deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
                     <div className="flex items-baseline justify-between gap-3">
                       <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.14em] text-[rgba(255,232,188,0.45)]">
-                        USDC
+                        Configured token
                       </span>
                       <span className="font-inter text-[13px] text-[rgba(255,245,222,0.42)]">
                         Live vault preview
@@ -2514,21 +2589,44 @@ export default function ArenaDashboard() {
                       className="h-[76px] rounded-[18px] border border-[rgba(255,223,153,0.1)] bg-[rgba(7,5,3,0.56)] px-5 font-instrument text-[36px] font-normal text-[#fff3d7] outline-none transition placeholder:text-[rgba(255,245,222,0.18)] focus:border-[rgba(255,223,153,0.34)] focus:bg-[rgba(13,9,5,0.82)]"
                     />
                     <p className="m-0 font-inter text-[13px] leading-[1.6] text-[rgba(255,245,222,0.46)]">
-                      Deposit into the mirrored trader vault and enter the same
-                      trade calls they make.
+                      This funds your personal vault for {selectedAgent.name}.
+                      Trade allocation for a specific ticker will be configured
+                      separately after deposit.
                     </p>
                   </div>
                 </div>
+
+                {!isConnected ? (
+                  <p className="m-0 rounded-[16px] border border-[rgba(255,223,153,0.12)] bg-[rgba(255,255,255,0.04)] px-4 py-3 font-inter text-[13px] leading-[1.6] text-[rgba(255,245,222,0.62)]">
+                    Connect a Solana wallet before funding this agent.
+                  </p>
+                ) : null}
+
+                {fundingError ? (
+                  <p className="m-0 rounded-[16px] border border-[rgba(255,138,138,0.18)] bg-[rgba(120,24,24,0.18)] px-4 py-3 font-inter text-[13px] leading-[1.6] text-[#ffd3d3]">
+                    {fundingError}
+                  </p>
+                ) : null}
+
+                {lastFundingSignature ? (
+                  <p className="m-0 rounded-[16px] border border-[rgba(255,223,153,0.12)] bg-[rgba(255,255,255,0.04)] px-4 py-3 font-inter text-[13px] leading-[1.6] text-[rgba(255,245,222,0.62)]">
+                    Last funding signature:{" "}
+                    <span className="font-mono text-[12px] text-[#fff3d7]">
+                      {lastFundingSignature.slice(0, 18)}...
+                    </span>
+                  </p>
+                ) : null}
 
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.14em] text-[rgba(255,232,188,0.45)]">
                     Trader status · {selectedAgent.status}
                   </span>
                   <LiquidActionButton
-                    label="Deposit"
+                    label={isFundingAgent ? "Funding..." : "Deposit"}
                     colorBack="#9a6f26"
                     colorTint="#ffe9a8"
                     type="submit"
+                    disabled={isFundingAgent || !isConnected}
                     onClick={() => {}}
                   />
                 </div>
