@@ -1045,6 +1045,7 @@ export type ThirdTouchT2Candidate = {
 type ChartStructureOverlay = {
   structureStatus: ChartVisionDecision["structureStatus"];
   verdict: ChartVisionDecision["verdict"];
+  suppressTrendline?: boolean;
   invalidationZone?: {
     low: number;
     high: number;
@@ -1163,6 +1164,7 @@ async function captureStrategyScreenshots(
   sessionId: string,
   page: Page,
   targetTimeframe: string,
+  agentSlug?: string,
 ): Promise<Buffer[]> {
   const viewport = page.viewportSize() ?? { width: 1440, height: 900 };
   const chartCx = viewport.width * 0.44;
@@ -1180,6 +1182,71 @@ async function captureStrategyScreenshots(
     setActionLabel(sessionId, label);
     await page.waitForTimeout(800);
     screenshots.push(await captureToBuffer(page));
+  }
+
+  if (agentSlug === "third-touch") {
+    setActionLabel(sessionId, "Switching to 4h — higher-timeframe structure");
+    await switchDerivTimeframe(sessionId, page, "4h");
+    await page.waitForTimeout(800);
+    await page.mouse.move(chartCx, chartCy);
+    await page.mouse.wheel(0, 5000);
+    await page.waitForTimeout(700);
+    await snap("View 1/6 — 4h higher-timeframe structure: dominant regime, active cycle, broad decision area");
+
+    setActionLabel(sessionId, "4h: centering active structure");
+    await dragPointerWithTelemetry({
+      sessionId,
+      page,
+      from: { x: chartCx, y: chartCy },
+      to: { x: chartCx + 220, y: chartCy },
+      steps: 12,
+    });
+    await snap("View 2/6 — 4h active structure: broader context with current decision area still in view");
+
+    setActionLabel(sessionId, "Switching to 1h — intermediate confirmation");
+    await switchDerivTimeframe(sessionId, page, "1h");
+    await page.waitForTimeout(900);
+    await page.mouse.click(chartCx, chartCy);
+    await page.waitForTimeout(200);
+    await page.mouse.move(chartCx, chartCy);
+    await page.mouse.wheel(0, 8500);
+    await page.waitForTimeout(900);
+    await autoScaleYAxis(page);
+    await snap("View 3/6 — 1h intermediate structure: confirm key swings, slope, and area of interest");
+
+    setActionLabel(sessionId, "1h: focusing reaction path");
+    await dragPointerWithTelemetry({
+      sessionId,
+      page,
+      from: { x: chartCx, y: chartCy },
+      to: { x: chartCx - 180, y: chartCy },
+      steps: 10,
+    });
+    await snap("View 4/6 — 1h reaction path: assess whether a missed entry can still become a valid retrace setup");
+
+    setActionLabel(sessionId, "Switching to 15m — execution structure");
+    await switchDerivTimeframe(sessionId, page, "15m");
+    await page.waitForTimeout(900);
+    await page.mouse.click(chartCx, chartCy);
+    await page.waitForTimeout(200);
+    await page.mouse.move(chartCx, chartCy);
+    await page.mouse.wheel(0, 10000);
+    await page.waitForTimeout(900);
+    await autoScaleYAxis(page);
+    await snap("View 5/6 — 15m execution structure: immediate reclaim / rejection behavior around the decision area");
+
+    setActionLabel(sessionId, "15m drawing canvas — execution zone");
+    await dragPointerWithTelemetry({
+      sessionId,
+      page,
+      from: { x: chartCx, y: chartCy },
+      to: { x: chartCx + 120, y: chartCy },
+      steps: 8,
+    });
+    await autoScaleYAxis(page);
+    await snap("View 6/6 — 15m DRAWING CANVAS: focus on the execution rectangle and current price interaction");
+
+    return screenshots;
   }
 
   // ── Phase 1: 8h — show the current structural cycle, NOT ancient history ────────
@@ -1649,6 +1716,7 @@ async function drawWithChartApi(
   t1: { price: number; xPct?: number; dateUtcSec?: number; exactTimeSec?: number },
   t2: { price: number; xPct?: number; dateUtcSec?: number; exactTimeSec?: number },
   zone: { low: number; high: number; timeSec?: number },
+  options?: { suppressTrendline?: boolean },
 ): Promise<boolean> {
   try {
     // TradingView CL widget lives in the blob: iframe — evaluate there.
@@ -1673,10 +1741,11 @@ async function drawWithChartApi(
     console.log("[drawing-api] widget check:", widgetCheck);
 
     const result = await chartFrame.evaluate(
-      ({ t1, t2, zone }: {
+      ({ t1, t2, zone, options }: {
         t1: { price: number; xPct?: number; dateUtcSec?: number; exactTimeSec?: number };
         t2: { price: number; xPct?: number; dateUtcSec?: number; exactTimeSec?: number };
         zone: { low: number; high: number; timeSec?: number };
+        options?: { suppressTrendline?: boolean };
       }) => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const w = window as any;
@@ -1770,8 +1839,9 @@ async function drawWithChartApi(
         // Slope sanity
         if (t2Time <= t1Time) return { ok: false, reason: "T2 timestamp ≤ T1 — inverted or same time" };
 
-        const zoneCenterTime =
-          zone.timeSec !== undefined
+        const zoneCenterTime = options?.suppressTrendline
+          ? Math.round(range.to - span * 0.05)
+          : zone.timeSec !== undefined
             ? (
                 zone.timeSec
                 + (
@@ -1781,26 +1851,31 @@ async function drawWithChartApi(
                 )
               )
             : Math.round(range.to - span * 0.08);
-        const zoneStartTime = zoneCenterTime - 5 * 24 * 3600;
-        const zoneEndTime = zoneCenterTime + 10 * 24 * 3600;
+        const zoneStartTime = options?.suppressTrendline
+          ? Math.round(range.to - span * 0.015)
+          : zoneCenterTime - 5 * 24 * 3600;
+        const zoneEndTime = options?.suppressTrendline
+          ? Math.round(range.to + span * 0.22)
+          : zoneCenterTime + 10 * 24 * 3600;
 
         // Clear any drawings from previous sessions
         chart.removeAllShapes();
 
-        // Draw ascending/descending support trendline, extended to the right
-        chart.createMultipointShape(
-          [{ time: t1Time, price: t1.price }, { time: t2Time, price: t2.price }],
-          {
-            shape: "trend_line",
-            overrides: {
-              linecolor: "rgba(88, 152, 255, 1)",
-              linewidth: 2,
-              linestyle: 0,
-              extendRight: true,
-              showLabel: false,
+        if (!options?.suppressTrendline) {
+          chart.createMultipointShape(
+            [{ time: t1Time, price: t1.price }, { time: t2Time, price: t2.price }],
+            {
+              shape: "trend_line",
+              overrides: {
+                linecolor: "rgba(88, 152, 255, 1)",
+                linewidth: 2,
+                linestyle: 0,
+                extendRight: true,
+                showLabel: false,
+              },
             },
-          },
-        );
+          );
+        }
 
         // Draw projected interaction zone as a rectangle at the T3 area (current date)
         chart.createMultipointShape(
@@ -1816,24 +1891,41 @@ async function drawWithChartApi(
           },
         );
 
-        // Reposition chart so T1 is near the left edge and current date is near the right.
-        // Cap the left boundary at 21 days before T1 — this is market-agnostic:
-        // enough context to show the decline into T1 without exposing data from a
-        // previous market cycle that would confuse the Sonnet verification loop.
-        const MIN_BEFORE_T1_SEC = 21 * 24 * 3600;
-        const rawPaddingLeft = t1Time - (zoneCenterTime - t1Time) * 0.15;
-        const paddingLeft = Math.max(t1Time - MIN_BEFORE_T1_SEC, rawPaddingLeft);
-        const paddingRight = zoneCenterTime + (zoneCenterTime - t1Time) * 0.05;
-        try {
-          chart.setVisibleRange({ from: Math.round(paddingLeft), to: Math.round(paddingRight) });
-        } catch { /* non-fatal */ }
+        if (!options?.suppressTrendline) {
+          // Reposition chart so T1 is near the left edge and current date is near the right.
+          // Cap the left boundary at 21 days before T1 — this is market-agnostic:
+          // enough context to show the decline into T1 without exposing data from a
+          // previous market cycle that would confuse the Sonnet verification loop.
+          const MIN_BEFORE_T1_SEC = 21 * 24 * 3600;
+          const rawPaddingLeft = t1Time - (zoneCenterTime - t1Time) * 0.15;
+          const paddingLeft = Math.max(t1Time - MIN_BEFORE_T1_SEC, rawPaddingLeft);
+          const paddingRight = zoneCenterTime + (zoneCenterTime - t1Time) * 0.05;
+          try {
+            chart.setVisibleRange({ from: Math.round(paddingLeft), to: Math.round(paddingRight) });
+          } catch { /* non-fatal */ }
+        } else {
+          try {
+            chart.setVisibleRange({
+              from: Math.round(range.from),
+              to: Math.round(range.to + span * 0.30),
+            });
+          } catch { /* non-fatal */ }
+        }
 
-        return { ok: true, t1Time, t2Time, zoneCenterTime, range };
+        return {
+          ok: true,
+          t1Time,
+          t2Time,
+          zoneCenterTime,
+          range,
+          drewTrendline: !options?.suppressTrendline,
+        };
       },
-      { t1, t2, zone } as {
+      { t1, t2, zone, options } as {
         t1: { price: number; xPct?: number; dateUtcSec?: number; exactTimeSec?: number };
         t2: { price: number; xPct?: number; dateUtcSec?: number; exactTimeSec?: number };
         zone: { low: number; high: number; timeSec?: number };
+        options?: { suppressTrendline?: boolean };
       },
     );
 
@@ -1874,6 +1966,7 @@ async function identifySwingPointsOnChart(
   // T2's xPct maps to the wrong timestamp, producing the wrong slope.
   const hasAgentPositions = agentT2Pos !== undefined;
   const shouldUseHaikuLocate = !hasAgentPositions && overlay?.skipHaikuLocate !== true;
+  const suppressTrendline = overlay?.suppressTrendline === true;
 
   setActionLabel(sessionId, "Settling chart for structure marking");
   await page.keyboard.press("Escape");
@@ -2197,8 +2290,12 @@ async function identifySwingPointsOnChart(
       setActionLabel(
         sessionId,
         attempt === 1
-          ? "Drawing structure via Charting Library API"
-          : "Retrying structure via Charting Library API",
+          ? suppressTrendline
+            ? "Marking execution zone via Charting Library API"
+            : "Drawing structure via Charting Library API"
+          : suppressTrendline
+            ? "Retrying execution zone via Charting Library API"
+            : "Retrying structure via Charting Library API",
       );
       const apiOk = await drawWithChartApi(
         page,
@@ -2206,10 +2303,18 @@ async function identifySwingPointsOnChart(
         { price: sp.t1Price, xPct: drawT1Pos?.xPct, dateUtcSec: t1DateUtcSec, exactTimeSec: t1ExactTimeSec },
         { price: sp.t2Price, xPct: drawT2Pos?.xPct, dateUtcSec: t2DateUtcSec, exactTimeSec: t2ExactTimeSec },
         { low: activeZone.low, high: activeZone.high, timeSec: sp.t3TimeSec },
+        { suppressTrendline },
       );
 
       if (apiOk) {
         await saveDrawingCheckpoint(sessionId, page, "06_drawing_complete_api");
+        if (suppressTrendline) {
+          setActionLabel(sessionId, "Execution zone mapped via Charting Library API");
+          await page.waitForTimeout(800);
+          setActionLabel(sessionId, undefined);
+          console.log("[drawing] done via Charting Library API (zone only)", { sessionId, attempt });
+          return;
+        }
         const presenceBuf = await captureToBuffer(page);
         const presenceCheck = await confirmTrendlineVisible(presenceBuf);
         console.log("[drawing] api trendline presence check", {
@@ -2247,6 +2352,13 @@ async function identifySwingPointsOnChart(
     }
   } else {
     console.log("[drawing] no viewSixPos — using mouse automation");
+  }
+
+  if (suppressTrendline) {
+    setActionLabel(sessionId, "Execution zone only mode — skipping trendline fallback");
+    await page.waitForTimeout(800);
+    setActionLabel(sessionId, undefined);
+    return;
   }
 
   // ── 5b. Mouse-based fallback ─────────────────────────────────────────────────
@@ -2530,7 +2642,14 @@ export async function startControlledBrowserSession(args: {
     console.log("[browser-session-runtime] capturing strategy screenshots", {
       sessionId: args.sessionId,
     });
-    const screenshots = await captureStrategyScreenshots(args.sessionId, page, args.timeframe);
+    const visionProfile =
+      args.agentSlug === "third-touch" ? "third-touch-execution" : "default";
+    const screenshots = await captureStrategyScreenshots(
+      args.sessionId,
+      page,
+      args.timeframe,
+      args.agentSlug,
+    );
     await capture(args.sessionId);
     console.log("[browser-session-runtime] strategy screenshots captured", {
       sessionId: args.sessionId,
@@ -2542,7 +2661,11 @@ export async function startControlledBrowserSession(args: {
       console.log("[browser-session-runtime] starting vision analysis", {
         sessionId: args.sessionId,
       });
-      const decision = await analyzeChartWithVision(screenshots, args.swingPoints);
+      const decision = await analyzeChartWithVision(
+        screenshots,
+        args.swingPoints,
+        visionProfile,
+      );
       console.log("[vision-agent] parsed decision:\n", JSON.stringify(decision, null, 2));
       const runtime = runtimeSessions.get(args.sessionId);
       if (runtime) runtime.visionDecision = decision;
@@ -2685,6 +2808,7 @@ export async function startControlledBrowserSession(args: {
         await identifySwingPointsOnChart(args.sessionId, page, drawPoints, {
           structureStatus: decision.structureStatus,
           verdict: decision.verdict,
+          suppressTrendline: args.agentSlug === "third-touch",
           invalidationZone: decision.invalidationZone,
           invalidationNote: decision.invalidationNote,
           t1ViewSixPos: decision.correctedT1?.viewSixPos,
@@ -2706,6 +2830,10 @@ export async function startControlledBrowserSession(args: {
         // assesses T1/T2 correctness and line quality, then redraws with corrected
         // dates if needed. Loop exits when Sonnet confirms or max passes reached.
         try {
+          if (args.agentSlug === "third-touch") {
+            setActionLabel(args.sessionId, undefined);
+            console.log("[refinement] skipped for third-touch zone-only draw mode");
+          } else {
           // ── Pass 1: Haiku slope guard ────────────────────────────────────
           setActionLabel(args.sessionId, "Pass 1 — Haiku slope check");
           const verifyBuf = await captureToBuffer(page);
@@ -2898,6 +3026,7 @@ export async function startControlledBrowserSession(args: {
             await identifySwingPointsOnChart(args.sessionId, page, refineDrawPoints, {
               structureStatus: decision.structureStatus,
               verdict: decision.verdict,
+              suppressTrendline: args.agentSlug === "third-touch",
               t1ViewSixPos: decision.correctedT1?.viewSixPos,
               t2ViewSixPos: decision.correctedT2?.viewSixPos,
               t1Date: decision.correctedT1?.date,
@@ -2910,6 +3039,7 @@ export async function startControlledBrowserSession(args: {
             console.log(`[refinement] pass ${pass + 2} redraw complete`);
           }
           setActionLabel(args.sessionId, undefined);
+          }
         } catch (refineErr) {
           setActionLabel(args.sessionId, undefined);
           console.warn("[refinement] error (non-fatal):", refineErr);

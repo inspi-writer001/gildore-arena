@@ -40,6 +40,8 @@ export type ChartVisionDecision = {
   issues: string[];
 };
 
+export type ChartVisionProfile = "default" | "third-touch-execution";
+
 // Strategy doctrine is sent once and cached by Anthropic's prompt cache.
 // This text is intentionally stable — do not inline dynamic values here.
 const STRATEGY_SYSTEM_PROMPT = `You are a disciplined technical analysis agent specialising in the Third Touch Trendline strategy. You will be shown a sequence of candlestick chart images taken at different zoom levels of the same market. Your job is to visually evaluate whether a valid third-touch trendline setup exists.
@@ -154,7 +156,11 @@ Respond ONLY with a valid JSON object matching this exact schema. No markdown fe
   "issues": ["<short issue 1>", "<short issue 2>"]
 }`;
 
-function buildUserPrompt(candidate: SwingPointsForBrowser | undefined, screenshotCount: number): string {
+function buildUserPrompt(
+  candidate: SwingPointsForBrowser | undefined,
+  screenshotCount: number,
+  profile: ChartVisionProfile,
+): string {
   const candidateSection = candidate
     ? `The deterministic engine produced this candidate for context:
 - Direction: ${candidate.direction}
@@ -166,15 +172,32 @@ function buildUserPrompt(candidate: SwingPointsForBrowser | undefined, screensho
 Use these as a starting hypothesis — correct them if the visual evidence disagrees.`
     : `No deterministic candidate is available for this chart. Identify the structure purely from visual analysis.`;
 
-  return `You are reviewing ${screenshotCount} sequential chart screenshots following a deliberate multi-timeframe discovery flow. Views 1–2 are the 8h timeframe showing the CURRENT STRUCTURAL CYCLE (~4 months). Views 3–6 are the trading timeframe (4h or similar) at decreasing zoom, ending at the drawing canvas.
+  const flowDescription =
+    profile === "third-touch-execution"
+      ? "Views 1–2 are the 4h timeframe for higher-timeframe structure. Views 3–4 are the 1h timeframe for intermediate confirmation. Views 5–6 are the 15m execution timeframe, ending at the drawing canvas."
+      : "Views 1–2 are the 8h timeframe showing the CURRENT STRUCTURAL CYCLE (~4 months). Views 3–6 are the trading timeframe (4h or similar) at decreasing zoom, ending at the drawing canvas.";
+
+  return `You are reviewing ${screenshotCount} sequential chart screenshots following a deliberate multi-timeframe discovery flow. ${flowDescription}
 
 ${candidateSection}
 
 Your task:
-1. From Views 1–2 (8h): establish the dominant regime. Identify the trough (bullish) or peak (bearish) that STARTED the current multi-week rally visible in the chart. This is T1. Ask yourself: "Before this rally began, where was the lowest point?" — that is T1. Ignore ancient historical lows from completely different market cycles that are not connected to the current move.
-2. From Views 3–4 (trading TF zoomed out): confirm T1 is the lowest point BEFORE the rally — not a correction low mid-rally. Then identify T2 — the first significant higher low that sets the slope. T2 is typically 10–30+ days after T1.
+1. ${
+   profile === "third-touch-execution"
+     ? "From Views 1–2 (4h): establish the dominant regime and the higher-timeframe structure that still governs the setup. Ignore stale historical structure outside the active cycle."
+     : 'From Views 1–2 (8h): establish the dominant regime. Identify the trough (bullish) or peak (bearish) that STARTED the current multi-week rally visible in the chart. This is T1. Ask yourself: "Before this rally began, where was the lowest point?" — that is T1. Ignore ancient historical lows from completely different market cycles that are not connected to the current move.'
+ }
+2. ${
+   profile === "third-touch-execution"
+     ? "From Views 3–4 (1h): confirm the active structure, T1, T2, and the meaningful reaction area. If the first clean third-touch entry was missed, assess whether the retrace still offers a valid continuation entry from the same decision region."
+     : "From Views 3–4 (trading TF zoomed out): confirm T1 is the lowest point BEFORE the rally — not a correction low mid-rally. Then identify T2 — the first significant higher low that sets the slope. T2 is typically 10–30+ days after T1."
+ }
 3. **Slope sanity check**: Project the T1→T2 line to the rightmost visible candle. For a bullish setup, the projected line should be at or below current price — price is above support or touching it. If the line is well ABOVE current price, your T2 is wrong (line is too steep). Adjust until the projection makes contact sense with current price.
-4. From Views 5–6: Assess the T3 zone — is current price approaching or touching the projected line?
+4. ${
+   profile === "third-touch-execution"
+     ? "From Views 5–6 (15m): assess the execution zone. Focus on the rectangle / area of interest, the immediate reclaim or rejection behavior, and whether price action justifies entry now."
+     : "From Views 5–6: Assess the T3 zone — is current price approaching or touching the projected line?"
+ }
 5. Return your trade verdict: valid, staged, invalid, or reject.
 6. Separately return structureVerdict:
    - drawable = line worth drawing now
@@ -190,6 +213,7 @@ Be honest. Lower confidence if ambiguous, but always attempt to map the dominant
 export async function analyzeChartWithVision(
   screenshots: Buffer[],
   candidate?: SwingPointsForBrowser,
+  profile: ChartVisionProfile = "default",
 ): Promise<ChartVisionDecision> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not configured.");
@@ -208,14 +232,24 @@ export async function analyzeChartWithVision(
 
   // Interleave screenshot labels with images so Claude can reference them by position
   const contentBlocks: Anthropic.ContentBlockParam[] = [];
-  const labels = [
-    "View 1 of 6 — 8H TIMEFRAME, current structural cycle (~4 months). Identify the dominant regime. Note the major trough that launched the current multi-week rally — this is the candidate T1 origin.",
-    "View 2 of 6 — 8H TIMEFRAME, shifted slightly left so the CURRENT TREND ORIGIN is near the left edge. The trough that STARTED this specific rally (not an ancient historical low from a different cycle) should be prominent on the left. Confirm T1: it is the lowest visible point BEFORE the rally began, from which the market bounced and never looked back.",
-    "View 3 of 6 — TRADING TIMEFRAME, maximum zoom-out. T1 (the rally's origin trough) should be visible on the left. The full move from T1 to current price is visible.",
-    "View 4 of 6 — TRADING TIMEFRAME, T1 region centred. Confirm T1 is the lowest point before the rally — not a correction low mid-rally. T2 (first significant higher low) is visible to the right.",
-    "View 5 of 6 — TRADING TIMEFRAME, T1→T2 slope and post-T2 price behaviour. Confirm T2 and assess how price has respected the projected ascending line.",
-    "View 6 of 6 — TRADING TIMEFRAME, DRAWING CANVAS. T1 on the left, T2 in the middle, current price (T3 zone) on the right. Report viewSixPos for T1 and T2 from THIS image only — used directly for drawing.",
-  ];
+  const labels =
+    profile === "third-touch-execution"
+      ? [
+          "View 1 of 6 — 4H TIMEFRAME, higher-timeframe structural context. Establish regime and the active cycle that still governs the setup.",
+          "View 2 of 6 — 4H TIMEFRAME, broader structure with the active decision area still visible. Confirm the setup direction is still structurally valid.",
+          "View 3 of 6 — 1H TIMEFRAME, full intermediate structure. Confirm the key swings and the main area of interest.",
+          "View 4 of 6 — 1H TIMEFRAME, reaction path into the decision area. Assess whether a missed first entry can still become a valid retrace entry.",
+          "View 5 of 6 — 15M TIMEFRAME, execution structure. Focus on the zone reaction and immediate reclaim / rejection behavior.",
+          "View 6 of 6 — 15M TIMEFRAME, DRAWING CANVAS. Report viewSixPos for T1 and T2 only if confidently visible here, and focus heavily on the interaction rectangle.",
+        ]
+      : [
+          "View 1 of 6 — 8H TIMEFRAME, current structural cycle (~4 months). Identify the dominant regime. Note the major trough that launched the current multi-week rally — this is the candidate T1 origin.",
+          "View 2 of 6 — 8H TIMEFRAME, shifted slightly left so the CURRENT TREND ORIGIN is near the left edge. The trough that STARTED this specific rally (not an ancient historical low from a different cycle) should be prominent on the left. Confirm T1: it is the lowest visible point BEFORE the rally began, from which the market bounced and never looked back.",
+          "View 3 of 6 — TRADING TIMEFRAME, maximum zoom-out. T1 (the rally's origin trough) should be visible on the left. The full move from T1 to current price is visible.",
+          "View 4 of 6 — TRADING TIMEFRAME, T1 region centred. Confirm T1 is the lowest point before the rally — not a correction low mid-rally. T2 (first significant higher low) is visible to the right.",
+          "View 5 of 6 — TRADING TIMEFRAME, T1→T2 slope and post-T2 price behaviour. Confirm T2 and assess how price has respected the projected ascending line.",
+          "View 6 of 6 — TRADING TIMEFRAME, DRAWING CANVAS. T1 on the left, T2 in the middle, current price (T3 zone) on the right. Report viewSixPos for T1 and T2 from THIS image only — used directly for drawing.",
+        ];
 
   for (let i = 0; i < screenshots.length; i++) {
     contentBlocks.push({
@@ -227,7 +261,7 @@ export async function analyzeChartWithVision(
 
   contentBlocks.push({
     type: "text",
-    text: `${buildUserPrompt(candidate, screenshots.length)}
+    text: `${buildUserPrompt(candidate, screenshots.length, profile)}
 
 Important output rules:
 - Never mention screenshot numbers in the JSON.
