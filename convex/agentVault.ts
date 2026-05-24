@@ -4,6 +4,8 @@ import { v } from "convex/values";
 import { action } from "./_generated/server";
 import {
   prepareServerFundAgentVaultTransaction,
+  prepareServerRegisterTickerTransaction,
+  submitServerRegisterTickerTransaction,
   submitServerFundAgentVaultTransaction,
 } from "../lib/solana/server-gildore-vault";
 
@@ -29,6 +31,34 @@ export const submitFundAgentVault = action({
   },
   handler: async (_ctx, args) => {
     return await submitServerFundAgentVaultTransaction(
+      args.walletAddress,
+      args.signedTransactionBase64,
+    );
+  },
+});
+
+export const prepareRegisterTicker = action({
+  args: {
+    walletAddress: v.string(),
+    agentName: v.string(),
+    amountUi: v.string(),
+  },
+  handler: async (_ctx, args) => {
+    return await prepareServerRegisterTickerTransaction(
+      args.walletAddress,
+      args.agentName,
+      args.amountUi,
+    );
+  },
+});
+
+export const submitRegisterTicker = action({
+  args: {
+    walletAddress: v.string(),
+    signedTransactionBase64: v.string(),
+  },
+  handler: async (_ctx, args) => {
+    return await submitServerRegisterTickerTransaction(
       args.walletAddress,
       args.signedTransactionBase64,
     );

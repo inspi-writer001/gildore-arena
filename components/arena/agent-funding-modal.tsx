@@ -42,9 +42,6 @@ export function AgentFundingModal({
         <div className="relative grid gap-6 p-6 sm:p-7">
           <div className="flex items-start justify-between gap-4">
             <div className="grid gap-2">
-              <span className="w-fit rounded-full border border-[rgba(255,223,153,0.18)] bg-[rgba(255,214,120,0.12)] px-3 py-1 font-barlow text-[11px] font-semibold uppercase tracking-[0.16em] text-[#f3d48d]">
-                Trader vault
-              </span>
               <div>
                 <h3 className="m-0 font-instrument text-[34px] font-normal leading-[0.92] text-[#fff5de]">
                   Fund {agentName}
@@ -66,19 +63,13 @@ export function AgentFundingModal({
 
           <form className="grid gap-5" onSubmit={onSubmit}>
             <div className="grid gap-2">
-              <label
-                htmlFor="subscribe-deposit-amount"
-                className="font-barlow text-[11px] font-semibold uppercase tracking-[0.16em] text-[rgba(255,232,188,0.62)]"
-              >
-                Deposit amount
-              </label>
               <div className="grid gap-3 rounded-[22px] border border-[rgba(255,223,153,0.12)] bg-[linear-gradient(180deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
                 <div className="flex items-baseline justify-between gap-3">
                   <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.14em] text-[rgba(255,232,188,0.45)]">
                     Configured token
                   </span>
                   <span className="font-inter text-[13px] text-[rgba(255,245,222,0.42)]">
-                    Live vault preview
+                    Token Balance
                   </span>
                 </div>
                 <input
@@ -86,14 +77,16 @@ export function AgentFundingModal({
                   type="text"
                   inputMode="decimal"
                   value={depositAmount}
-                  onChange={(event) => onDepositAmountChange(event.target.value)}
+                  onChange={(event) =>
+                    onDepositAmountChange(event.target.value)
+                  }
                   placeholder="0.00"
                   className="h-[76px] rounded-[18px] border border-[rgba(255,223,153,0.1)] bg-[rgba(7,5,3,0.56)] px-5 font-instrument text-[36px] font-normal text-[#fff3d7] outline-none transition placeholder:text-[rgba(255,245,222,0.18)] focus:border-[rgba(255,223,153,0.34)] focus:bg-[rgba(13,9,5,0.82)]"
                 />
                 <p className="m-0 font-inter text-[13px] leading-[1.6] text-[rgba(255,245,222,0.46)]">
-                  This funds your personal vault for {agentName}. Trade
-                  allocation for a specific ticker will be configured separately
-                  after deposit.
+                  This funds your personal vault for {agentName}. You can
+                  specify how much to spend per ticker / market by clicking on
+                  each market
                 </p>
               </div>
             </div>
@@ -121,7 +114,7 @@ export function AgentFundingModal({
 
             <div className="flex flex-wrap items-center justify-between gap-3">
               <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.14em] text-[rgba(255,232,188,0.45)]">
-                Trader status · {agentStatus}
+                {""}
               </span>
               <LiquidActionButton
                 label={isFundingAgent ? "Funding..." : "Deposit"}

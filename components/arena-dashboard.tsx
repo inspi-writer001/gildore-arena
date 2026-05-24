@@ -5,19 +5,8 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { useSignTransaction } from "@privy-io/react-auth/solana";
-import {
-  Activity,
-  ArrowLeft,
-  Eye,
-  ExternalLink,
-  LineChart,
-  LogOut,
-  Newspaper,
-  Radar,
-  Trophy,
-} from "lucide-react";
+import { ArrowLeft, Radar } from "lucide-react";
 import { api } from "@/convex/_generated/api";
-import { ImageDithering, LiquidMetal } from "@paper-design/shaders-react";
 import type {
   SwingPointsForBrowser,
   FibonacciLegForBrowser,
@@ -39,9 +28,9 @@ import {
   statusLabelMap,
   surfaceCard,
 } from "@/components/arena/arena-shared";
-import { BrowserSessionViewport } from "@/components/arena/browser-session-viewport";
 import { SignInCard } from "@/components/arena/sign-in-card";
 import { AgentFundingModal } from "@/components/arena/agent-funding-modal";
+import { SelectedAgentPanel } from "@/components/arena/selected-agent-panel";
 import type {
   BrowserSession,
   BrowserSessionEvent,
@@ -215,19 +204,6 @@ type ArenaSnapshot = {
   }>;
 };
 
-function getMarketRoles(args: {
-  marketSymbol: string;
-  primaryMarket: string;
-  hasWatchlist: boolean;
-  hasPosition: boolean;
-}) {
-  return [
-    args.primaryMarket === args.marketSymbol ? "primary" : null,
-    args.hasWatchlist ? "watchlist" : null,
-    args.hasPosition ? "open" : null,
-  ].filter(Boolean) as string[];
-}
-
 function formatRelativeMinutes(timestamp: number | null) {
   if (!timestamp) return "Not yet run";
 
@@ -361,10 +337,10 @@ export default function ArenaDashboard() {
   const startBrowserReviewSession = useAction(
     api.arena.startBrowserReviewSession,
   );
-  const prepareFundAgentVault = useAction(
-    api.agentVault.prepareFundAgentVault,
-  );
+  const prepareFundAgentVault = useAction(api.agentVault.prepareFundAgentVault);
   const submitFundAgentVault = useAction(api.agentVault.submitFundAgentVault);
+  const prepareRegisterTicker = useAction(api.agentVault.prepareRegisterTicker);
+  const submitRegisterTicker = useAction(api.agentVault.submitRegisterTicker);
   const [isStartingBrowserSession, setIsStartingBrowserSession] =
     useState(false);
   const [revealedConjureSelectionKey, setRevealedConjureSelectionKey] =
@@ -381,6 +357,12 @@ export default function ArenaDashboard() {
   const [isFundingAgent, setIsFundingAgent] = useState(false);
   const [fundingError, setFundingError] = useState<string | null>(null);
   const [lastFundingSignature, setLastFundingSignature] = useState<
+    string | null
+  >(null);
+  const [maxSpendAmount, setMaxSpendAmount] = useState("");
+  const [isConfiguringMaxSpend, setIsConfiguringMaxSpend] = useState(false);
+  const [maxSpendError, setMaxSpendError] = useState<string | null>(null);
+  const [lastMaxSpendSignature, setLastMaxSpendSignature] = useState<
     string | null
   >(null);
 
@@ -430,9 +412,7 @@ export default function ArenaDashboard() {
       });
       const result = await submitFundAgentVault({
         walletAddress: selectedAccount.address,
-        signedTransactionBase64: encodeBase64(
-          signedFunding.signedTransaction,
-        ),
+        signedTransactionBase64: encodeBase64(signedFunding.signedTransaction),
       });
 
       setLastFundingSignature(result.signature);
@@ -454,7 +434,8 @@ export default function ArenaDashboard() {
         accountAddress: selectedAccount.address,
         error,
       });
-      const nextMessage = formatUnknownError(error) || "Failed to fund agent vault.";
+      const nextMessage =
+        formatUnknownError(error) || "Failed to fund agent vault.";
       setFundingError(
         nextMessage.includes("Configured fee destination")
           ? `${nextMessage} Reinitialize the vault global state on this cluster with a valid fee token account.`
@@ -462,6 +443,68 @@ export default function ArenaDashboard() {
       );
     } finally {
       setIsFundingAgent(false);
+    }
+  };
+
+  const handleMaxSpendSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedAgent || !maxSpendAmount.trim()) {
+      return;
+    }
+    if (!selectedWallet || !selectedAccount || !isConnected) {
+      setMaxSpendError(
+        "Connect a Solana wallet before configuring max spendable.",
+      );
+      return;
+    }
+
+    setIsConfiguringMaxSpend(true);
+    setMaxSpendError(null);
+
+    try {
+      const preparedTicker = await prepareRegisterTicker({
+        walletAddress: selectedAccount.address,
+        agentName: selectedAgent.name,
+        amountUi: maxSpendAmount.trim(),
+      });
+      const signedTicker = await signTransaction({
+        chain,
+        wallet: selectedWallet,
+        transaction: Uint8Array.from(
+          atob(preparedTicker.transactionBase64),
+          (character) => character.charCodeAt(0),
+        ),
+      });
+      const result = await submitRegisterTicker({
+        walletAddress: selectedAccount.address,
+        signedTransactionBase64: encodeBase64(signedTicker.signedTransaction),
+      });
+
+      setLastMaxSpendSignature(result.signature);
+      setMaxSpendAmount("");
+      console.log("[register-ticker] Configured max spendable:", {
+        agentId: selectedAgent.id,
+        marketSymbol: selectedMarketSymbol,
+        mint: preparedTicker.mint,
+        amountBaseUnits: preparedTicker.amountBaseUnits,
+        signature: result.signature,
+      });
+    } catch (error) {
+      console.error("[register-ticker] failed", {
+        agentId: selectedAgent.id,
+        agentName: selectedAgent.name,
+        marketSymbol: selectedMarketSymbol,
+        amountUi: maxSpendAmount.trim(),
+        chain,
+        walletName: selectedWallet.standardWallet.name,
+        accountAddress: selectedAccount.address,
+        error,
+      });
+      setMaxSpendError(
+        formatUnknownError(error) || "Failed to configure max spendable.",
+      );
+    } finally {
+      setIsConfiguringMaxSpend(false);
     }
   };
 
@@ -902,9 +945,88 @@ export default function ArenaDashboard() {
     selectedVisionDecision,
     lastScanAt,
   } = derived;
-  const selectedMarket = trackedMarkets.find(
-    (market) => market.symbol === selectedMarketSymbol,
-  );
+  const handleSelectMarket = (marketSymbol: string) => {
+    router.replace(
+      `/arena?agent=${selectedAgent?.id}&market=${encodeURIComponent(marketSymbol)}`,
+      {
+        scroll: false,
+      },
+    );
+  };
+
+  const handleOpenPrediction = () => {
+    console.log(
+      "[prediction] Enter Prediction clicked for agent:",
+      selectedAgent?.id,
+    );
+  };
+
+  async function launchBrowserSession(options?: { forceNew?: boolean }) {
+    if (!selectedAgent || !selectedMarketSymbol) {
+      return;
+    }
+
+    setRevealedConjureSelectionKey(selectedConjureKey);
+    if (!options?.forceNew) {
+      setAutoRestartedConjureSelectionKey(null);
+    }
+    if (selectedBrowserSession && !options?.forceNew) return;
+
+    setIsStartingBrowserSession(true);
+    try {
+      const result = await startBrowserReviewSession({
+        agentSlug: selectedAgent.id,
+        marketSymbol: selectedMarketSymbol,
+        timeframe: selectedAgent.timeframe,
+      });
+
+      const isFibAgent = selectedAgent.id === "fibonacci-trend";
+      let response: Response;
+
+      if (isFibAgent) {
+        const { legs, preferredZone } = extractFibonacciLegs(selectedTrace);
+        response = await fetch("/api/browser-session/fibonacci/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sessionId: result.sessionId,
+            agentSlug: selectedAgent.id,
+            agentMarketSymbol: selectedMarketSymbol,
+            marketSymbol: result.browserTargetSymbol,
+            timeframe: result.browserTargetTimeframe,
+            targetUrl: "https://charts.deriv.com/deriv",
+            legs,
+            preferredZone,
+            direction: selectedTradeIdea?.direction ?? "long",
+          }),
+        });
+      } else {
+        response = await fetch("/api/browser-session/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sessionId: result.sessionId,
+            marketSymbol: result.browserTargetSymbol,
+            timeframe: result.browserTargetTimeframe,
+            agentSlug: selectedAgent.id,
+            agentMarketSymbol: selectedMarketSymbol,
+            targetUrl: "https://charts.deriv.com/deriv",
+            swingPoints:
+              result.browserTargetSymbol === selectedMarketSymbol
+                ? extractSwingPoints(selectedTrace, selectedAgent.timeframe)
+                : undefined,
+          }),
+        });
+      }
+
+      if (!response.ok) {
+        throw new Error("browser_startup_request_failed");
+      }
+    } catch {
+      setIsStartingBrowserSession(false);
+      setRevealedConjureSelectionKey(null);
+    }
+  }
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(0,0,0,0.05),transparent_28%),linear-gradient(180deg,#f4f4f1_0%,#ecece8_100%)] text-[#121212]">
@@ -918,12 +1040,19 @@ export default function ArenaDashboard() {
               <ArrowLeft aria-hidden="true" size={16} />
               Back to landing
             </Link>
-            <p className="m-0 mb-[10px] text-[rgba(18,18,18,0.42)] text-[12px] font-semibold tracking-[0.18em] uppercase font-barlow">
-              Arena season zero
-            </p>
-            <h1 className="max-w-[12ch] m-0 text-[clamp(42px,7vw,92px)] font-normal leading-[0.94] tracking-[-0.8px] font-instrument">
-              Strategy agents tracking structure, confluence, and execution
-              state.
+
+            <div className="font-barlow underline text-2xl font-normal leading-[0.95] mb-3">
+              Season Zer0
+            </div>
+
+            <h1 className="max-w-[14ch] m-0 text-[clamp(32px,5vw,68px)] font-normal leading-[0.96] tracking-[-0.5px] font-instrument">
+              Strategy agents
+              <br />
+              <span className="whitespace-nowrap">tracking structure,</span>
+              <br />
+              confluence, and
+              <br />
+              execution state.
             </h1>
             <p className="max-w-[60ch] mt-5 mb-0 text-[rgba(18,18,18,0.64)] text-[16px] leading-[1.7] font-inter">
               Monitor active agents, watched markets, chart annotations, and
@@ -931,34 +1060,7 @@ export default function ArenaDashboard() {
             </p>
           </div>
 
-          <div className="flex flex-wrap gap-[10px]">
-            {/* Season */}
-            <div className={cn(surfaceCard, "grid gap-2 p-[18px]")}>
-              <span className="font-barlow text-[rgba(18,18,18,0.48)] text-[11px] font-semibold tracking-[0.14em] uppercase">
-                Season
-              </span>
-              <strong className="font-instrument text-[32px] font-normal leading-[0.95]">
-                Season Zer0
-              </strong>
-            </div>
-            {/* Agents live */}
-            <div className={cn(surfaceCard, "grid gap-2 p-[18px]")}>
-              <span className="font-barlow text-[rgba(18,18,18,0.48)] text-[11px] font-semibold tracking-[0.14em] uppercase">
-                Agents live
-              </span>
-              <strong className="font-instrument text-[32px] font-normal leading-[0.95]">
-                {agents.length}
-              </strong>
-            </div>
-            {/* Last scan */}
-            {/* <div className={cn(surfaceCard, "grid gap-2 p-[18px]")}>
-              <span className="font-barlow text-[rgba(18,18,18,0.48)] text-[11px] font-semibold tracking-[0.14em] uppercase">
-                Last scan
-              </span>
-              <strong className="font-instrument text-[32px] font-normal leading-[0.95]">
-                {formatRelativeMinutes(lastScanAt)}
-              </strong>
-            </div> */}
+          <div className="flex gap-[10px] flex-row max-h-24">
             <SignInCard />
           </div>
         </header>
@@ -1062,701 +1164,58 @@ export default function ArenaDashboard() {
         </section>
 
         {selectedAgent ? (
-          <section
-            className={cn(
-              "grid gap-[18px] mt-7",
-              isWideWorkspace
-                ? "grid-cols-1"
-                : "grid-cols-[minmax(0,1.6fr)_minmax(320px,0.9fr)]",
-            )}
-            aria-label="Selected agent detail"
-          >
-            <article className={cn(surfaceCard, "p-5 grid gap-[18px]")}>
-              {/* ── Agent header ─────────────────────────────────────────── */}
-              <div className="flex items-start justify-between gap-5">
-                <div>
-                  <p className="m-0 mb-[10px] text-[rgba(18,18,18,0.42)] text-[12px] font-semibold tracking-[0.18em] uppercase font-barlow">
-                    Selected agent
-                  </p>
-                  <h2 className="m-0 text-[clamp(30px,4vw,48px)] font-normal leading-[0.96] tracking-[-0.5px] font-instrument">
-                    {selectedAgent.name}
-                  </h2>
-                  <p className="max-w-[58ch] mt-[14px] mb-0 text-[rgba(18,18,18,0.62)] text-[14px] leading-[1.6] font-inter">
-                    {selectedAgent.lastAction}
-                  </p>
-                </div>
-                <div className="flex flex-col items-end gap-[10px]">
-                  <div className="flex flex-wrap gap-[10px] justify-end">
-                    <span className={cn(chipClass, "font-barlow")}>
-                      {selectedAgent.timeframe}
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap justify-end gap-3">
-                    <LiquidActionButton
-                      label="Fund this agent"
-                      colorBack="#9a6f26"
-                      colorTint="#ffe9a8"
-                      onClick={() => setIsSubscribeModalOpen(true)}
-                    />
-                    <LiquidActionButton
-                      label="Enter Prediction"
-                      colorBack="#a9a9ab"
-                      colorTint="#ffffff"
-                      onClick={() => {
-                        console.log(
-                          "[prediction] Enter Prediction clicked for agent:",
-                          selectedAgent.id,
-                        );
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* ── Compact stats row ─────────────────────────────────────── */}
-              <div className="flex flex-wrap border border-[rgba(18,18,18,0.08)] rounded-[16px] overflow-hidden bg-[rgba(250,250,247,0.92)]">
-                <div className="grid gap-[3px] px-[18px] py-3 border-r border-[rgba(18,18,18,0.08)] flex-1 min-w-[90px]">
-                  <span className="font-barlow text-[11px] font-semibold tracking-[0.1em] uppercase text-[rgba(18,18,18,0.42)]">
-                    Win rate
-                  </span>
-                  <strong className="font-instrument text-[18px] font-normal leading-[1.1]">
-                    {selectedAgent.winRate}%
-                  </strong>
-                </div>
-                <div className="grid gap-[3px] px-[18px] py-3 border-r border-[rgba(18,18,18,0.08)] flex-1 min-w-[90px]">
-                  <span className="font-barlow text-[11px] font-semibold tracking-[0.1em] uppercase text-[rgba(18,18,18,0.42)]">
-                    PnL
-                  </span>
-                  <strong
-                    className={cn(
-                      "font-instrument text-[18px] font-normal leading-[1.1]",
-                      selectedAgent.pnlPercent >= 0
-                        ? "text-[#1a7f46]"
-                        : "text-[#a33030]",
-                    )}
-                  >
-                    {selectedAgent.pnlPercent >= 0 ? "+" : ""}
-                    {selectedAgent.pnlPercent.toFixed(1)}%
-                  </strong>
-                </div>
-                <div className="grid gap-[3px] px-[18px] py-3 border-r border-[rgba(18,18,18,0.08)] flex-1 min-w-[90px]">
-                  <span className="font-barlow text-[11px] font-semibold tracking-[0.1em] uppercase text-[rgba(18,18,18,0.42)]">
-                    Positions
-                  </span>
-                  <strong className="font-instrument text-[18px] font-normal leading-[1.1]">
-                    {selectedAgent.openPositions}
-                  </strong>
-                </div>
-                <div className="grid gap-[3px] px-[18px] py-3 border-r border-[rgba(18,18,18,0.08)] flex-1 min-w-[90px]">
-                  <span className="font-barlow text-[11px] font-semibold tracking-[0.1em] uppercase text-[rgba(18,18,18,0.42)]">
-                    Score
-                  </span>
-                  <strong className="font-instrument text-[18px] font-normal leading-[1.1]">
-                    {agents.find((a) => a.id === selectedAgent.id)?.score ??
-                      "—"}
-                  </strong>
-                </div>
-                <div className="grid gap-[3px] px-[18px] py-3 flex-1 min-w-[90px] last:border-r-0">
-                  <span className="font-barlow text-[11px] font-semibold tracking-[0.1em] uppercase text-[rgba(18,18,18,0.42)]">
-                    Next check
-                  </span>
-                  <strong className="font-instrument text-[18px] font-normal leading-[1.1]">
-                    {selectedPosition?.nextCheckIn ?? "Waiting"}
-                  </strong>
-                </div>
-              </div>
-
-              {/* ── Market switcher ───────────────────────────────────────── */}
-              <div
-                className="flex flex-wrap gap-3"
-                aria-label="Tracked markets"
-              >
-                {trackedMarkets.map((market) => {
-                  const isActive = market.symbol === selectedMarketSymbol;
-                  return (
-                    <Link
-                      key={market.symbol}
-                      href={`/arena?agent=${selectedAgent.id}&market=${encodeURIComponent(market.symbol)}`}
-                      className={cn(
-                        "grid gap-1 min-w-[180px] p-[14px] border border-[rgba(18,18,18,0.08)] rounded-[16px] text-inherit no-underline",
-                        market.newsState === "supportive" &&
-                          "bg-[rgba(231,248,237,0.84)]",
-                        market.newsState === "neutral" &&
-                          "bg-[rgba(250,250,247,0.92)]",
-                        market.newsState === "risk" &&
-                          "bg-[rgba(251,238,236,0.84)]",
-                        isActive &&
-                          "border-[rgba(18,18,18,0.14)] bg-[rgba(18,18,18,0.06)]",
-                      )}
-                    >
-                      <strong className="font-barlow text-[14px] font-semibold">
-                        {market.symbol}
-                      </strong>
-                      <div className="inline-flex items-center gap-2">
-                        <span
-                          className={cn(
-                            pillClass(market.newsState as ConfluenceState),
-                            "font-barlow",
-                          )}
-                        >
-                          {
-                            confluenceToneMap[
-                              market.newsState as ConfluenceState
-                            ]
-                          }
-                        </span>
-                        <span className="font-barlow text-[rgba(18,18,18,0.42)] text-[10px] font-semibold tracking-[0.12em] uppercase">
-                          {formatNewsFreshness(market.newsUpdatedAt)}
-                        </span>
-                      </div>
-                    </Link>
-                  );
-                })}
-              </div>
-
-              {/* ── Trade idea (compact) ──────────────────────────────────── */}
-              {selectedTradeIdea ? (
-                <div className="border border-[rgba(18,18,18,0.08)] rounded-[18px] bg-[rgba(255,255,255,0.78)] shadow-[0_18px_40px_rgba(0,0,0,0.05)] backdrop-blur-[16px] p-5 grid gap-[18px]">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-[10px]">
-                      <Eye aria-hidden="true" size={18} />
-                      <h3 className="font-barlow m-0 text-[14px] font-semibold tracking-[0.06em] uppercase">
-                        Current trade idea
-                      </h3>
-                    </div>
-                    <div className="flex gap-2 items-center">
-                      <span
-                        className={cn(
-                          pillClass(selectedTradeIdea.confluenceState),
-                          "font-barlow",
-                        )}
-                      >
-                        {confluenceToneMap[selectedTradeIdea.confluenceState]}
-                      </span>
-                      <span className={cn(chipClass, "font-barlow")}>
-                        {selectedTradeIdea.status}
-                      </span>
-                    </div>
-                  </div>
-                  <p className="font-inter">{selectedTradeIdea.thesis}</p>
-                  <div className="grid grid-cols-4 gap-3 mt-[18px]">
-                    <div>
-                      <span className="font-barlow text-[rgba(18,18,18,0.48)] text-[11px] font-semibold tracking-[0.14em] uppercase">
-                        Entry
-                      </span>
-                      <strong className="font-instrument text-[clamp(24px,3vw,38px)] font-normal leading-[0.95]">
-                        {selectedTradeIdea.entry}
-                      </strong>
-                    </div>
-                    <div>
-                      <span className="font-barlow text-[rgba(18,18,18,0.48)] text-[11px] font-semibold tracking-[0.14em] uppercase">
-                        Stop loss
-                      </span>
-                      <strong className="font-instrument text-[clamp(24px,3vw,38px)] font-normal leading-[0.95]">
-                        {selectedTradeIdea.stopLoss}
-                      </strong>
-                    </div>
-                    <div>
-                      <span className="font-barlow text-[rgba(18,18,18,0.48)] text-[11px] font-semibold tracking-[0.14em] uppercase">
-                        Take profit
-                      </span>
-                      <strong className="font-instrument text-[clamp(24px,3vw,38px)] font-normal leading-[0.95]">
-                        {selectedTradeIdea.takeProfit}
-                      </strong>
-                    </div>
-                    <div>
-                      <span className="font-barlow text-[rgba(18,18,18,0.48)] text-[11px] font-semibold tracking-[0.14em] uppercase">
-                        Confidence
-                      </span>
-                      <strong className="font-instrument text-[clamp(24px,3vw,38px)] font-normal leading-[0.95]">
-                        {Math.round(selectedTradeIdea.confidence * 100)}%
-                      </strong>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-
-              {/* ── Conjure button / viewport ─────────────────────────────── */}
-              {(() => {
-                // selectedAgent and selectedMarketSymbol are always defined here
-                // (we are inside the `selectedAgent ?` guard), but TypeScript cannot
-                // narrow through the IIFE function boundary — hence the assertions.
-                const agentId = selectedAgent!.id;
-                const agentName = selectedAgent!.name;
-                const agentTimeframe = selectedAgent!.timeframe;
-                const marketSym = selectedMarketSymbol!;
-                const conjureSelectionKey = `${agentId}::${marketSym}`;
-                const isConjureRevealed =
-                  revealedConjureSelectionKey === conjureSelectionKey;
-                const isConjureActive =
-                  isConjureRevealed && !!selectedBrowserSession;
-                const isConjureLoading =
-                  isConjureRevealed &&
-                  !selectedBrowserSession &&
-                  isStartingBrowserSession;
-                const isConjureIdle = !isConjureRevealed;
-
-                async function launchBrowserSession(options?: {
-                  forceNew?: boolean;
-                }) {
-                  setRevealedConjureSelectionKey(conjureSelectionKey);
-                  if (!options?.forceNew) {
-                    setAutoRestartedConjureSelectionKey(null);
-                  }
-                  if (selectedBrowserSession && !options?.forceNew) return;
-
-                  setIsStartingBrowserSession(true);
-                  try {
-                    const result = await startBrowserReviewSession({
-                      agentSlug: agentId,
-                      marketSymbol: marketSym,
-                      timeframe: agentTimeframe,
-                    });
-
-                    const isFibAgent = agentId === "fibonacci-trend";
-                    let response: Response;
-
-                    if (isFibAgent) {
-                      const { legs, preferredZone } =
-                        extractFibonacciLegs(selectedTrace);
-                      response = await fetch(
-                        "/api/browser-session/fibonacci/start",
-                        {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({
-                            sessionId: result.sessionId,
-                            agentSlug: agentId,
-                            agentMarketSymbol: marketSym,
-                            marketSymbol: result.browserTargetSymbol,
-                            timeframe: result.browserTargetTimeframe,
-                            targetUrl: "https://charts.deriv.com/deriv",
-                            legs,
-                            preferredZone,
-                            direction: selectedTradeIdea?.direction ?? "long",
-                          }),
-                        },
-                      );
-                    } else {
-                      response = await fetch("/api/browser-session/start", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                          sessionId: result.sessionId,
-                          marketSymbol: result.browserTargetSymbol,
-                          timeframe: result.browserTargetTimeframe,
-                          agentSlug: agentId,
-                          agentMarketSymbol: marketSym,
-                          targetUrl: "https://charts.deriv.com/deriv",
-                          swingPoints:
-                            result.browserTargetSymbol === marketSym
-                              ? extractSwingPoints(
-                                  selectedTrace,
-                                  agentTimeframe,
-                                )
-                              : undefined,
-                        }),
-                      });
-                    }
-
-                    if (!response.ok) {
-                      throw new Error("browser_startup_request_failed");
-                    }
-                  } catch {
-                    setIsStartingBrowserSession(false);
-                    setRevealedConjureSelectionKey(null);
-                  }
-                }
-
-                return (
-                  <div
-                    className={cn(
-                      "h-[80px] rounded-[10px] overflow-hidden transition-[height] duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]",
-                      (isConjureActive || isConjureLoading) && "h-[600px]",
-                    )}
-                  >
-                    {isConjureIdle ? (
-                      <button
-                        type="button"
-                        className="relative block w-full h-full p-0 border-0 rounded-[10px] overflow-hidden cursor-pointer bg-[#f5f5f2] shadow-[inset_0_1px_0_rgba(255,255,255,0.88),inset_0_-1px_0_rgba(0,0,0,0.08)] transition-transform duration-[120ms] hover:-translate-y-px active:scale-[0.985]"
-                        onClick={() => void launchBrowserSession()}
-                      >
-                        <LiquidMetal
-                          className="!absolute inset-0 !w-full !h-full pointer-events-none"
-                          colorBack="#a9a9ab"
-                          colorTint="#ffffff"
-                          shape="none"
-                          repetition={2.6}
-                          softness={0.12}
-                          shiftRed={0.18}
-                          shiftBlue={0.22}
-                          distortion={0.08}
-                          contour={0.52}
-                          angle={70}
-                          speed={1}
-                          scale={1}
-                          fit="cover"
-                          width="100%"
-                          height="100%"
-                        />
-                        <span className="absolute inset-[8px] z-[2] inline-flex min-h-[44px] items-center justify-center rounded-md border border-[rgba(255,255,255,0.42)] bg-[rgba(255,255,255,0.16)] px-6 text-[clamp(22px,2vw,30px)] font-medium tracking-[0.02em] !text-[#121212] [text-shadow:0_1px_0_rgba(255,255,255,0.34)] shadow-[inset_0_1px_0_rgba(255,255,255,0.34),inset_0_-1px_0_rgba(255,255,255,0.08),0_18px_40px_rgba(0,0,0,0.08)] backdrop-blur-[14px] pointer-events-none font-instrument">
-                          Conjure {agentName}
-                        </span>
-                      </button>
-                    ) : isConjureLoading ? (
-                      <div className="relative block w-full h-full p-0 border-0 rounded-[20px] overflow-hidden">
-                        <ImageDithering
-                          image="https://res.cloudinary.com/ddlz0zesx/image/upload/v1777216792/enter_the_arena_smth_qazlcz.png"
-                          colorBack="#000c38"
-                          colorFront="#94ffaf"
-                          colorHighlight="#eaff94"
-                          originalColors={false}
-                          inverted={false}
-                          type="8x8"
-                          size={conjureDitheringSize}
-                          colorSteps={2}
-                          fit="cover"
-                          width="100%"
-                          height="100%"
-                        />
-                        <span className="absolute inset-0 flex items-center justify-center text-[clamp(18px,3vw,26px)] font-normal text-[#94ffaf] tracking-[-0.3px] pointer-events-none [text-shadow:0_1px_12px_rgba(0,12,56,0.6)] font-instrument">
-                          Conjuring {agentName}...
-                        </span>
-                      </div>
-                    ) : selectedBrowserSession ? (
-                      <BrowserSessionViewport
-                        sessionId={selectedBrowserSession.id}
-                        sessionStatus={selectedBrowserSession.status}
-                        onRestart={() => launchBrowserSession()}
-                        onStartupExhausted={() => {
-                          if (
-                            autoRestartedConjureSelectionKey !==
-                            conjureSelectionKey
-                          ) {
-                            setAutoRestartedConjureSelectionKey(
-                              conjureSelectionKey,
-                            );
-                            void launchBrowserSession({ forceNew: true });
-                            return;
-                          }
-
-                          setRevealedConjureSelectionKey(null);
-                          setAutoRestartedConjureSelectionKey(null);
-                          setIsStartingBrowserSession(false);
-                        }}
-                      />
-                    ) : (
-                      <div className="relative block w-full h-full p-0 border-0 rounded-[20px] overflow-hidden">
-                        <ImageDithering
-                          image="https://res.cloudinary.com/ddlz0zesx/image/upload/v1777216792/enter_the_arena_smth_qazlcz.png"
-                          colorBack="#000c38"
-                          colorFront="#94ffaf"
-                          colorHighlight="#eaff94"
-                          originalColors={false}
-                          inverted={false}
-                          type="8x8"
-                          size={conjureDitheringSize}
-                          colorSteps={2}
-                          fit="cover"
-                          width="100%"
-                          height="100%"
-                        />
-                        <span className="absolute inset-0 flex items-center justify-center text-[clamp(18px,3vw,26px)] font-normal text-[#94ffaf] tracking-[-0.3px] pointer-events-none [text-shadow:0_1px_12px_rgba(0,12,56,0.6)] font-instrument">
-                          Reconnecting {agentName}...
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                );
-              })()}
-            </article>
-
-            <aside
-              className={cn(
-                "grid gap-[18px]",
-                isWideWorkspace && "grid-cols-[repeat(3,minmax(0,1fr))]",
-              )}
-            >
-              {selectedVisionDecision ? (
-                <article className={cn(surfaceCard, "p-5")}>
-                  <DisclosureSection
-                    title="Vision analysis"
-                    icon={<Eye aria-hidden="true" size={18} />}
-                    badge={
-                      <span
-                        className={cn(
-                          pillClass(
-                            selectedVisionDecision.verdict === "valid"
-                              ? "supportive"
-                              : selectedVisionDecision.verdict === "staged"
-                                ? "neutral"
-                                : "risk",
-                          ),
-                          "font-barlow",
-                        )}
-                      >
-                        {selectedVisionDecision.verdict}
-                      </span>
-                    }
-                  >
-                    <div className="grid gap-[14px]">
-                      <div className="flex flex-wrap gap-[6px]">
-                        <span className={cn(chipClass, "font-barlow")}>
-                          {selectedVisionDecision.regime}
-                        </span>
-                        <span className={cn(chipClass, "font-barlow")}>
-                          structure {selectedVisionDecision.structureStatus}
-                        </span>
-                        <span className={cn(chipClass, "font-barlow")}>
-                          {selectedVisionDecision.direction !== "none"
-                            ? selectedVisionDecision.direction
-                            : "no direction"}
-                        </span>
-                        <span className={cn(chipClass, "font-barlow")}>
-                          {Math.round(selectedVisionDecision.confidence * 100)}%
-                          confidence
-                        </span>
-                      </div>
-                      <p className="m-0 text-[rgba(18,18,18,0.72)] text-[13.5px] leading-[1.65] font-inter">
-                        {selectedVisionDecision.rationale}
-                      </p>
-                      {selectedVisionDecision.correctedT1 ? (
-                        <div className="grid gap-1 p-3 rounded-[12px] bg-[rgba(250,250,247,0.94)]">
-                          <span className="font-barlow text-[12px] font-semibold text-[rgba(18,18,18,0.7)]">
-                            T1 — {selectedVisionDecision.correctedT1.price}
-                          </span>
-                          <span className="font-inter text-[13px] text-[rgba(18,18,18,0.6)] leading-[1.5]">
-                            {selectedVisionDecision.correctedT1.note}
-                          </span>
-                        </div>
-                      ) : null}
-                      {selectedVisionDecision.correctedT2 ? (
-                        <div className="grid gap-1 p-3 rounded-[12px] bg-[rgba(250,250,247,0.94)]">
-                          <span className="font-barlow text-[12px] font-semibold text-[rgba(18,18,18,0.7)]">
-                            T2 — {selectedVisionDecision.correctedT2.price}
-                          </span>
-                          <span className="font-inter text-[13px] text-[rgba(18,18,18,0.6)] leading-[1.5]">
-                            {selectedVisionDecision.correctedT2.note}
-                          </span>
-                        </div>
-                      ) : null}
-                      {selectedVisionDecision.invalidationZone ? (
-                        <div className="grid gap-1 p-3 rounded-[12px] bg-[rgba(251,238,236,0.84)]">
-                          <span className="font-barlow text-[12px] font-semibold text-[#8a2d2d]">
-                            Invalidation zone —{" "}
-                            {selectedVisionDecision.invalidationZone.low} to{" "}
-                            {selectedVisionDecision.invalidationZone.high}
-                          </span>
-                          <span className="font-inter text-[13px] text-[rgba(18,18,18,0.6)] leading-[1.5]">
-                            {selectedVisionDecision.invalidationZone.note}
-                          </span>
-                        </div>
-                      ) : null}
-                      {selectedVisionDecision.invalidationNote ? (
-                        <div className="grid gap-1 p-3 rounded-[12px] bg-[rgba(247,240,231,0.96)]">
-                          <span className="font-barlow text-[12px] font-semibold text-[rgba(18,18,18,0.7)]">
-                            Why it failed
-                          </span>
-                          <span className="font-inter text-[13px] text-[rgba(18,18,18,0.6)] leading-[1.5]">
-                            {selectedVisionDecision.invalidationNote}
-                          </span>
-                        </div>
-                      ) : null}
-                      {selectedVisionDecision.issues.length > 0 ? (
-                        <div className="grid gap-2">
-                          <span className="font-barlow text-[rgba(18,18,18,0.45)] text-[11px] font-semibold tracking-[0.12em] uppercase">
-                            Open issues
-                          </span>
-                          <ul className="m-0 pl-[18px] grid gap-[6px]">
-                            {selectedVisionDecision.issues.map((issue, i) => (
-                              <li
-                                key={i}
-                                className="font-inter text-[rgba(18,18,18,0.62)] text-[13px] leading-[1.5]"
-                              >
-                                {issue}
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      ) : null}
-                    </div>
-                  </DisclosureSection>
-                </article>
-              ) : null}
-
-              <article className={cn(surfaceCard, "p-5")}>
-                <DisclosureSection
-                  title="News confluence"
-                  icon={<Newspaper aria-hidden="true" size={18} />}
-                  badge={
-                    selectedNewsContexts.length ? (
-                      <span className={cn(chipClass, "font-barlow")}>
-                        {selectedNewsContexts.length} items
-                      </span>
-                    ) : undefined
-                  }
-                >
-                  {selectedNewsRationale ? (
-                    <div className="grid gap-2 mb-[14px] p-[16px_18px] rounded-[16px] bg-[rgba(250,250,247,0.96)]">
-                      <span className="font-barlow text-[rgba(18,18,18,0.48)] text-[11px] font-semibold tracking-[0.14em] uppercase">
-                        Why this confluence
-                      </span>
-                      <p className="font-inter m-0 text-[rgba(18,18,18,0.72)] text-[14px] leading-[1.6]">
-                        {selectedNewsRationale}
-                      </p>
-                    </div>
-                  ) : null}
-                  <div className="grid gap-[10px] mt-[18px]">
-                    {selectedNewsContexts.length ? (
-                      selectedNewsContexts.map((item) => {
-                        const isCalendarRow =
-                          item.sourceLabel === "Economic Calendar";
-
-                        return (
-                          <div
-                            key={item.id}
-                            className={cn(
-                              "grid gap-[6px] p-[14px] rounded-[16px] no-underline text-inherit",
-                              isCalendarRow
-                                ? "bg-[rgba(247,240,231,0.96)]"
-                                : "bg-[rgba(250,250,247,0.92)]",
-                            )}
-                          >
-                            <div className="flex items-center justify-between gap-3">
-                              <div className="inline-flex flex-wrap items-center gap-2">
-                                <span
-                                  className={cn(
-                                    pillClass(item.state),
-                                    "font-barlow",
-                                  )}
-                                >
-                                  {confluenceToneMap[item.state]}
-                                </span>
-                                <span className={cn(chipClass, "font-barlow")}>
-                                  {isCalendarRow
-                                    ? "Scheduled event"
-                                    : "Headline flow"}
-                                </span>
-                              </div>
-                              {item.url ? (
-                                <a
-                                  href={item.url}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="inline-flex items-center gap-[6px] text-[rgba(18,18,18,0.58)] text-[11px] font-semibold tracking-[0.14em] uppercase no-underline hover:text-[rgba(18,18,18,0.86)] font-barlow"
-                                >
-                                  Source
-                                  <ExternalLink aria-hidden="true" size={12} />
-                                </a>
-                              ) : null}
-                            </div>
-                            <strong className="font-barlow text-[15px] font-semibold">
-                              {item.headline}
-                            </strong>
-                            <span className="font-inter text-[rgba(18,18,18,0.62)] text-[14px] leading-[1.6]">
-                              {item.marketSymbol} · {item.sourceLabel} ·{" "}
-                              {item.publishedAt}
-                            </span>
-                            <p className="font-inter mt-[2px] mb-0 text-[rgba(18,18,18,0.62)] text-[14px] leading-[1.6]">
-                              {item.note}
-                            </p>
-                          </div>
-                        );
-                      })
-                    ) : (
-                      <EmptyState
-                        title="No current news confluence"
-                        description="No mapped news context is attached to this market yet. The agent will rely on technical structure until a confluence signal is logged."
-                      />
-                    )}
-                  </div>
-                </DisclosureSection>
-              </article>
-
-              <article className={cn(surfaceCard, "p-5")}>
-                <DisclosureSection
-                  title="Watchlist state"
-                  icon={<Radar aria-hidden="true" size={18} />}
-                  badge={
-                    selectedWatchlist.length ? (
-                      <span className={cn(chipClass, "font-barlow")}>
-                        {selectedWatchlist.length} active
-                      </span>
-                    ) : undefined
-                  }
-                >
-                  <div className="grid gap-[10px] mt-[18px]">
-                    {selectedWatchlist.length ? (
-                      selectedWatchlist.map((item) => (
-                        <div
-                          key={item.id}
-                          className="grid gap-[6px] p-[14px] rounded-[16px] bg-[rgba(250,250,247,0.92)]"
-                        >
-                          <strong className="font-barlow text-[15px] font-semibold">
-                            {item.setupLabel}
-                          </strong>
-                          <span className="font-inter text-[rgba(18,18,18,0.62)] text-[14px] leading-[1.6]">
-                            {item.marketSymbol} · {item.timeframe} ·{" "}
-                            {item.status}
-                          </span>
-                          <p className="font-inter mt-[2px] mb-0 text-[rgba(18,18,18,0.62)] text-[14px] leading-[1.6]">
-                            {item.triggerNote}
-                          </p>
-                        </div>
-                      ))
-                    ) : (
-                      <EmptyState
-                        title="Nothing on watch here yet"
-                        description="This market is in the agent's orbit, but there is no active watchlist state recorded for the current timeframe."
-                      />
-                    )}
-                  </div>
-                </DisclosureSection>
-              </article>
-
-              <article className={cn(surfaceCard, "p-5")}>
-                <DisclosureSection
-                  title="Agent event log"
-                  icon={<Activity aria-hidden="true" size={18} />}
-                  badge={
-                    selectedEvents.length ? (
-                      <span className={cn(chipClass, "font-barlow")}>
-                        {selectedEvents.length} steps
-                      </span>
-                    ) : undefined
-                  }
-                >
-                  <div className="grid gap-[10px] mt-[18px]">
-                    {selectedEvents.length ? (
-                      selectedEvents.map((event) => (
-                        <div
-                          key={event.id}
-                          className="grid grid-cols-[auto_1fr] gap-3 p-[14px] rounded-[16px] bg-[rgba(250,250,247,0.92)]"
-                        >
-                          <span className="font-barlow text-[rgba(18,18,18,0.4)] text-[11px] font-bold tracking-[0.12em] uppercase">
-                            {event.timestamp}
-                          </span>
-                          <div>
-                            <strong className="font-barlow text-[15px] font-semibold">
-                              {event.title}
-                            </strong>
-                            <span className="font-inter text-[rgba(18,18,18,0.62)] text-[14px] leading-[1.6]">
-                              {event.detail}
-                            </span>
-                          </div>
-                        </div>
-                      ))
-                    ) : (
-                      <EmptyState
-                        title="No event history for this market"
-                        description="The selected agent has not yet logged market-specific events for this symbol."
-                      />
-                    )}
-                  </div>
-                </DisclosureSection>
-              </article>
-            </aside>
-          </section>
+          <SelectedAgentPanel
+            agents={agents.map((agent) => ({
+              id: agent.id,
+              score: agent.score,
+            }))}
+            selectedAgent={selectedAgent}
+            selectedMarketSymbol={selectedMarketSymbol}
+            trackedMarkets={trackedMarkets}
+            selectedTradeIdea={selectedTradeIdea}
+            selectedPosition={selectedPosition}
+            selectedTrace={selectedTrace}
+            selectedWatchlist={selectedWatchlist}
+            selectedEvents={selectedEvents}
+            selectedNewsContexts={selectedNewsContexts}
+            selectedNewsRationale={selectedNewsRationale}
+            selectedBrowserSession={selectedBrowserSession}
+            selectedVisionDecision={selectedVisionDecision}
+            isWideWorkspace={isWideWorkspace}
+            conjureDitheringSize={conjureDitheringSize}
+            isConjureRevealed={
+              revealedConjureSelectionKey === selectedConjureKey
+            }
+            isConjureLoading={
+              revealedConjureSelectionKey === selectedConjureKey &&
+              !selectedBrowserSession &&
+              isStartingBrowserSession
+            }
+            autoRestartedConjureSelectionKey={autoRestartedConjureSelectionKey}
+            conjureSelectionKey={selectedConjureKey ?? ""}
+            onSelectMarket={handleSelectMarket}
+            onOpenFundingModal={() => setIsSubscribeModalOpen(true)}
+            onOpenPrediction={handleOpenPrediction}
+            spendAmount={maxSpendAmount}
+            onSpendAmountChange={setMaxSpendAmount}
+            onSubmitMaxSpend={handleMaxSpendSubmit}
+            isConfiguringMaxSpend={isConfiguringMaxSpend}
+            maxSpendError={maxSpendError}
+            lastMaxSpendSignature={lastMaxSpendSignature}
+            isConnected={isConnected}
+            onRevealBrowserSession={() => launchBrowserSession()}
+            onForceRestartBrowserSession={() =>
+              launchBrowserSession({ forceNew: true })
+            }
+            onResetBrowserSessionPanel={() => {
+              setRevealedConjureSelectionKey(null);
+              setAutoRestartedConjureSelectionKey(null);
+              setIsStartingBrowserSession(false);
+            }}
+            onMarkAutoRestarted={() =>
+              setAutoRestartedConjureSelectionKey(selectedConjureKey)
+            }
+          />
         ) : null}
       </section>
       {selectedAgent ? (

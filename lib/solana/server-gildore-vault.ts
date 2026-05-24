@@ -18,7 +18,9 @@ import {
 } from "@solana/kit";
 import {
   prepareFundAgentVaultTransaction,
+  prepareRegisterTickerTransaction,
   type PreparedFundAgentVaultTransaction,
+  type PreparedRegisterTickerTransaction,
 } from "./gildore-vault";
 import { decodeBase64, encodeBase64 } from "../base64";
 
@@ -72,7 +74,9 @@ function createRpc() {
 }
 
 function summarizePreparedTransaction(
-  prepared: PreparedFundAgentVaultTransaction,
+  prepared:
+    | PreparedFundAgentVaultTransaction
+    | PreparedRegisterTickerTransaction,
   transactionBase64: string,
 ) {
   return {
@@ -202,6 +206,50 @@ export async function prepareServerFundAgentVaultTransaction(
   return summarizePreparedTransaction(prepared, transactionBase64);
 }
 
+export async function prepareServerRegisterTickerTransaction(
+  userWalletAddress: string,
+  agentName: string,
+  amountUi: string,
+  logScope = "agent-vault:prepare-register-ticker",
+) {
+  const rpc = createRpc();
+  const broadcasterSigner = await getBroadcasterSigner();
+  const prepared = await prepareRegisterTickerTransaction({
+    rpc,
+    userAddressInput: userWalletAddress,
+    payerAddressInput: broadcasterSigner.address,
+    agentName,
+    amountUi,
+  });
+  const partiallySignedTransaction =
+    await partiallySignTransactionMessageWithSigners(
+      setTransactionMessageFeePayerSigner(
+        broadcasterSigner,
+        prepared.transactionMessage as unknown as Parameters<
+          typeof setTransactionMessageFeePayerSigner
+        >[1],
+      ),
+    );
+  const transactionBytes = Uint8Array.from(
+    getTransactionEncoder().encode(partiallySignedTransaction),
+  );
+  const transactionBase64 = encodeBase64(transactionBytes);
+
+  console.log(`[${logScope}] prepared register-ticker transaction`, {
+    userWalletAddress,
+    broadcasterWalletAddress: broadcasterSigner.address,
+    agentName,
+    amountUi,
+    amountBaseUnits: prepared.amountBaseUnits.toString(),
+    mint: prepared.mint,
+    agentAddress: prepared.agentAddress,
+    userStateAddress: prepared.userStateAddress,
+    tickerAddress: prepared.tickerAddress,
+  });
+
+  return summarizePreparedTransaction(prepared, transactionBase64);
+}
+
 export async function submitServerFundAgentVaultTransaction(
   userWalletAddress: string,
   signedTransactionBase64: string,
@@ -257,4 +305,16 @@ export async function submitServerFundAgentVaultTransaction(
   return {
     signature,
   };
+}
+
+export async function submitServerRegisterTickerTransaction(
+  userWalletAddress: string,
+  signedTransactionBase64: string,
+  logScope = "agent-vault:submit-register-ticker",
+) {
+  return await submitServerFundAgentVaultTransaction(
+    userWalletAddress,
+    signedTransactionBase64,
+    logScope,
+  );
 }

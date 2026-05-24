@@ -88,6 +88,20 @@ export type PreparedFundAgentVaultTransaction = {
   transactionMessage: TransactionMessageWithBlockhashLifetime;
 };
 
+export type PreparedRegisterTickerTransaction = {
+  amountBaseUnits: bigint;
+  mint: Address;
+  decimals: number;
+  agentAddress: Address;
+  agentId: Address;
+  userAddress: Address;
+  payerAddress: Address;
+  userStateAddress: Address;
+  tickerAddress: Address;
+  userStateVaultAddress: Address;
+  transactionMessage: TransactionMessageWithBlockhashLifetime;
+};
+
 function readU16(data: Uint8Array, offset: number) {
   return new DataView(data.buffer, data.byteOffset, data.byteLength).getUint16(
     offset,
@@ -598,6 +612,113 @@ export async function prepareFundAgentVaultTransaction(input: {
     userStateAddress,
     tickerAddress,
     userTokenAccountAddress,
+    userStateVaultAddress,
+    transactionMessage,
+  };
+}
+
+export async function prepareRegisterTickerTransaction(input: {
+  rpc: SolanaRpc;
+  userAddressInput: string;
+  payerAddressInput: string;
+  agentName: string;
+  amountUi: string;
+}): Promise<PreparedRegisterTickerTransaction> {
+  const userAddress = address(input.userAddressInput);
+  const payerAddress = address(input.payerAddressInput);
+  const fundingToken = await fetchFundingTokenInfo(input.rpc);
+  const { agentAddress, agentId } = await deriveAgentAddress(input.agentName);
+  const agentAccount = await fetchEncodedAccount(input.rpc, agentAddress);
+
+  if (!agentAccount.exists) {
+    throw new Error(
+      `Vault agent account for "${input.agentName}" is not registered on this cluster.`,
+    );
+  }
+
+  const amountBaseUnits = parseUiAmountToBaseUnits(
+    input.amountUi,
+    fundingToken.decimals,
+  );
+  if (amountBaseUnits <= BigInt(0)) {
+    throw new Error("Enter a spendable amount greater than zero.");
+  }
+
+  const userStateAddress = await deriveUserStateAddress(
+    userAddress,
+    fundingToken.mint,
+    agentAddress,
+  );
+  const tickerAddress = await deriveTickerAddress(agentId, userAddress);
+  const userStateVaultAddress = await deriveAssociatedTokenAddress(
+    userStateAddress,
+    fundingToken.mint,
+  );
+
+  const [userStateAccount, userStateVaultAccount] = await Promise.all([
+    fetchEncodedAccount(input.rpc, userStateAddress),
+    fetchEncodedAccount(input.rpc, userStateVaultAddress),
+  ]);
+
+  if (!userStateAccount.exists) {
+    throw new Error("Fund this agent first before configuring max spendable.");
+  }
+
+  if (!userStateVaultAccount.exists) {
+    throw new Error(
+      "Your agent vault token account is missing on this cluster. Fund this agent first before configuring max spendable.",
+    );
+  }
+
+  const vaultMint = decodeSplTokenAccountMint(userStateVaultAccount.data);
+  if (vaultMint !== fundingToken.mint) {
+    throw new Error(
+      `Agent vault token account mint mismatch. Expected ${fundingToken.mint}, got ${vaultMint}.`,
+    );
+  }
+
+  const vaultBalance = decodeSplTokenAccountAmount(userStateVaultAccount.data);
+  if (vaultBalance <= BigInt(0)) {
+    throw new Error(
+      "This vault has no spendable balance yet. Fund this agent before configuring max spendable.",
+    );
+  }
+
+  const latestBlockhash = await input.rpc.getLatestBlockhash().send();
+  const transactionMessage = pipe(
+    createTransactionMessage({ version: "legacy" }),
+    (message) => setTransactionMessageFeePayer(payerAddress, message),
+    (message) =>
+      setTransactionMessageLifetimeUsingBlockhash(
+        latestBlockhash.value,
+        message,
+      ),
+    (message) =>
+      appendTransactionMessageInstruction(
+        createRegisterTickerForMeInstruction({
+          payer: payerAddress,
+          user: userAddress,
+          agent: agentAddress,
+          userState: userStateAddress,
+          userStateVault: userStateVaultAddress,
+          ticker: tickerAddress,
+          mint: fundingToken.mint,
+          amountToSpend: amountBaseUnits,
+        }),
+        message,
+      ),
+  );
+
+  return {
+    amountBaseUnits,
+    mint: fundingToken.mint,
+    decimals: fundingToken.decimals,
+    agentAddress,
+    agentId,
+    userAddress,
+    payerAddress,
+    userStateAddress,
+    tickerAddress,
     userStateVaultAddress,
     transactionMessage,
   };
