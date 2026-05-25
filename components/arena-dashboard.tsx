@@ -32,6 +32,7 @@ import { SignInCard } from "@/components/arena/sign-in-card";
 import { AgentFundingModal } from "@/components/arena/agent-funding-modal";
 import { SelectedAgentPanel } from "@/components/arena/selected-agent-panel";
 import type {
+  ActiveStrategySetup,
   BrowserSession,
   BrowserSessionEvent,
   ConfluenceState,
@@ -201,6 +202,36 @@ type ArenaSnapshot = {
     rationale: string;
     issues: string[];
     capturedAt: number;
+  }>;
+  strategySetups: Array<{
+    _id: string;
+    agentSlug: string;
+    marketSymbol: string;
+    state: ActiveStrategySetup["state"];
+    setupType: ActiveStrategySetup["setupType"];
+    direction: ActiveStrategySetup["direction"];
+    regime: ActiveStrategySetup["regime"];
+    confidence: number;
+    zoneLow?: number;
+    zoneHigh?: number;
+    projectedPrice?: number;
+    invalidationLow?: number;
+    invalidationHigh?: number;
+    invalidationNote?: string;
+    t1Price?: number;
+    t1Date?: string;
+    t2Price?: number;
+    t2Date?: string;
+    rationaleSummary: string;
+    createdAt: number;
+    lastReviewedAt: number;
+    entryPrice?: number;
+    stopPrice?: number;
+    targetPrice?: number;
+    entryTriggeredAt?: number;
+    completedAt?: number;
+    parentSetupId?: string;
+    isActive: boolean;
   }>;
 };
 
@@ -753,6 +784,47 @@ export default function ArenaDashboard() {
           d.agentSlug === selectedAgent.id &&
           d.marketSymbol === selectedMarketSymbol,
       ) ?? null;
+    const selectedActiveSetupRow =
+      snapshot.strategySetups?.find(
+        (setup) =>
+          setup.agentSlug === selectedAgent.id &&
+          setup.marketSymbol === selectedMarketSymbol &&
+          setup.isActive,
+      ) ?? null;
+    const selectedActiveSetup = selectedActiveSetupRow
+      ? {
+          id: String(selectedActiveSetupRow._id),
+          agentSlug: selectedActiveSetupRow.agentSlug,
+          marketSymbol: selectedActiveSetupRow.marketSymbol,
+          state: selectedActiveSetupRow.state,
+          setupType: selectedActiveSetupRow.setupType,
+          direction: selectedActiveSetupRow.direction,
+          regime: selectedActiveSetupRow.regime,
+          confidence: selectedActiveSetupRow.confidence,
+          zoneLow: selectedActiveSetupRow.zoneLow,
+          zoneHigh: selectedActiveSetupRow.zoneHigh,
+          projectedPrice: selectedActiveSetupRow.projectedPrice,
+          invalidationLow: selectedActiveSetupRow.invalidationLow,
+          invalidationHigh: selectedActiveSetupRow.invalidationHigh,
+          invalidationNote: selectedActiveSetupRow.invalidationNote,
+          t1Price: selectedActiveSetupRow.t1Price,
+          t1Date: selectedActiveSetupRow.t1Date,
+          t2Price: selectedActiveSetupRow.t2Price,
+          t2Date: selectedActiveSetupRow.t2Date,
+          rationaleSummary: selectedActiveSetupRow.rationaleSummary,
+          createdAt: selectedActiveSetupRow.createdAt,
+          lastReviewedAt: selectedActiveSetupRow.lastReviewedAt,
+          entryPrice: selectedActiveSetupRow.entryPrice,
+          stopPrice: selectedActiveSetupRow.stopPrice,
+          targetPrice: selectedActiveSetupRow.targetPrice,
+          entryTriggeredAt: selectedActiveSetupRow.entryTriggeredAt,
+          completedAt: selectedActiveSetupRow.completedAt,
+          parentSetupId: selectedActiveSetupRow.parentSetupId
+            ? String(selectedActiveSetupRow.parentSetupId)
+            : undefined,
+          isActive: selectedActiveSetupRow.isActive,
+        }
+      : null;
 
     return {
       agents,
@@ -775,6 +847,7 @@ export default function ArenaDashboard() {
       selectedBrowserSession,
       selectedBrowserSessionEvents,
       selectedVisionDecision,
+      selectedActiveSetup,
       lastScanAt: snapshot.scanRuns[0]?.startedAt ?? null,
     };
   }, [selectedAgentSlug, selectedMarketParam, snapshot]);
@@ -943,6 +1016,7 @@ export default function ArenaDashboard() {
     selectedBrowserSession,
     selectedBrowserSessionEvents = [],
     selectedVisionDecision,
+    selectedActiveSetup,
     lastScanAt,
   } = derived;
   const handleSelectMarket = (marketSymbol: string) => {
@@ -1181,6 +1255,7 @@ export default function ArenaDashboard() {
             selectedNewsRationale={selectedNewsRationale}
             selectedBrowserSession={selectedBrowserSession}
             selectedVisionDecision={selectedVisionDecision}
+            selectedActiveSetup={selectedActiveSetup}
             isWideWorkspace={isWideWorkspace}
             conjureDitheringSize={conjureDitheringSize}
             isConjureRevealed={

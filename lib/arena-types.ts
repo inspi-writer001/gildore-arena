@@ -20,6 +20,24 @@ export type ConfluenceState = "supportive" | "neutral" | "risk";
 
 export type TradeDirection = "long" | "short";
 
+export type SetupLifecycleState =
+  | "discovering"
+  | "watching"
+  | "staged"
+  | "confirmed"
+  | "entered"
+  | "missed_entry"
+  | "secondary_retrace"
+  | "invalidated"
+  | "completed";
+
+export type SetupType =
+  | "third_touch"
+  | "future_third_touch_watch"
+  | "reclaim_after_break"
+  | "missed_entry_retrace"
+  | "secondary_retrace_continuation";
+
 export type Agent = {
   id: string;
   name: string;
@@ -209,4 +227,35 @@ export type BrowserSessionEvent = {
   label: string;
   detail: string;
   status: "queued" | "running" | "completed" | "failed";
+};
+
+export type ActiveStrategySetup = {
+  id: string;
+  agentSlug: string;
+  marketSymbol: string;
+  state: SetupLifecycleState;
+  setupType: SetupType;
+  direction: TradeDirection | "none";
+  regime: "bullish" | "bearish" | "mixed";
+  confidence: number;
+  zoneLow?: number;
+  zoneHigh?: number;
+  projectedPrice?: number;
+  invalidationLow?: number;
+  invalidationHigh?: number;
+  invalidationNote?: string;
+  t1Price?: number;
+  t1Date?: string;
+  t2Price?: number;
+  t2Date?: string;
+  rationaleSummary: string;
+  createdAt: number;
+  lastReviewedAt: number;
+  entryPrice?: number;
+  stopPrice?: number;
+  targetPrice?: number;
+  entryTriggeredAt?: number;
+  completedAt?: number;
+  parentSetupId?: string;
+  isActive: boolean;
 };

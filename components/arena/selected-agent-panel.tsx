@@ -15,6 +15,7 @@ import {
 import { MaxSpendConfigurator } from "@/components/arena/max-spend-configurator";
 import { cn } from "@/lib/utils";
 import type {
+  ActiveStrategySetup,
   BrowserSession,
   BrowserSessionEvent,
   ConfluenceState,
@@ -113,6 +114,7 @@ export function SelectedAgentPanel({
   selectedNewsRationale,
   selectedBrowserSession,
   selectedVisionDecision,
+  selectedActiveSetup,
   isWideWorkspace,
   conjureDitheringSize,
   isConjureRevealed,
@@ -147,6 +149,7 @@ export function SelectedAgentPanel({
   selectedNewsRationale: string;
   selectedBrowserSession: BrowserSession | null;
   selectedVisionDecision: SelectedVisionDecision | null;
+  selectedActiveSetup: ActiveStrategySetup | null;
   isWideWorkspace: boolean;
   conjureDitheringSize: number;
   isConjureRevealed: boolean;
@@ -479,6 +482,75 @@ export function SelectedAgentPanel({
           isWideWorkspace && "grid-cols-[repeat(3,minmax(0,1fr))]",
         )}
       >
+        {selectedActiveSetup ? (
+          <article className={cn(surfaceCard, "p-5")}>
+            <DisclosureSection
+              title="Setup lifecycle"
+              icon={<Activity aria-hidden="true" size={18} />}
+              badge={
+                <span className={cn(chipClass, "font-barlow")}>
+                  {selectedActiveSetup.state.replaceAll("_", " ")}
+                </span>
+              }
+            >
+              <div className={cn("grid gap-[14px]", disclosureScrollViewportClass)}>
+                <div className="flex flex-wrap gap-[6px]">
+                  <span className={cn(chipClass, "font-barlow")}>
+                    {selectedActiveSetup.setupType.replaceAll("_", " ")}
+                  </span>
+                  <span className={cn(chipClass, "font-barlow")}>
+                    {selectedActiveSetup.direction !== "none"
+                      ? selectedActiveSetup.direction
+                      : "no direction"}
+                  </span>
+                  <span className={cn(chipClass, "font-barlow")}>
+                    {selectedActiveSetup.regime}
+                  </span>
+                  <span className={cn(chipClass, "font-barlow")}>
+                    {Math.round(selectedActiveSetup.confidence * 100)}% confidence
+                  </span>
+                </div>
+                {selectedActiveSetup.zoneLow != null &&
+                selectedActiveSetup.zoneHigh != null ? (
+                  <div className="grid gap-1 rounded-[12px] bg-[rgba(250,250,247,0.94)] p-3">
+                    <span className="font-barlow text-[12px] font-semibold text-[rgba(18,18,18,0.7)]">
+                      Active zone — {selectedActiveSetup.zoneLow} to{" "}
+                      {selectedActiveSetup.zoneHigh}
+                    </span>
+                    <span className="font-inter text-[13px] leading-[1.5] text-[rgba(18,18,18,0.6)]">
+                      Projected price {selectedActiveSetup.projectedPrice ?? "—"}
+                    </span>
+                  </div>
+                ) : null}
+                {selectedActiveSetup.invalidationLow != null &&
+                selectedActiveSetup.invalidationHigh != null ? (
+                  <div className="grid gap-1 rounded-[12px] bg-[rgba(251,238,236,0.84)] p-3">
+                    <span className="font-barlow text-[12px] font-semibold text-[#8a2d2d]">
+                      Invalidation — {selectedActiveSetup.invalidationLow} to{" "}
+                      {selectedActiveSetup.invalidationHigh}
+                    </span>
+                    <span className="font-inter text-[13px] leading-[1.5] text-[rgba(18,18,18,0.6)]">
+                      {selectedActiveSetup.invalidationNote ??
+                        "Awaiting explicit invalidation threshold."}
+                    </span>
+                  </div>
+                ) : null}
+                <div className="grid gap-[6px] rounded-[12px] bg-[rgba(246,244,239,0.96)] p-3">
+                  <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.12em] text-[rgba(18,18,18,0.45)]">
+                    Stateful thesis
+                  </span>
+                  <p className="m-0 font-inter text-[13px] leading-[1.55] text-[rgba(18,18,18,0.68)]">
+                    {selectedActiveSetup.rationaleSummary}
+                  </p>
+                  <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.12em] text-[rgba(18,18,18,0.38)]">
+                    Last reviewed {formatNewsFreshness(selectedActiveSetup.lastReviewedAt)}
+                  </span>
+                </div>
+              </div>
+            </DisclosureSection>
+          </article>
+        ) : null}
+
         {selectedVisionDecision ? (
           <article className={cn(surfaceCard, "p-5 ")}>
             <DisclosureSection
