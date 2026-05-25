@@ -1,7 +1,7 @@
 import { cronJobs } from "convex/server";
 import { v } from "convex/values";
 import { api, internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import {
   action,
   internalAction,
@@ -199,6 +199,205 @@ function resolveBrowserReviewTarget(args: {
   };
 }
 
+const setupStateValidator = v.union(
+  v.literal("discovering"),
+  v.literal("watching"),
+  v.literal("staged"),
+  v.literal("confirmed"),
+  v.literal("entered"),
+  v.literal("missed_entry"),
+  v.literal("secondary_retrace"),
+  v.literal("invalidated"),
+  v.literal("completed"),
+);
+
+const setupTypeValidator = v.union(
+  v.literal("third_touch"),
+  v.literal("future_third_touch_watch"),
+  v.literal("reclaim_after_break"),
+  v.literal("missed_entry_retrace"),
+  v.literal("secondary_retrace_continuation"),
+);
+
+type SetupLifecycleState =
+  | "discovering"
+  | "watching"
+  | "staged"
+  | "confirmed"
+  | "entered"
+  | "missed_entry"
+  | "secondary_retrace"
+  | "invalidated"
+  | "completed";
+
+type SetupType =
+  | "third_touch"
+  | "future_third_touch_watch"
+  | "reclaim_after_break"
+  | "missed_entry_retrace"
+  | "secondary_retrace_continuation";
+
+function summarizeRationale(text: string) {
+  const trimmed = text.trim();
+  if (trimmed.length <= 240) return trimmed;
+  return `${trimmed.slice(0, 237).trimEnd()}...`;
+}
+
+function zoneShifted(
+  existing:
+    | {
+        projectedPrice?: number;
+        zoneLow?: number;
+        zoneHigh?: number;
+      }
+    | null
+    | undefined,
+  nextZone:
+    | {
+        projectedPrice?: number;
+        low?: number;
+        high?: number;
+      }
+    | null
+    | undefined,
+) {
+  if (!existing || !nextZone) return false;
+  const baseline =
+    existing.projectedPrice ?? nextZone.projectedPrice ?? existing.zoneLow ?? 1;
+  const projectedDelta =
+    existing.projectedPrice != null && nextZone.projectedPrice != null
+      ? Math.abs(existing.projectedPrice - nextZone.projectedPrice)
+      : 0;
+  const lowDelta =
+    existing.zoneLow != null && nextZone.low != null
+      ? Math.abs(existing.zoneLow - nextZone.low)
+      : 0;
+  const highDelta =
+    existing.zoneHigh != null && nextZone.high != null
+      ? Math.abs(existing.zoneHigh - nextZone.high)
+      : 0;
+
+  return (
+    Math.max(projectedDelta, lowDelta, highDelta) > Math.max(baseline * 0.0005, 2)
+  );
+}
+
+function deriveSetupTransition(args: {
+  existingSetup:
+    | {
+        state: SetupLifecycleState;
+        setupType: SetupType;
+        projectedPrice?: number;
+        zoneLow?: number;
+        zoneHigh?: number;
+      }
+    | null;
+  regime: "bullish" | "bearish" | "mixed";
+  verdict: "valid" | "staged" | "invalid" | "reject";
+  structureVerdict: "drawable" | "watch_future_touch" | "broken" | "none";
+  direction: "long" | "short" | "none";
+  structureStatus: "clean" | "weak" | "broken" | "none";
+  correctedZone?: { low: number; high: number; projectedPrice: number };
+}) {
+  const { existingSetup } = args;
+
+  if (
+    args.structureVerdict === "broken" ||
+    args.structureStatus === "broken" ||
+    args.verdict === "invalid"
+  ) {
+    return {
+      state: "invalidated" as const,
+      setupType: "reclaim_after_break" as const,
+      isActive: false,
+    };
+  }
+
+  if (
+    args.structureVerdict === "none" ||
+    args.direction === "none" ||
+    args.regime === "mixed"
+  ) {
+    return existingSetup
+      ? {
+          state: "invalidated" as const,
+          setupType: existingSetup.setupType,
+          isActive: false,
+        }
+      : null;
+  }
+
+  if (args.verdict === "valid") {
+    return {
+      state: "confirmed" as const,
+      setupType:
+        existingSetup?.state === "secondary_retrace"
+          ? "secondary_retrace_continuation"
+          : "third_touch",
+      isActive: true,
+    };
+  }
+
+  if (
+    existingSetup?.state === "confirmed" &&
+    args.verdict === "staged" &&
+    args.structureVerdict === "drawable"
+  ) {
+    return zoneShifted(existingSetup, args.correctedZone)
+      ? {
+          state: "secondary_retrace" as const,
+          setupType: "secondary_retrace_continuation" as const,
+          isActive: true,
+        }
+      : {
+          state: "missed_entry" as const,
+          setupType: "missed_entry_retrace" as const,
+          isActive: true,
+        };
+  }
+
+  if (args.verdict === "staged") {
+    if (args.structureVerdict === "watch_future_touch") {
+      return {
+        state: "watching" as const,
+        setupType: "future_third_touch_watch" as const,
+        isActive: true,
+      };
+    }
+
+    return {
+      state:
+        existingSetup?.state === "secondary_retrace"
+          ? ("secondary_retrace" as const)
+          : ("staged" as const),
+      setupType:
+        existingSetup?.state === "secondary_retrace"
+          ? "secondary_retrace_continuation"
+          : "third_touch",
+      isActive: true,
+    };
+  }
+
+  if (args.verdict === "reject") {
+    if (args.structureVerdict === "watch_future_touch") {
+      return {
+        state: "watching" as const,
+        setupType: "future_third_touch_watch" as const,
+        isActive: true,
+      };
+    }
+    if (args.structureVerdict === "drawable") {
+      return {
+        state: "staged" as const,
+        setupType: "third_touch" as const,
+        isActive: true,
+      };
+    }
+  }
+
+  return null;
+}
+
 export const getArenaSnapshot = query({
   args: {},
   handler: async (ctx) => {
@@ -216,6 +415,7 @@ export const getArenaSnapshot = query({
       leaderboardSnapshots,
       scanRuns,
       visionDecisions,
+      strategySetups,
     ] = await Promise.all([
       ctx.db.query("agents").collect(),
       ctx.db.query("markets").collect(),
@@ -230,6 +430,7 @@ export const getArenaSnapshot = query({
       ctx.db.query("leaderboardSnapshots").collect(),
       ctx.db.query("scanRuns").collect(),
       ctx.db.query("visionDecisions").collect(),
+      ctx.db.query("strategySetups").collect(),
     ]);
 
     return {
@@ -283,6 +484,9 @@ export const getArenaSnapshot = query({
         structureVerdict: row.structureVerdict ?? "none",
         structureStatus: row.structureStatus ?? "none",
       })),
+      strategySetups: strategySetups.sort(
+        (a, b) => b.lastReviewedAt - a.lastReviewedAt,
+      ),
     };
   },
 });
@@ -1297,6 +1501,32 @@ export const persistVisionDecision = mutation({
     invalidationNote: v.optional(v.string()),
     rationale: v.string(),
     issues: v.array(v.string()),
+    nextState: v.optional(setupStateValidator),
+    setupType: v.optional(setupTypeValidator),
+    isFollowUp: v.optional(v.boolean()),
+    confirmationStatus: v.optional(
+      v.union(
+        v.literal("none"),
+        v.literal("forming"),
+        v.literal("confirmed"),
+        v.literal("failed"),
+      ),
+    ),
+    updatedZone: v.optional(
+      v.object({
+        low: v.number(),
+        high: v.number(),
+        projectedPrice: v.number(),
+      }),
+    ),
+    updatedInvalidationZone: v.optional(
+      v.object({
+        low: v.number(),
+        high: v.number(),
+        note: v.string(),
+      }),
+    ),
+    stateTransitionReason: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const existing = await ctx.db
@@ -1346,19 +1576,128 @@ export const persistVisionDecision = mutation({
       correctedZoneChanged ||
       invalidationZoneChanged;
 
-    if (!significantChange) {
-      return { updated: false, id: existing!._id };
+    const capturedAt = Date.now();
+    const {
+      nextState: _nextState,
+      setupType: _setupType,
+      isFollowUp: _isFollowUp,
+      confirmationStatus: _confirmationStatus,
+      updatedZone: _updatedZone,
+      updatedInvalidationZone: _updatedInvalidationZone,
+      stateTransitionReason: _stateTransitionReason,
+      ...visionPayload
+    } = args;
+    const payload = { ...visionPayload, capturedAt };
+
+    let visionDecisionId = existing?._id ?? null;
+    if (significantChange) {
+      if (existing) {
+        await ctx.db.patch(existing._id, payload);
+        visionDecisionId = existing._id;
+      } else {
+        visionDecisionId = await ctx.db.insert("visionDecisions", payload);
+      }
     }
 
-    const payload = { ...args, capturedAt: Date.now() };
+    const activeSetup =
+      (await ctx.db
+        .query("strategySetups")
+        .withIndex("by_agentSlug_marketSymbol_isActive", (q) =>
+          q
+            .eq("agentSlug", args.agentSlug)
+            .eq("marketSymbol", args.marketSymbol)
+            .eq("isActive", true),
+        )
+        .collect())
+        .sort((a, b) => b.lastReviewedAt - a.lastReviewedAt)[0] ?? null;
 
-    if (existing) {
-      await ctx.db.patch(existing._id, payload);
-      return { updated: true, id: existing._id };
+    const transition =
+      (args.nextState && args.setupType
+        ? {
+            state: args.nextState,
+            setupType: args.setupType,
+            isActive: args.nextState !== "invalidated" && args.nextState !== "completed",
+          }
+        : deriveSetupTransition({
+            existingSetup: activeSetup,
+            regime: args.regime,
+            verdict: args.verdict,
+            structureVerdict: args.structureVerdict,
+            direction: args.direction,
+            structureStatus: args.structureStatus,
+            correctedZone: args.updatedZone ?? args.correctedZone,
+          })) ?? null;
+
+    if (!transition) {
+      return {
+        updated: significantChange,
+        id: visionDecisionId,
+        setupUpdated: false,
+      };
     }
 
-    const id = await ctx.db.insert("visionDecisions", payload);
-    return { updated: true, id };
+    const nextZone = args.updatedZone ?? args.correctedZone;
+    const nextInvalidation = args.updatedInvalidationZone ?? args.invalidationZone;
+    const setupPayload: Omit<
+      Doc<"strategySetups">,
+      "_id" | "_creationTime" | "createdAt" | "parentSetupId"
+    > = {
+      agentSlug: args.agentSlug,
+      marketSymbol: args.marketSymbol,
+      state: transition.state as SetupLifecycleState,
+      setupType: transition.setupType as SetupType,
+      direction: args.direction,
+      regime: args.regime,
+      confidence: args.confidence,
+      zoneLow: nextZone?.low,
+      zoneHigh: nextZone?.high,
+      projectedPrice: nextZone?.projectedPrice,
+      invalidationLow: nextInvalidation?.low,
+      invalidationHigh: nextInvalidation?.high,
+      invalidationNote:
+        args.invalidationNote ??
+        nextInvalidation?.note ??
+        args.stateTransitionReason,
+      t1Price: args.correctedT1?.price,
+      t1Date: args.correctedT1?.date,
+      t2Price: args.correctedT2?.price,
+      t2Date: args.correctedT2?.date,
+      rationaleSummary: summarizeRationale(args.rationale),
+      lastReviewedAt: capturedAt,
+      completedAt:
+        transition.state === "completed" || transition.state === "invalidated"
+          ? capturedAt
+          : undefined,
+      isActive: transition.isActive,
+    };
+
+    if (!activeSetup && !transition.isActive) {
+      return {
+        updated: significantChange,
+        id: visionDecisionId,
+        setupUpdated: false,
+      };
+    }
+
+    if (activeSetup) {
+      await ctx.db.patch(activeSetup._id, setupPayload);
+      return {
+        updated: significantChange,
+        id: visionDecisionId,
+        setupUpdated: true,
+      };
+    }
+
+    await ctx.db.insert("strategySetups", {
+      ...setupPayload,
+      createdAt: capturedAt,
+      parentSetupId: undefined,
+    });
+    return {
+      updated: significantChange,
+      id: visionDecisionId,
+      setupUpdated: true,
+    };
   },
 });
 

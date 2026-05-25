@@ -16,6 +16,7 @@ import {
   verifyFibonacciDrawing,
   estimateFibonacciPlacementError,
   type ChartVisionDecision,
+  type FollowUpSetupContext,
 } from "./chart-vision-analysis";
 
 type BrowserStepStatus = "queued" | "running" | "completed" | "failed";
@@ -1852,10 +1853,22 @@ async function drawWithChartApi(
               )
             : Math.round(range.to - span * 0.08);
         const zoneStartTime = options?.suppressTrendline
-          ? Math.round(range.to - span * 0.015)
+          ? (() => {
+              const zoneSpanMultiplier = 5;
+              const leftOffset = span * 0.035;
+              return Math.round(
+                zoneCenterTime - leftOffset * zoneSpanMultiplier,
+              );
+            })()
           : zoneCenterTime - 5 * 24 * 3600;
         const zoneEndTime = options?.suppressTrendline
-          ? Math.round(range.to + span * 0.22)
+          ? (() => {
+              const zoneSpanMultiplier = 5;
+              const rightOffset = span * 0.27;
+              return Math.round(
+                zoneCenterTime + rightOffset * zoneSpanMultiplier,
+              );
+            })()
           : zoneCenterTime + 10 * 24 * 3600;
 
         // Clear any drawings from previous sessions
@@ -2658,13 +2671,46 @@ export async function startControlledBrowserSession(args: {
 
     setActionLabel(args.sessionId, "Analysing structure with vision agent");
     try {
+      const convex = getConvexClient();
+      const snapshot = await convex.query(api.arena.getArenaSnapshot, {});
+      const activeSetup =
+        snapshot.strategySetups?.find(
+          (setup) =>
+            setup.agentSlug === args.agentSlug &&
+            setup.marketSymbol === args.agentMarketSymbol &&
+            setup.isActive,
+        ) ?? null;
+
       console.log("[browser-session-runtime] starting vision analysis", {
         sessionId: args.sessionId,
+        followUpState: activeSetup?.state ?? null,
       });
       const decision = await analyzeChartWithVision(
         screenshots,
         args.swingPoints,
         visionProfile,
+        activeSetup
+          ? ({
+              state: activeSetup.state,
+              setupType: activeSetup.setupType,
+              direction: activeSetup.direction,
+              regime: activeSetup.regime,
+              confidence: activeSetup.confidence,
+              zoneLow: activeSetup.zoneLow,
+              zoneHigh: activeSetup.zoneHigh,
+              projectedPrice: activeSetup.projectedPrice,
+              invalidationLow: activeSetup.invalidationLow,
+              invalidationHigh: activeSetup.invalidationHigh,
+              invalidationNote: activeSetup.invalidationNote,
+              t1Price: activeSetup.t1Price,
+              t1Date: activeSetup.t1Date,
+              t2Price: activeSetup.t2Price,
+              t2Date: activeSetup.t2Date,
+              rationaleSummary: activeSetup.rationaleSummary,
+              createdAt: activeSetup.createdAt,
+              lastReviewedAt: activeSetup.lastReviewedAt,
+            } satisfies FollowUpSetupContext)
+          : null,
       );
       console.log("[vision-agent] parsed decision:\n", JSON.stringify(decision, null, 2));
       const runtime = runtimeSessions.get(args.sessionId);
@@ -2681,7 +2727,6 @@ export async function startControlledBrowserSession(args: {
 
       // Persist to Convex — gated internally so only writes on significant changes
       try {
-        const convex = getConvexClient();
         await convex.mutation(api.arena.persistVisionDecision, {
           agentSlug: args.agentSlug,
           marketSymbol: args.agentMarketSymbol,
@@ -2698,6 +2743,13 @@ export async function startControlledBrowserSession(args: {
           invalidationNote: decision.invalidationNote ?? undefined,
           rationale: decision.rationale,
           issues: decision.issues,
+          nextState: decision.nextState,
+          setupType: decision.setupType,
+          isFollowUp: decision.isFollowUp,
+          confirmationStatus: decision.confirmationStatus,
+          updatedZone: decision.updatedZone,
+          updatedInvalidationZone: decision.updatedInvalidationZone,
+          stateTransitionReason: decision.stateTransitionReason,
         });
         console.log("[browser-session-runtime] vision decision persisted", {
           sessionId: args.sessionId,

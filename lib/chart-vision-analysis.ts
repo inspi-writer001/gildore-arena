@@ -38,9 +38,55 @@ export type ChartVisionDecision = {
   invalidationNote?: string;
   rationale: string;
   issues: string[];
+  nextState?: SetupLifecycleState;
+  setupType?: SetupType;
+  isFollowUp?: boolean;
+  confirmationStatus?: "none" | "forming" | "confirmed" | "failed";
+  updatedZone?: { low: number; high: number; projectedPrice: number };
+  updatedInvalidationZone?: { low: number; high: number; note: string };
+  stateTransitionReason?: string;
 };
 
 export type ChartVisionProfile = "default" | "third-touch-execution";
+
+export type SetupLifecycleState =
+  | "discovering"
+  | "watching"
+  | "staged"
+  | "confirmed"
+  | "entered"
+  | "missed_entry"
+  | "secondary_retrace"
+  | "invalidated"
+  | "completed";
+
+export type SetupType =
+  | "third_touch"
+  | "future_third_touch_watch"
+  | "reclaim_after_break"
+  | "missed_entry_retrace"
+  | "secondary_retrace_continuation";
+
+export type FollowUpSetupContext = {
+  state: SetupLifecycleState;
+  setupType: SetupType;
+  direction: "long" | "short" | "none";
+  regime: "bullish" | "bearish" | "mixed";
+  confidence: number;
+  zoneLow?: number;
+  zoneHigh?: number;
+  projectedPrice?: number;
+  invalidationLow?: number;
+  invalidationHigh?: number;
+  invalidationNote?: string;
+  t1Price?: number;
+  t1Date?: string;
+  t2Price?: number;
+  t2Date?: string;
+  rationaleSummary: string;
+  createdAt: number;
+  lastReviewedAt: number;
+};
 
 // Strategy doctrine is sent once and cached by Anthropic's prompt cache.
 // This text is intentionally stable — do not inline dynamic values here.
@@ -160,6 +206,7 @@ function buildUserPrompt(
   candidate: SwingPointsForBrowser | undefined,
   screenshotCount: number,
   profile: ChartVisionProfile,
+  followUpSetup?: FollowUpSetupContext | null,
 ): string {
   const candidateSection = candidate
     ? `The deterministic engine produced this candidate for context:
@@ -177,9 +224,37 @@ Use these as a starting hypothesis — correct them if the visual evidence disag
       ? "Views 1–2 are the 4h timeframe for higher-timeframe structure. Views 3–4 are the 1h timeframe for intermediate confirmation. Views 5–6 are the 15m execution timeframe, ending at the drawing canvas."
       : "Views 1–2 are the 8h timeframe showing the CURRENT STRUCTURAL CYCLE (~4 months). Views 3–6 are the trading timeframe (4h or similar) at decreasing zoom, ending at the drawing canvas.";
 
+  const followUpSection = followUpSetup
+    ? `This is a FOLLOW-UP review of an existing setup, not a fresh discovery pass.
+
+Previous setup context:
+- State: ${followUpSetup.state}
+- Setup type: ${followUpSetup.setupType}
+- Direction: ${followUpSetup.direction}
+- Regime: ${followUpSetup.regime}
+- Confidence: ${Math.round(followUpSetup.confidence * 100)}%
+- Active zone: ${
+        followUpSetup.zoneLow != null && followUpSetup.zoneHigh != null
+          ? `${followUpSetup.zoneLow} – ${followUpSetup.zoneHigh}`
+          : "unknown"
+      }
+- Projected price: ${followUpSetup.projectedPrice ?? "unknown"}
+- Invalidation: ${
+        followUpSetup.invalidationLow != null &&
+        followUpSetup.invalidationHigh != null
+          ? `${followUpSetup.invalidationLow} – ${followUpSetup.invalidationHigh}`
+          : followUpSetup.invalidationNote ?? "none stored"
+      }
+- Prior rationale: ${followUpSetup.rationaleSummary}
+
+Do not rediscover from scratch unless the prior structure is clearly broken. Judge what changed relative to the stored setup: zone interaction, confirmation, failure, or a better secondary retrace.`
+    : "This is a fresh discovery review. Identify the best active setup from the current chart sequence.";
+
   return `You are reviewing ${screenshotCount} sequential chart screenshots following a deliberate multi-timeframe discovery flow. ${flowDescription}
 
 ${candidateSection}
+
+${followUpSection}
 
 Your task:
 1. ${
@@ -206,6 +281,7 @@ Your task:
    - none = nothing worth drawing
 7. Even if trade verdict is reject, still map the dominant structure when visible.
 8. In View 6 (DRAWING CANVAS), report viewSixPos for T1 and T2 if visible. If T1 is off-screen, set viewSixPos to null — use the correct price and date from the 8h analysis, not a substitute candle.
+9. If this is a follow-up review, also return nextState, setupType, isFollowUp=true, confirmationStatus, and optionally updatedZone / updatedInvalidationZone plus a short stateTransitionReason.
 
 Be honest. Lower confidence if ambiguous, but always attempt to map the dominant structure.`;
 }
@@ -214,6 +290,7 @@ export async function analyzeChartWithVision(
   screenshots: Buffer[],
   candidate?: SwingPointsForBrowser,
   profile: ChartVisionProfile = "default",
+  followUpSetup?: FollowUpSetupContext | null,
 ): Promise<ChartVisionDecision> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not configured.");
@@ -261,7 +338,7 @@ export async function analyzeChartWithVision(
 
   contentBlocks.push({
     type: "text",
-    text: `${buildUserPrompt(candidate, screenshots.length, profile)}
+    text: `${buildUserPrompt(candidate, screenshots.length, profile, followUpSetup)}
 
 Important output rules:
 - Never mention screenshot numbers in the JSON.
@@ -356,6 +433,41 @@ Output guardrails:
       invalidationNote: raw.invalidationNote ?? undefined,
       rationale: raw.rationale ?? "No rationale returned.",
       issues: Array.isArray(raw.issues) ? raw.issues : [],
+      nextState:
+        raw.nextState === "discovering" ||
+        raw.nextState === "watching" ||
+        raw.nextState === "staged" ||
+        raw.nextState === "confirmed" ||
+        raw.nextState === "entered" ||
+        raw.nextState === "missed_entry" ||
+        raw.nextState === "secondary_retrace" ||
+        raw.nextState === "invalidated" ||
+        raw.nextState === "completed"
+          ? raw.nextState
+          : undefined,
+      setupType:
+        raw.setupType === "third_touch" ||
+        raw.setupType === "future_third_touch_watch" ||
+        raw.setupType === "reclaim_after_break" ||
+        raw.setupType === "missed_entry_retrace" ||
+        raw.setupType === "secondary_retrace_continuation"
+          ? raw.setupType
+          : undefined,
+      isFollowUp:
+        typeof raw.isFollowUp === "boolean" ? raw.isFollowUp : undefined,
+      confirmationStatus:
+        raw.confirmationStatus === "none" ||
+        raw.confirmationStatus === "forming" ||
+        raw.confirmationStatus === "confirmed" ||
+        raw.confirmationStatus === "failed"
+          ? raw.confirmationStatus
+          : undefined,
+      updatedZone: raw.updatedZone ?? undefined,
+      updatedInvalidationZone: raw.updatedInvalidationZone ?? undefined,
+      stateTransitionReason:
+        typeof raw.stateTransitionReason === "string"
+          ? raw.stateTransitionReason
+          : undefined,
     };
   } catch {
     return {
