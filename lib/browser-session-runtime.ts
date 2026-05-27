@@ -1,5 +1,3 @@
-import "server-only";
-
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Buffer } from "node:buffer";
@@ -1036,6 +1034,20 @@ export type SwingPointsForBrowser = {
   candleSeconds: number; // e.g. 14400 for 4h
 };
 
+export type CachedBrowserOverlay = {
+  structureStatus: ChartVisionDecision["structureStatus"];
+  verdict: ChartVisionDecision["verdict"];
+  direction: ChartVisionDecision["direction"];
+  t1Date?: string;
+  t2Date?: string;
+  invalidationZone?: {
+    low: number;
+    high: number;
+    note: string;
+  };
+  invalidationNote?: string;
+};
+
 export type ThirdTouchT2Candidate = {
   id: string;
   timeSec: number;
@@ -1796,44 +1808,45 @@ async function drawWithChartApi(
         // Chart canvas occupies x=0.11–0.93 of the viewport (toolbar left, price axis right).
         const CHART_L = 0.11;
         const CHART_R = 0.93;
-        const xPctToTime = (xPct: number) => {
-          const canvasFrac = (xPct - CHART_L) / (CHART_R - CHART_L);
-          return Math.round(range.from + span * Math.max(0, Math.min(1, canvasFrac)));
-        };
+        let t2ChartTimeFromXPct: number | null = null;
+        if (t2.xPct !== undefined) {
+          const canvasFrac = (t2.xPct - CHART_L) / (CHART_R - CHART_L);
+          t2ChartTimeFromXPct = Math.round(
+            range.from + span * Math.max(0, Math.min(1, canvasFrac)),
+          );
+        }
 
-        // ── Timestamp strategy ─────────────────────────────────────────────────
-        // Treat any xPct-derived timestamp as chart-native ground truth. When only
-        // one anchor has an on-screen xPct, derive the other anchor from the date
-        // delta between them instead of inventing a moving UTC offset.
-        const deriveRelativeTime = (
-          anchorDateUtcSec: number | undefined,
-          referenceDateUtcSec: number | undefined,
-          referenceChartTime: number | null,
-        ) => {
-          if (
-            anchorDateUtcSec === undefined ||
-            referenceDateUtcSec === undefined ||
-            referenceChartTime === null
-          ) {
-            return null;
-          }
-          return Math.round(referenceChartTime + (anchorDateUtcSec - referenceDateUtcSec));
-        };
-
-        const t2ChartTimeFromXPct = t2.xPct !== undefined ? xPctToTime(t2.xPct) : null;
-        const t1ChartTimeFromXPct = t1.xPct !== undefined ? xPctToTime(t1.xPct) : null;
+        let t1ChartTimeFromXPct: number | null = null;
+        if (t1.xPct !== undefined) {
+          const canvasFrac = (t1.xPct - CHART_L) / (CHART_R - CHART_L);
+          t1ChartTimeFromXPct = Math.round(
+            range.from + span * Math.max(0, Math.min(1, canvasFrac)),
+          );
+        }
 
         const t2Time =
           t2.exactTimeSec
           ?? t2ChartTimeFromXPct
-          ?? deriveRelativeTime(t2.dateUtcSec, t1.dateUtcSec, t1ChartTimeFromXPct)
+          ?? (
+            t2.dateUtcSec !== undefined &&
+            t1.dateUtcSec !== undefined &&
+            t1ChartTimeFromXPct !== null
+              ? Math.round(t1ChartTimeFromXPct + (t2.dateUtcSec - t1.dateUtcSec))
+              : null
+          )
           ?? (t2.dateUtcSec ?? null);
         if (!t2Time) return { ok: false, reason: "no time source for T2" };
 
         const t1Time =
           t1.exactTimeSec
           ?? t1ChartTimeFromXPct
-          ?? deriveRelativeTime(t1.dateUtcSec, t2.dateUtcSec, t2Time)
+          ?? (
+            t1.dateUtcSec !== undefined &&
+            t2.dateUtcSec !== undefined &&
+            t2Time !== null
+              ? Math.round(t2Time + (t1.dateUtcSec - t2.dateUtcSec))
+              : null
+          )
           ?? (t1.dateUtcSec ?? null);
         if (!t1Time) return { ok: false, reason: "no time source for T1" };
 
@@ -1852,24 +1865,22 @@ async function drawWithChartApi(
                 )
               )
             : Math.round(range.to - span * 0.08);
-        const zoneStartTime = options?.suppressTrendline
-          ? (() => {
-              const zoneSpanMultiplier = 5;
-              const leftOffset = span * 0.035;
-              return Math.round(
-                zoneCenterTime - leftOffset * zoneSpanMultiplier,
-              );
-            })()
-          : zoneCenterTime - 5 * 24 * 3600;
-        const zoneEndTime = options?.suppressTrendline
-          ? (() => {
-              const zoneSpanMultiplier = 5;
-              const rightOffset = span * 0.27;
-              return Math.round(
-                zoneCenterTime + rightOffset * zoneSpanMultiplier,
-              );
-            })()
-          : zoneCenterTime + 10 * 24 * 3600;
+        let zoneStartTime: number;
+        let zoneEndTime: number;
+        if (options?.suppressTrendline) {
+          const zoneSpanMultiplier = 5;
+          const leftOffset = span * 0.035;
+          const rightOffset = span * 0.27;
+          zoneStartTime = Math.round(
+            zoneCenterTime - leftOffset * zoneSpanMultiplier,
+          );
+          zoneEndTime = Math.round(
+            zoneCenterTime + rightOffset * zoneSpanMultiplier,
+          );
+        } else {
+          zoneStartTime = zoneCenterTime - 5 * 24 * 3600;
+          zoneEndTime = zoneCenterTime + 10 * 24 * 3600;
+        }
 
         // Clear any drawings from previous sessions
         chart.removeAllShapes();
@@ -2493,6 +2504,7 @@ export async function startControlledBrowserSession(args: {
   timeframe: string;
   targetUrl: string;
   swingPoints?: SwingPointsForBrowser;
+  cachedOverlay?: CachedBrowserOverlay;
 }) {
   const existing = runtimeSessions.get(args.sessionId);
   if (existing) {
@@ -2649,6 +2661,41 @@ export async function startControlledBrowserSession(args: {
       sessionId: args.sessionId,
     });
 
+    if (args.cachedOverlay && args.swingPoints) {
+      console.log("[browser-session-runtime] rendering cached overlay", {
+        sessionId: args.sessionId,
+        verdict: args.cachedOverlay.verdict,
+        structureStatus: args.cachedOverlay.structureStatus,
+      });
+      setActionLabel(args.sessionId, "Rendering cached analysis");
+      await identifySwingPointsOnChart(args.sessionId, page, args.swingPoints, {
+        structureStatus: args.cachedOverlay.structureStatus,
+        verdict: args.cachedOverlay.verdict,
+        suppressTrendline: true,
+        invalidationZone: args.cachedOverlay.invalidationZone,
+        invalidationNote: args.cachedOverlay.invalidationNote,
+        t1Date: args.cachedOverlay.t1Date,
+        t2Date: args.cachedOverlay.t2Date,
+        t1ExactTimeSec: args.swingPoints.t1TimeSec,
+        t2ExactTimeSec: args.swingPoints.t2TimeSec,
+        skipHaikuLocate: true,
+      });
+      await capture(args.sessionId);
+      setActionLabel(args.sessionId, undefined);
+      await writeStepState({
+        sessionId: args.sessionId,
+        steps,
+        currentIndex: 4,
+        currentStatus: "ready",
+      });
+      await capture(args.sessionId);
+      return {
+        ok: true,
+        screenshotPath,
+        reused: false,
+      };
+    }
+
     // Always capture the 6-shot sequence and run vision analysis.
     // swingPoints is optional context (only valid when the browser symbol matches the agent market).
     setActionLabel(args.sessionId, "Capturing chart context for vision analysis");
@@ -2730,6 +2777,10 @@ export async function startControlledBrowserSession(args: {
         await convex.mutation(api.arena.persistVisionDecision, {
           agentSlug: args.agentSlug,
           marketSymbol: args.agentMarketSymbol,
+          timeframe:
+            args.timeframe === "15m" || args.timeframe === "1h" || args.timeframe === "4h"
+              ? args.timeframe
+              : "15m",
           regime: decision.regime,
           verdict: decision.verdict,
           structureVerdict: decision.structureVerdict,
@@ -3212,7 +3263,7 @@ type DerivHistorySnapshot = {
   latestOhlc: DerivProbeOhlc | null;
 };
 
-function timeframeToDerivGranularity(timeframe: string) {
+export function timeframeToDerivGranularity(timeframe: string) {
   const granularityMap: Record<string, number> = {
     "15m": 900,
     "1h": 3600,

@@ -1,16 +1,12 @@
 import { NextResponse } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "@/convex/_generated/api";
-import { startControlledBrowserSession, type SwingPointsForBrowser } from "@/lib/browser-session-runtime";
+import {
+  startControlledBrowserSession,
+  type SwingPointsForBrowser,
+} from "@/lib/browser-session-runtime";
 import type { TradeTimeframe } from "@/lib/arena-types";
-import { fetchPythHistory } from "@/lib/pyth-history";
-import { deriveThirdTouchArenaState } from "@/lib/third-touch-engine";
-
-const CANDLE_SECONDS: Record<string, number> = {
-  "15m": 900,
-  "1h": 3600,
-  "4h": 14400,
-};
+import { resolveThirdTouchSwingPoints } from "@/lib/third-touch-review";
 
 function isTradeTimeframe(value: string): value is TradeTimeframe {
   return value === "15m" || value === "1h" || value === "4h";
@@ -23,84 +19,6 @@ function getConvexClient() {
   }
 
   return new ConvexHttpClient(url);
-}
-
-function extractSwingPointsFromTrace(
-  trace: {
-    annotations?: Array<{
-      geometry?: {
-        kind?: string;
-        text?: string;
-        position?: { price?: number; timeSec?: number };
-        end?: { price?: number; timeSec?: number };
-        lowPrice?: number;
-        highPrice?: number;
-      };
-    }>;
-  } | undefined,
-  timeframe: string,
-): SwingPointsForBrowser | undefined {
-  if (!trace?.annotations) return undefined;
-
-  let t1Price: number | undefined;
-  let t1TimeSec: number | undefined;
-  let t2Price: number | undefined;
-  let t2TimeSec: number | undefined;
-  let projectedPrice: number | undefined;
-  let t3TimeSec: number | undefined;
-  let zoneLow: number | undefined;
-  let zoneHigh: number | undefined;
-
-  for (const annotation of trace.annotations) {
-    const g = annotation.geometry;
-    if (!g) continue;
-    if (g.kind === "marker" && g.text === "T1") {
-      t1Price = g.position?.price;
-      t1TimeSec = g.position?.timeSec;
-    }
-    if (g.kind === "marker" && g.text === "T2") {
-      t2Price = g.position?.price;
-      t2TimeSec = g.position?.timeSec;
-    }
-    if (g.kind === "line") {
-      projectedPrice = g.end?.price;
-      t3TimeSec = g.end?.timeSec;
-    }
-    if (g.kind === "zone") {
-      zoneLow = g.lowPrice;
-      zoneHigh = g.highPrice;
-    }
-  }
-
-  if (
-    t1Price === undefined ||
-    t2Price === undefined ||
-    projectedPrice === undefined ||
-    zoneLow === undefined ||
-    zoneHigh === undefined
-  ) {
-    return undefined;
-  }
-
-  const allPrices = [t1Price, t2Price, projectedPrice, zoneLow, zoneHigh];
-  const rawLow = Math.min(...allPrices);
-  const rawHigh = Math.max(...allPrices);
-  const padding = (rawHigh - rawLow) * 0.2;
-
-  return {
-    t1Price,
-    t1TimeSec,
-    t2Price,
-    t2TimeSec,
-    projectedPrice,
-    t3TimeSec,
-    zoneLow,
-    zoneHigh,
-    direction: t2Price > t1Price ? "long" : "short",
-    visiblePriceLow: rawLow - padding,
-    visiblePriceHigh: rawHigh + padding,
-    candleSeconds: CANDLE_SECONDS[timeframe] ?? 3600,
-  };
 }
 
 export async function POST(request: Request) {
@@ -140,49 +58,39 @@ export async function POST(request: Request) {
       );
     }
 
+    if (!isTradeTimeframe(body.timeframe)) {
+      return NextResponse.json(
+        { ok: false, error: "invalid_timeframe" },
+        { status: 400 },
+      );
+    }
+
     let swingPoints = body.swingPoints;
     if (!swingPoints && body.agentSlug === "third-touch") {
       try {
         const convex = getConvexClient();
-        const snapshot = await convex.query(api.arena.getArenaSnapshot, {});
-        const trace = snapshot.visualTraces.find(
-          (item: { agentSlug: string; marketSymbol: string }) =>
-            item.agentSlug === body.agentSlug &&
-            item.marketSymbol === body.agentMarketSymbol,
-        );
-        swingPoints = extractSwingPointsFromTrace(trace, body.timeframe);
+        const resolved = await resolveThirdTouchSwingPoints({
+          convex,
+          agentSlug: body.agentSlug,
+          marketSymbol: body.agentMarketSymbol,
+          timeframe: body.timeframe,
+        });
+        swingPoints = resolved.swingPoints;
         console.log("[browser-session/start] server-side swingPoints fallback", {
           sessionId: body.sessionId,
           agentSlug: body.agentSlug,
           marketSymbol: body.agentMarketSymbol,
-          traceFound: Boolean(trace),
-          annotationCount: trace?.annotations?.length ?? 0,
+          annotationCount: resolved.annotationCount,
           recovered: Boolean(swingPoints),
+          recoveredFrom: resolved.recoveredFrom,
         });
-
-        if (!swingPoints && isTradeTimeframe(body.timeframe)) {
-          const candles = await fetchPythHistory(
-            body.agentMarketSymbol,
-            body.timeframe,
-          );
-          const derived = candles
-            ? deriveThirdTouchArenaState({
-                agentId: body.agentSlug,
-                marketSymbol: body.agentMarketSymbol,
-                timeframe: body.timeframe,
-                candles,
-              })
-            : null;
-          swingPoints = extractSwingPointsFromTrace(derived?.trace, body.timeframe);
-
-          console.log("[browser-session/start] on-demand third-touch fallback", {
-            sessionId: body.sessionId,
-            marketSymbol: body.agentMarketSymbol,
-            candleCount: candles?.length ?? 0,
-            derived: Boolean(derived),
-            recovered: Boolean(swingPoints),
-          });
-        }
+        console.log("[browser-session/start] on-demand third-touch fallback", {
+          sessionId: body.sessionId,
+          marketSymbol: body.agentMarketSymbol,
+          candleCount: resolved.candleCount,
+          recovered: Boolean(swingPoints),
+          recoveredFrom: resolved.recoveredFrom,
+        });
       } catch (fallbackError) {
         console.warn("[browser-session/start] swingPoints fallback failed", {
           sessionId: body.sessionId,

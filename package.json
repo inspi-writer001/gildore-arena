@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "worker": "tsx worker/src/index.ts",
     "build1": "cd gildore-arena-vault/target/client/typescript/gildore_vault && pnpm i && cd ../../../../../ && next build",
     "build": "git submodule update --init --recursive --remote && cd gildore-arena-vault/target/client/typescript/gildore_vault && pnpm i && cd ../../../../../ && next build",
     "start": "next start",
@@ -49,6 +50,7 @@
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",
     "tailwindcss": "^4.2.4",
+    "tsx": "^4.22.3",
     "typescript": "^5.7.2"
   }
 }

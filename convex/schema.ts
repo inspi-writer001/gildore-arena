@@ -386,6 +386,103 @@ export default defineSchema({
       "isActive",
     ]),
 
+  analysisSchedules: defineTable({
+    agentSlug: v.string(),
+    marketSymbol: v.string(),
+    timeframe: v.union(v.literal("15m"), v.literal("1h"), v.literal("4h")),
+    interestTier: v.union(v.literal("high"), v.literal("low")),
+    lastReviewedAt: v.optional(v.number()),
+    nextReviewAt: v.number(),
+    lastReviewOutcome: v.optional(
+      v.union(
+        v.literal("productive"),
+        v.literal("neutral"),
+        v.literal("stale"),
+        v.literal("error"),
+      ),
+    ),
+    lastError: v.optional(v.string()),
+    isNightWindow: v.boolean(),
+    productiveCount: v.number(),
+    staleCount: v.number(),
+    lastJobId: v.optional(v.id("analysisJobs")),
+  })
+    .index("by_agentSlug_marketSymbol", ["agentSlug", "marketSymbol"])
+    .index("by_nextReviewAt", ["nextReviewAt"]),
+
+  analysisJobs: defineTable({
+    agentSlug: v.string(),
+    marketSymbol: v.string(),
+    timeframe: v.union(v.literal("15m"), v.literal("1h"), v.literal("4h")),
+    status: v.union(
+      v.literal("queued"),
+      v.literal("claimed"),
+      v.literal("running"),
+      v.literal("completed"),
+      v.literal("failed"),
+    ),
+    trigger: v.union(v.literal("automatic"), v.literal("manual")),
+    claimedAt: v.optional(v.number()),
+    startedAt: v.optional(v.number()),
+    finishedAt: v.optional(v.number()),
+    error: v.optional(v.string()),
+    attemptCount: v.number(),
+    resultSetupState: v.optional(
+      v.union(
+        v.literal("discovering"),
+        v.literal("watching"),
+        v.literal("staged"),
+        v.literal("confirmed"),
+        v.literal("entered"),
+        v.literal("missed_entry"),
+        v.literal("secondary_retrace"),
+        v.literal("invalidated"),
+        v.literal("completed"),
+      ),
+    ),
+  })
+    .index("by_status", ["status"])
+    .index("by_agentSlug_marketSymbol", ["agentSlug", "marketSymbol"]),
+
+  analysisRenderCaches: defineTable({
+    agentSlug: v.string(),
+    marketSymbol: v.string(),
+    timeframe: v.union(v.literal("15m"), v.literal("1h"), v.literal("4h")),
+    strategy: v.literal("third-touch"),
+    drawMode: v.literal("zone-only"),
+    direction: v.union(v.literal("long"), v.literal("short"), v.literal("none")),
+    verdict: v.union(
+      v.literal("valid"),
+      v.literal("staged"),
+      v.literal("invalid"),
+      v.literal("reject"),
+    ),
+    structureVerdict: v.union(
+      v.literal("drawable"),
+      v.literal("watch_future_touch"),
+      v.literal("broken"),
+      v.literal("none"),
+    ),
+    structureStatus: v.union(
+      v.literal("clean"),
+      v.literal("weak"),
+      v.literal("broken"),
+      v.literal("none"),
+    ),
+    confidence: v.number(),
+    t1Price: v.optional(v.number()),
+    t1Date: v.optional(v.string()),
+    t2Price: v.optional(v.number()),
+    t2Date: v.optional(v.string()),
+    zoneLow: v.optional(v.number()),
+    zoneHigh: v.optional(v.number()),
+    projectedPrice: v.optional(v.number()),
+    invalidationLow: v.optional(v.number()),
+    invalidationHigh: v.optional(v.number()),
+    invalidationNote: v.optional(v.string()),
+    reviewedAt: v.number(),
+  }).index("by_agentSlug_marketSymbol", ["agentSlug", "marketSymbol"]),
+
   browserSessionEvents: defineTable({
     sessionId: v.id("browserSessions"),
     sequence: v.number(),
