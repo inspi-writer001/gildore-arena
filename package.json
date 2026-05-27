@@ -2,13 +2,19 @@
   "name": "gildore-arena",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@10.30.3",
   "scripts": {
     "dev": "next dev",
+    "worker": "tsx worker/src/index.ts",
     "build1": "cd gildore-arena-vault/target/client/typescript/gildore_vault && pnpm i && cd ../../../../../ && next build",
     "build": "git submodule update --init --recursive --remote && cd gildore-arena-vault/target/client/typescript/gildore_vault && pnpm i && cd ../../../../../ && next build",
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": "22.x",
+    "pnpm": "10.30.3"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
@@ -34,21 +40,13 @@
     "shaders": "2.4",
     "tailwind-merge": "^3.5.0"
   },
-  "pnpm": {
-    "overrides": {
-      "@wallet-standard/ui-features": "1.0.1",
-      "@wallet-standard/ui-registry": "1.0.1"
-    },
-    "onlyBuiltDependencies": [
-      "@solana/web3.js"
-    ]
-  },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.2.4",
     "@types/node": "^22.14.1",
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",
     "tailwindcss": "^4.2.4",
+    "tsx": "^4.22.3",
     "typescript": "^5.7.2"
   }
 }

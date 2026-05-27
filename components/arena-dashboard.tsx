@@ -33,6 +33,8 @@ import { AgentFundingModal } from "@/components/arena/agent-funding-modal";
 import { SelectedAgentPanel } from "@/components/arena/selected-agent-panel";
 import type {
   ActiveStrategySetup,
+  AnalysisRenderCache,
+  AnalysisSchedule,
   BrowserSession,
   BrowserSessionEvent,
   ConfluenceState,
@@ -233,6 +235,45 @@ type ArenaSnapshot = {
     parentSetupId?: string;
     isActive: boolean;
   }>;
+  analysisSchedules: Array<{
+    _id: string;
+    agentSlug: string;
+    marketSymbol: string;
+    timeframe: TradeTimeframe;
+    interestTier: AnalysisSchedule["interestTier"];
+    lastReviewedAt?: number;
+    nextReviewAt: number;
+    lastReviewOutcome?: AnalysisSchedule["lastReviewOutcome"];
+    lastError?: string;
+    isNightWindow: boolean;
+    productiveCount: number;
+    staleCount: number;
+    lastJobId?: string;
+  }>;
+  analysisRenderCaches: Array<{
+    _id: string;
+    agentSlug: string;
+    marketSymbol: string;
+    timeframe: TradeTimeframe;
+    strategy: "third-touch";
+    drawMode: "zone-only";
+    direction: AnalysisRenderCache["direction"];
+    verdict: AnalysisRenderCache["verdict"];
+    structureVerdict: AnalysisRenderCache["structureVerdict"];
+    structureStatus: AnalysisRenderCache["structureStatus"];
+    confidence: number;
+    t1Price?: number;
+    t1Date?: string;
+    t2Price?: number;
+    t2Date?: string;
+    zoneLow?: number;
+    zoneHigh?: number;
+    projectedPrice?: number;
+    invalidationLow?: number;
+    invalidationHigh?: number;
+    invalidationNote?: string;
+    reviewedAt: number;
+  }>;
 };
 
 function formatRelativeMinutes(timestamp: number | null) {
@@ -368,6 +409,7 @@ export default function ArenaDashboard() {
   const startBrowserReviewSession = useAction(
     api.arena.startBrowserReviewSession,
   );
+  const requestAnalysisRefresh = useMutation(api.arena.requestAnalysisRefresh);
   const prepareFundAgentVault = useAction(api.agentVault.prepareFundAgentVault);
   const submitFundAgentVault = useAction(api.agentVault.submitFundAgentVault);
   const prepareRegisterTicker = useAction(api.agentVault.prepareRegisterTicker);
@@ -825,6 +867,18 @@ export default function ArenaDashboard() {
           isActive: selectedActiveSetupRow.isActive,
         }
       : null;
+    const selectedAnalysisSchedule =
+      snapshot.analysisSchedules?.find(
+        (schedule) =>
+          schedule.agentSlug === selectedAgent.id &&
+          schedule.marketSymbol === selectedMarketSymbol,
+      ) ?? null;
+    const selectedAnalysisRenderCache =
+      snapshot.analysisRenderCaches?.find(
+        (cache) =>
+          cache.agentSlug === selectedAgent.id &&
+          cache.marketSymbol === selectedMarketSymbol,
+      ) ?? null;
 
     return {
       agents,
@@ -848,6 +902,8 @@ export default function ArenaDashboard() {
       selectedBrowserSessionEvents,
       selectedVisionDecision,
       selectedActiveSetup,
+      selectedAnalysisSchedule,
+      selectedAnalysisRenderCache,
       lastScanAt: snapshot.scanRuns[0]?.startedAt ?? null,
     };
   }, [selectedAgentSlug, selectedMarketParam, snapshot]);
@@ -1017,6 +1073,8 @@ export default function ArenaDashboard() {
     selectedBrowserSessionEvents = [],
     selectedVisionDecision,
     selectedActiveSetup,
+    selectedAnalysisSchedule,
+    selectedAnalysisRenderCache,
     lastScanAt,
   } = derived;
   const handleSelectMarket = (marketSymbol: string) => {
@@ -1048,6 +1106,31 @@ export default function ArenaDashboard() {
 
     setIsStartingBrowserSession(true);
     try {
+      const hasCachedConjurePayload =
+        selectedAgent.id === "third-touch" &&
+        selectedAnalysisRenderCache &&
+        selectedAnalysisRenderCache.direction !== "none" &&
+        selectedAnalysisRenderCache.t1Price !== undefined &&
+        selectedAnalysisRenderCache.t2Price !== undefined &&
+        selectedAnalysisRenderCache.zoneLow !== undefined &&
+        selectedAnalysisRenderCache.zoneHigh !== undefined &&
+        selectedAnalysisRenderCache.projectedPrice !== undefined;
+
+      const shouldRefreshCachedAnalysis =
+        selectedAnalysisSchedule &&
+        selectedAnalysisSchedule.nextReviewAt <= Date.now();
+
+      if (shouldRefreshCachedAnalysis) {
+        void requestAnalysisRefresh({
+          agentSlug: selectedAgent.id,
+          marketSymbol: selectedMarketSymbol,
+          timeframe: selectedAgent.timeframe,
+          trigger: "manual",
+        }).catch((error) => {
+          console.warn("[conjure] failed to enqueue refresh", error);
+        });
+      }
+
       const result = await startBrowserReviewSession({
         agentSlug: selectedAgent.id,
         marketSymbol: selectedMarketSymbol,
@@ -1075,7 +1158,10 @@ export default function ArenaDashboard() {
           }),
         });
       } else {
-        response = await fetch("/api/browser-session/start", {
+        const endpoint = hasCachedConjurePayload
+          ? "/api/browser-session/render/start"
+          : "/api/browser-session/start";
+        response = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1086,9 +1172,32 @@ export default function ArenaDashboard() {
             agentMarketSymbol: selectedMarketSymbol,
             targetUrl: "https://charts.deriv.com/deriv",
             swingPoints:
+              !hasCachedConjurePayload &&
               result.browserTargetSymbol === selectedMarketSymbol
                 ? extractSwingPoints(selectedTrace, selectedAgent.timeframe)
                 : undefined,
+            overlay: hasCachedConjurePayload
+              ? {
+                  structureStatus:
+                    selectedAnalysisRenderCache.structureStatus,
+                  verdict: selectedAnalysisRenderCache.verdict,
+                  direction: selectedAnalysisRenderCache.direction,
+                  t1Price: selectedAnalysisRenderCache.t1Price,
+                  t1Date: selectedAnalysisRenderCache.t1Date,
+                  t2Price: selectedAnalysisRenderCache.t2Price,
+                  t2Date: selectedAnalysisRenderCache.t2Date,
+                  zoneLow: selectedAnalysisRenderCache.zoneLow,
+                  zoneHigh: selectedAnalysisRenderCache.zoneHigh,
+                  projectedPrice:
+                    selectedAnalysisRenderCache.projectedPrice,
+                  invalidationLow:
+                    selectedAnalysisRenderCache.invalidationLow,
+                  invalidationHigh:
+                    selectedAnalysisRenderCache.invalidationHigh,
+                  invalidationNote:
+                    selectedAnalysisRenderCache.invalidationNote,
+                }
+              : undefined,
           }),
         });
       }

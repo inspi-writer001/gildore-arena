@@ -1,5 +1,3 @@
-import "server-only";
-
 import Anthropic from "@anthropic-ai/sdk";
 import type { SwingPointsForBrowser, ThirdTouchT2Candidate } from "./browser-session-runtime";
 

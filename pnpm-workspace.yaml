@@ -1,2 +1,6 @@
+overrides:
+  "@wallet-standard/ui-features": "1.0.1"
+  "@wallet-standard/ui-registry": "1.0.1"
+
 onlyBuiltDependencies:
   - "@solana/web3.js"

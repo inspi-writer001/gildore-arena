@@ -38,6 +38,20 @@ export type SetupType =
   | "missed_entry_retrace"
   | "secondary_retrace_continuation";
 
+export type AnalysisInterestTier = "high" | "low";
+export type AnalysisJobStatus =
+  | "queued"
+  | "claimed"
+  | "running"
+  | "completed"
+  | "failed";
+export type AnalysisJobTrigger = "automatic" | "manual";
+export type AnalysisReviewOutcome =
+  | "productive"
+  | "neutral"
+  | "stale"
+  | "error";
+
 export type Agent = {
   id: string;
   name: string;
@@ -258,4 +272,45 @@ export type ActiveStrategySetup = {
   completedAt?: number;
   parentSetupId?: string;
   isActive: boolean;
+};
+
+export type AnalysisSchedule = {
+  id: string;
+  agentSlug: string;
+  marketSymbol: string;
+  timeframe: TradeTimeframe;
+  interestTier: AnalysisInterestTier;
+  lastReviewedAt?: number;
+  nextReviewAt: number;
+  lastReviewOutcome?: AnalysisReviewOutcome;
+  lastError?: string;
+  isNightWindow: boolean;
+  productiveCount: number;
+  staleCount: number;
+  lastJobId?: string;
+};
+
+export type AnalysisRenderCache = {
+  id: string;
+  agentSlug: string;
+  marketSymbol: string;
+  timeframe: TradeTimeframe;
+  strategy: "third-touch";
+  drawMode: "zone-only";
+  direction: TradeDirection | "none";
+  verdict: "valid" | "staged" | "invalid" | "reject";
+  structureVerdict: "drawable" | "watch_future_touch" | "broken" | "none";
+  structureStatus: "clean" | "weak" | "broken" | "none";
+  confidence: number;
+  t1Price?: number;
+  t1Date?: string;
+  t2Price?: number;
+  t2Date?: string;
+  zoneLow?: number;
+  zoneHigh?: number;
+  projectedPrice?: number;
+  invalidationLow?: number;
+  invalidationHigh?: number;
+  invalidationNote?: string;
+  reviewedAt: number;
 };

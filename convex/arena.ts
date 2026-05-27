@@ -219,6 +219,31 @@ const setupTypeValidator = v.union(
   v.literal("secondary_retrace_continuation"),
 );
 
+const analysisInterestTierValidator = v.union(
+  v.literal("high"),
+  v.literal("low"),
+);
+
+const analysisJobStatusValidator = v.union(
+  v.literal("queued"),
+  v.literal("claimed"),
+  v.literal("running"),
+  v.literal("completed"),
+  v.literal("failed"),
+);
+
+const analysisJobTriggerValidator = v.union(
+  v.literal("automatic"),
+  v.literal("manual"),
+);
+
+const analysisReviewOutcomeValidator = v.union(
+  v.literal("productive"),
+  v.literal("neutral"),
+  v.literal("stale"),
+  v.literal("error"),
+);
+
 type SetupLifecycleState =
   | "discovering"
   | "watching"
@@ -236,6 +261,99 @@ type SetupType =
   | "reclaim_after_break"
   | "missed_entry_retrace"
   | "secondary_retrace_continuation";
+
+type AnalysisInterestTier = "high" | "low";
+type AnalysisJobStatus =
+  | "queued"
+  | "claimed"
+  | "running"
+  | "completed"
+  | "failed";
+type AnalysisJobTrigger = "automatic" | "manual";
+type AnalysisReviewOutcome = "productive" | "neutral" | "stale" | "error";
+
+const ANALYSIS_NIGHT_START_HOUR = 23;
+const ANALYSIS_DAY_START_HOUR = 6;
+
+function getLagosHour(timestamp: number) {
+  const formatter = new Intl.DateTimeFormat("en-GB", {
+    hour: "numeric",
+    hour12: false,
+    timeZone: "Africa/Lagos",
+  });
+  return Number(formatter.format(new Date(timestamp)));
+}
+
+function isNightWindow(timestamp: number) {
+  const hour = getLagosHour(timestamp);
+  return hour >= ANALYSIS_NIGHT_START_HOUR || hour < ANALYSIS_DAY_START_HOUR;
+}
+
+function deriveInterestTierFromSetupState(
+  state: SetupLifecycleState | undefined | null,
+): AnalysisInterestTier {
+  if (
+    state === "watching" ||
+    state === "staged" ||
+    state === "confirmed" ||
+    state === "secondary_retrace"
+  ) {
+    return "high";
+  }
+
+  return "low";
+}
+
+function deriveReviewOutcome(args: {
+  state: SetupLifecycleState | undefined;
+  verdict: "valid" | "staged" | "invalid" | "reject";
+  structureVerdict: "drawable" | "watch_future_touch" | "broken" | "none";
+}): AnalysisReviewOutcome {
+  if (
+    args.state === "confirmed" ||
+    args.state === "staged" ||
+    args.state === "watching" ||
+    args.state === "secondary_retrace"
+  ) {
+    return "productive";
+  }
+
+  if (args.verdict === "invalid" || args.structureVerdict === "broken") {
+    return "error";
+  }
+
+  if (args.verdict === "reject" || args.structureVerdict === "none") {
+    return "stale";
+  }
+
+  return "neutral";
+}
+
+function computeNextReviewAt(args: {
+  now: number;
+  interestTier: AnalysisInterestTier;
+}) {
+  const night = isNightWindow(args.now);
+  const intervalMinutes =
+    args.interestTier === "high"
+      ? night
+        ? 60
+        : 31
+      : night
+        ? 8 * 60
+        : 4 * 60;
+
+  return {
+    nextReviewAt: args.now + intervalMinutes * 60_000,
+    isNightWindow: night,
+  };
+}
+
+function coerceSetupStateFromOutcome(
+  state: SetupLifecycleState | undefined | null,
+): SetupLifecycleState | undefined {
+  return state ?? undefined;
+}
 
 function summarizeRationale(text: string) {
   const trimmed = text.trim();
@@ -416,6 +534,9 @@ export const getArenaSnapshot = query({
       scanRuns,
       visionDecisions,
       strategySetups,
+      analysisSchedules,
+      analysisRenderCaches,
+      analysisJobs,
     ] = await Promise.all([
       ctx.db.query("agents").collect(),
       ctx.db.query("markets").collect(),
@@ -431,6 +552,9 @@ export const getArenaSnapshot = query({
       ctx.db.query("scanRuns").collect(),
       ctx.db.query("visionDecisions").collect(),
       ctx.db.query("strategySetups").collect(),
+      ctx.db.query("analysisSchedules").collect(),
+      ctx.db.query("analysisRenderCaches").collect(),
+      ctx.db.query("analysisJobs").collect(),
     ]);
 
     return {
@@ -487,6 +611,19 @@ export const getArenaSnapshot = query({
       strategySetups: strategySetups.sort(
         (a, b) => b.lastReviewedAt - a.lastReviewedAt,
       ),
+      analysisSchedules: analysisSchedules.sort(
+        (a, b) => a.nextReviewAt - b.nextReviewAt,
+      ),
+      analysisRenderCaches: latestByKey(
+        analysisRenderCaches,
+        (row) => `${row.agentSlug}:${row.marketSymbol}`,
+        (row) => row.reviewedAt,
+      ),
+      analysisJobs: analysisJobs.sort((a, b) => {
+        const left = a.startedAt ?? a.claimedAt ?? a.finishedAt ?? a._creationTime;
+        const right = b.startedAt ?? b.claimedAt ?? b.finishedAt ?? b._creationTime;
+        return right - left;
+      }),
     };
   },
 });
@@ -1478,6 +1615,7 @@ export const persistVisionDecision = mutation({
   args: {
     agentSlug: v.string(),
     marketSymbol: v.string(),
+    timeframe: v.union(v.literal("15m"), v.literal("1h"), v.literal("4h")),
     regime: v.union(v.literal("bullish"), v.literal("bearish"), v.literal("mixed")),
     verdict: v.union(v.literal("valid"), v.literal("staged"), v.literal("invalid"), v.literal("reject")),
     structureVerdict: v.union(
@@ -1578,6 +1716,7 @@ export const persistVisionDecision = mutation({
 
     const capturedAt = Date.now();
     const {
+      timeframe,
       nextState: _nextState,
       setupType: _setupType,
       isFollowUp: _isFollowUp,
@@ -1681,23 +1820,424 @@ export const persistVisionDecision = mutation({
 
     if (activeSetup) {
       await ctx.db.patch(activeSetup._id, setupPayload);
-      return {
-        updated: significantChange,
-        id: visionDecisionId,
-        setupUpdated: true,
-      };
+    } else {
+      await ctx.db.insert("strategySetups", {
+        ...setupPayload,
+        createdAt: capturedAt,
+        parentSetupId: undefined,
+      });
     }
 
-    await ctx.db.insert("strategySetups", {
-      ...setupPayload,
-      createdAt: capturedAt,
-      parentSetupId: undefined,
+    const existingRenderCache = await ctx.db
+      .query("analysisRenderCaches")
+      .withIndex("by_agentSlug_marketSymbol", (q) =>
+        q.eq("agentSlug", args.agentSlug).eq("marketSymbol", args.marketSymbol),
+      )
+      .unique();
+
+    const renderCachePayload = {
+      agentSlug: args.agentSlug,
+      marketSymbol: args.marketSymbol,
+      timeframe,
+      strategy: "third-touch" as const,
+      drawMode: "zone-only" as const,
+      direction: args.direction,
+      verdict: args.verdict,
+      structureVerdict: args.structureVerdict,
+      structureStatus: args.structureStatus,
+      confidence: args.confidence,
+      t1Price: args.correctedT1?.price,
+      t1Date: args.correctedT1?.date,
+      t2Price: args.correctedT2?.price,
+      t2Date: args.correctedT2?.date,
+      zoneLow: nextZone?.low,
+      zoneHigh: nextZone?.high,
+      projectedPrice: nextZone?.projectedPrice,
+      invalidationLow: nextInvalidation?.low,
+      invalidationHigh: nextInvalidation?.high,
+      invalidationNote:
+        args.invalidationNote ??
+        nextInvalidation?.note ??
+        args.stateTransitionReason,
+      reviewedAt: capturedAt,
+    };
+
+    if (existingRenderCache) {
+      await ctx.db.patch(existingRenderCache._id, renderCachePayload);
+    } else {
+      await ctx.db.insert("analysisRenderCaches", renderCachePayload);
+    }
+
+    const interestTier = deriveInterestTierFromSetupState(transition.state);
+    const scheduleTiming = computeNextReviewAt({
+      now: capturedAt,
+      interestTier,
     });
+    const reviewOutcome = deriveReviewOutcome({
+      state: transition.state,
+      verdict: args.verdict,
+      structureVerdict: args.structureVerdict,
+    });
+    const existingSchedule = await ctx.db
+      .query("analysisSchedules")
+      .withIndex("by_agentSlug_marketSymbol", (q) =>
+        q.eq("agentSlug", args.agentSlug).eq("marketSymbol", args.marketSymbol),
+      )
+      .unique();
+
+    if (existingSchedule) {
+      await ctx.db.patch(existingSchedule._id, {
+        timeframe,
+        interestTier,
+        lastReviewedAt: capturedAt,
+        nextReviewAt: scheduleTiming.nextReviewAt,
+        lastReviewOutcome: reviewOutcome,
+        lastError: undefined,
+        isNightWindow: scheduleTiming.isNightWindow,
+        productiveCount:
+          existingSchedule.productiveCount +
+          (reviewOutcome === "productive" ? 1 : 0),
+        staleCount:
+          existingSchedule.staleCount + (reviewOutcome === "stale" ? 1 : 0),
+      });
+    } else {
+      await ctx.db.insert("analysisSchedules", {
+        agentSlug: args.agentSlug,
+        marketSymbol: args.marketSymbol,
+        timeframe,
+        interestTier,
+        lastReviewedAt: capturedAt,
+        nextReviewAt: scheduleTiming.nextReviewAt,
+        lastReviewOutcome: reviewOutcome,
+        lastError: undefined,
+        isNightWindow: scheduleTiming.isNightWindow,
+        productiveCount: reviewOutcome === "productive" ? 1 : 0,
+        staleCount: reviewOutcome === "stale" ? 1 : 0,
+        lastJobId: undefined,
+      });
+    }
+
     return {
       updated: significantChange,
       id: visionDecisionId,
       setupUpdated: true,
     };
+  },
+});
+
+export const requestAnalysisRefresh = mutation({
+  args: {
+    agentSlug: v.string(),
+    marketSymbol: v.string(),
+    timeframe: v.union(v.literal("15m"), v.literal("1h"), v.literal("4h")),
+    trigger: v.optional(analysisJobTriggerValidator),
+  },
+  handler: async (ctx, args) => {
+    const existingActiveJob = (
+      await ctx.db
+        .query("analysisJobs")
+        .withIndex("by_agentSlug_marketSymbol", (q) =>
+          q.eq("agentSlug", args.agentSlug).eq("marketSymbol", args.marketSymbol),
+        )
+        .collect()
+    ).find(
+      (job) =>
+        job.status === "queued" || job.status === "claimed" || job.status === "running",
+    );
+
+    if (existingActiveJob) {
+      return { enqueued: false, jobId: existingActiveJob._id };
+    }
+
+    const jobId = await ctx.db.insert("analysisJobs", {
+      agentSlug: args.agentSlug,
+      marketSymbol: args.marketSymbol,
+      timeframe: args.timeframe,
+      status: "queued",
+      trigger: args.trigger ?? "manual",
+      claimedAt: undefined,
+      startedAt: undefined,
+      finishedAt: undefined,
+      error: undefined,
+      attemptCount: 0,
+      resultSetupState: undefined,
+    });
+
+    const existingSchedule = await ctx.db
+      .query("analysisSchedules")
+      .withIndex("by_agentSlug_marketSymbol", (q) =>
+        q.eq("agentSlug", args.agentSlug).eq("marketSymbol", args.marketSymbol),
+      )
+      .unique();
+
+    if (existingSchedule) {
+      await ctx.db.patch(existingSchedule._id, {
+        timeframe: args.timeframe,
+        nextReviewAt: Date.now(),
+        lastJobId: jobId,
+      });
+    } else {
+      const scheduleTiming = computeNextReviewAt({
+        now: Date.now(),
+        interestTier: "high",
+      });
+      await ctx.db.insert("analysisSchedules", {
+        agentSlug: args.agentSlug,
+        marketSymbol: args.marketSymbol,
+        timeframe: args.timeframe,
+        interestTier: "high",
+        lastReviewedAt: undefined,
+        nextReviewAt: Date.now(),
+        lastReviewOutcome: undefined,
+        lastError: undefined,
+        isNightWindow: scheduleTiming.isNightWindow,
+        productiveCount: 0,
+        staleCount: 0,
+        lastJobId: jobId,
+      });
+    }
+
+    return { enqueued: true, jobId };
+  },
+});
+
+export const claimNextDueAnalysisJob = mutation({
+  args: {
+    now: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const activeAgents = await ctx.db
+      .query("agents")
+      .withIndex("by_active", (q) => q.eq("isActive", true))
+      .collect();
+
+    for (const agent of activeAgents) {
+      if (agent.slug !== "third-touch") continue;
+
+      for (const marketSymbol of agent.trackedMarkets) {
+        const existingSchedule = await ctx.db
+          .query("analysisSchedules")
+          .withIndex("by_agentSlug_marketSymbol", (q) =>
+            q.eq("agentSlug", agent.slug).eq("marketSymbol", marketSymbol),
+          )
+          .unique();
+
+        if (existingSchedule) continue;
+
+        const scheduleTiming = computeNextReviewAt({
+          now: args.now,
+          interestTier: "low",
+        });
+
+        await ctx.db.insert("analysisSchedules", {
+          agentSlug: agent.slug,
+          marketSymbol,
+          timeframe: agent.timeframe,
+          interestTier: "low",
+          lastReviewedAt: undefined,
+          nextReviewAt: args.now,
+          lastReviewOutcome: undefined,
+          lastError: undefined,
+          isNightWindow: scheduleTiming.isNightWindow,
+          productiveCount: 0,
+          staleCount: 0,
+          lastJobId: undefined,
+        });
+      }
+    }
+
+    const dueSchedules = (await ctx.db.query("analysisSchedules").collect())
+      .filter((schedule) => schedule.nextReviewAt <= args.now)
+      .sort((a, b) => a.nextReviewAt - b.nextReviewAt);
+
+    for (const schedule of dueSchedules) {
+      const existingActiveJob = (
+        await ctx.db
+          .query("analysisJobs")
+          .withIndex("by_agentSlug_marketSymbol", (q) =>
+            q.eq("agentSlug", schedule.agentSlug).eq("marketSymbol", schedule.marketSymbol),
+          )
+          .collect()
+      ).find(
+        (job) =>
+          job.status === "queued" || job.status === "claimed" || job.status === "running",
+      );
+
+      if (existingActiveJob) {
+        if (existingActiveJob.status === "queued") {
+          await ctx.db.patch(existingActiveJob._id, {
+            status: "claimed",
+            claimedAt: args.now,
+            attemptCount: existingActiveJob.attemptCount + 1,
+            error: undefined,
+          });
+          await ctx.db.patch(schedule._id, { lastJobId: existingActiveJob._id });
+          return {
+            jobId: existingActiveJob._id,
+            agentSlug: schedule.agentSlug,
+            marketSymbol: schedule.marketSymbol,
+            timeframe: schedule.timeframe,
+            trigger: existingActiveJob.trigger,
+          };
+        }
+
+        continue;
+      }
+
+      const jobId = await ctx.db.insert("analysisJobs", {
+        agentSlug: schedule.agentSlug,
+        marketSymbol: schedule.marketSymbol,
+        timeframe: schedule.timeframe,
+        status: "claimed",
+        trigger: "automatic",
+        claimedAt: args.now,
+        startedAt: undefined,
+        finishedAt: undefined,
+        error: undefined,
+        attemptCount: 1,
+        resultSetupState: undefined,
+      });
+
+      await ctx.db.patch(schedule._id, { lastJobId: jobId });
+
+      return {
+        jobId,
+        agentSlug: schedule.agentSlug,
+        marketSymbol: schedule.marketSymbol,
+        timeframe: schedule.timeframe,
+        trigger: "automatic" as AnalysisJobTrigger,
+      };
+    }
+
+    return null;
+  },
+});
+
+export const markAnalysisJobRunning = mutation({
+  args: {
+    jobId: v.id("analysisJobs"),
+    startedAt: v.number(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.jobId, {
+      status: "running",
+      startedAt: args.startedAt,
+    });
+  },
+});
+
+export const markAnalysisJobCompleted = mutation({
+  args: {
+    jobId: v.id("analysisJobs"),
+    finishedAt: v.number(),
+    resultSetupState: v.optional(setupStateValidator),
+  },
+  handler: async (ctx, args) => {
+    const job = await ctx.db.get(args.jobId);
+    if (!job) return null;
+
+    await ctx.db.patch(args.jobId, {
+      status: "completed",
+      finishedAt: args.finishedAt,
+      resultSetupState: args.resultSetupState,
+      error: undefined,
+    });
+
+    const activeSetup = (
+      await ctx.db
+        .query("strategySetups")
+        .withIndex("by_agentSlug_marketSymbol_isActive", (q) =>
+          q
+            .eq("agentSlug", job.agentSlug)
+            .eq("marketSymbol", job.marketSymbol)
+            .eq("isActive", true),
+        )
+        .collect()
+    ).sort((a, b) => b.lastReviewedAt - a.lastReviewedAt)[0];
+
+    const interestTier = deriveInterestTierFromSetupState(activeSetup?.state);
+    const scheduleTiming = computeNextReviewAt({
+      now: args.finishedAt,
+      interestTier,
+    });
+    const existingSchedule = await ctx.db
+      .query("analysisSchedules")
+      .withIndex("by_agentSlug_marketSymbol", (q) =>
+        q.eq("agentSlug", job.agentSlug).eq("marketSymbol", job.marketSymbol),
+      )
+      .unique();
+
+    const reviewOutcome = activeSetup
+      ? deriveReviewOutcome({
+          state: activeSetup.state,
+          verdict: "staged",
+          structureVerdict:
+            activeSetup.state === "watching" ? "watch_future_touch" : "drawable",
+        })
+      : ("neutral" satisfies AnalysisReviewOutcome);
+
+    if (existingSchedule) {
+      await ctx.db.patch(existingSchedule._id, {
+        timeframe: job.timeframe,
+        interestTier,
+        lastReviewedAt: args.finishedAt,
+        nextReviewAt: scheduleTiming.nextReviewAt,
+        lastReviewOutcome: reviewOutcome,
+        lastError: undefined,
+        isNightWindow: scheduleTiming.isNightWindow,
+        productiveCount:
+          existingSchedule.productiveCount +
+          (reviewOutcome === "productive" ? 1 : 0),
+        staleCount:
+          existingSchedule.staleCount + (reviewOutcome === "stale" ? 1 : 0),
+        lastJobId: args.jobId,
+      });
+    }
+
+    return {
+      interestTier,
+      nextReviewAt: scheduleTiming.nextReviewAt,
+      resultSetupState: activeSetup?.state,
+    };
+  },
+});
+
+export const markAnalysisJobFailed = mutation({
+  args: {
+    jobId: v.id("analysisJobs"),
+    finishedAt: v.number(),
+    error: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const job = await ctx.db.get(args.jobId);
+    if (!job) return null;
+
+    await ctx.db.patch(args.jobId, {
+      status: "failed",
+      finishedAt: args.finishedAt,
+      error: args.error,
+    });
+
+    const existingSchedule = await ctx.db
+      .query("analysisSchedules")
+      .withIndex("by_agentSlug_marketSymbol", (q) =>
+        q.eq("agentSlug", job.agentSlug).eq("marketSymbol", job.marketSymbol),
+      )
+      .unique();
+
+    if (existingSchedule) {
+      const retryAt = args.finishedAt + 30 * 60_000;
+      await ctx.db.patch(existingSchedule._id, {
+        timeframe: job.timeframe,
+        nextReviewAt: retryAt,
+        lastReviewOutcome: "error",
+        lastError: args.error,
+        isNightWindow: isNightWindow(args.finishedAt),
+        lastJobId: args.jobId,
+      });
+    }
+
+    return { retried: true };
   },
 });
 
