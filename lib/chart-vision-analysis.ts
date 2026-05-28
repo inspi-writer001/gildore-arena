@@ -45,8 +45,16 @@ export type ChartVisionDecision = {
     | "confirmed"
     | "failed"
     | "missed";
-  updatedZone?: { low: number; high: number; projectedPrice: number };
-  updatedInvalidationZone?: { low: number; high: number; note: string };
+  updatedZone?: {
+    low: number;
+    high: number;
+    projectedPrice?: number;
+  };
+  updatedInvalidationZone?: {
+    low: number;
+    high: number;
+    note?: string;
+  };
   stateTransitionReason?: string;
 };
 
@@ -380,6 +388,9 @@ Output guardrails:
 
   try {
     const raw = JSON.parse(jsonText) as Partial<ChartVisionDecision>;
+    const rawConfirmationStatus = (
+      raw as Partial<{ confirmationStatus: string }>
+    ).confirmationStatus;
 
     const parseScreenPos = (pos: unknown): ScreenPos | undefined => {
       if (!pos || typeof pos !== "object") return undefined;
@@ -461,15 +472,41 @@ Output guardrails:
       isFollowUp:
         typeof raw.isFollowUp === "boolean" ? raw.isFollowUp : undefined,
       confirmationStatus:
-        raw.confirmationStatus === "none" ||
-        raw.confirmationStatus === "forming" ||
-        raw.confirmationStatus === "confirmed" ||
-        raw.confirmationStatus === "failed" ||
-        raw.confirmationStatus === "missed"
-          ? raw.confirmationStatus
+        rawConfirmationStatus === "pending"
+          ? "forming"
+          : rawConfirmationStatus === "none" ||
+              rawConfirmationStatus === "forming" ||
+              rawConfirmationStatus === "confirmed" ||
+              rawConfirmationStatus === "failed" ||
+              rawConfirmationStatus === "missed"
+            ? rawConfirmationStatus
+            : undefined,
+      updatedZone:
+        raw.updatedZone &&
+        typeof raw.updatedZone.low === "number" &&
+        typeof raw.updatedZone.high === "number"
+          ? {
+              low: raw.updatedZone.low,
+              high: raw.updatedZone.high,
+              projectedPrice:
+                typeof raw.updatedZone.projectedPrice === "number"
+                  ? raw.updatedZone.projectedPrice
+                  : undefined,
+            }
           : undefined,
-      updatedZone: raw.updatedZone ?? undefined,
-      updatedInvalidationZone: raw.updatedInvalidationZone ?? undefined,
+      updatedInvalidationZone:
+        raw.updatedInvalidationZone &&
+        typeof raw.updatedInvalidationZone.low === "number" &&
+        typeof raw.updatedInvalidationZone.high === "number"
+          ? {
+              low: raw.updatedInvalidationZone.low,
+              high: raw.updatedInvalidationZone.high,
+              note:
+                typeof raw.updatedInvalidationZone.note === "string"
+                  ? raw.updatedInvalidationZone.note
+                  : undefined,
+            }
+          : undefined,
       stateTransitionReason:
         typeof raw.stateTransitionReason === "string"
           ? raw.stateTransitionReason

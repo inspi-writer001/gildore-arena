@@ -1655,19 +1655,43 @@ export const persistVisionDecision = mutation({
       v.object({
         low: v.number(),
         high: v.number(),
-        projectedPrice: v.number(),
+        projectedPrice: v.optional(v.number()),
       }),
     ),
     updatedInvalidationZone: v.optional(
       v.object({
         low: v.number(),
         high: v.number(),
-        note: v.string(),
+        note: v.optional(v.string()),
       }),
     ),
     stateTransitionReason: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const normalizedUpdatedZone = args.updatedZone
+      ? {
+          low: args.updatedZone.low,
+          high: args.updatedZone.high,
+          projectedPrice:
+            args.updatedZone.projectedPrice ??
+            args.correctedZone?.projectedPrice ??
+            (args.updatedZone.low + args.updatedZone.high) / 2,
+        }
+      : undefined;
+
+    const normalizedUpdatedInvalidationZone = args.updatedInvalidationZone
+      ? {
+          low: args.updatedInvalidationZone.low,
+          high: args.updatedInvalidationZone.high,
+          note:
+            args.updatedInvalidationZone.note ??
+            args.invalidationZone?.note ??
+            args.invalidationNote ??
+            args.stateTransitionReason ??
+            "Updated invalidation zone.",
+        }
+      : undefined;
+
     const existing = await ctx.db
       .query("visionDecisions")
       .withIndex("by_agentSlug_marketSymbol", (q) =>
@@ -1765,7 +1789,7 @@ export const persistVisionDecision = mutation({
             structureVerdict: args.structureVerdict,
             direction: args.direction,
             structureStatus: args.structureStatus,
-            correctedZone: args.updatedZone ?? args.correctedZone,
+            correctedZone: normalizedUpdatedZone ?? args.correctedZone,
           })) ?? null;
 
     if (!transition) {
@@ -1776,8 +1800,9 @@ export const persistVisionDecision = mutation({
       };
     }
 
-    const nextZone = args.updatedZone ?? args.correctedZone;
-    const nextInvalidation = args.updatedInvalidationZone ?? args.invalidationZone;
+    const nextZone = normalizedUpdatedZone ?? args.correctedZone;
+    const nextInvalidation =
+      normalizedUpdatedInvalidationZone ?? args.invalidationZone;
     const setupPayload: Omit<
       Doc<"strategySetups">,
       "_id" | "_creationTime" | "createdAt" | "parentSetupId"
