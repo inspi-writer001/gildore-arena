@@ -65,17 +65,40 @@ function isServerlessRuntime() {
 }
 
 async function launchBrowser() {
-  if (isServerlessRuntime()) {
+  const launchBundledChromium = async () => {
     const executablePath = await bundledChromium.executablePath();
     return chromium.launch({
       args: bundledChromium.args,
       executablePath,
       headless: true,
     });
+  };
+
+  if (isServerlessRuntime()) {
+    return launchBundledChromium();
   }
 
-  const playwright = await import("playwright");
-  return playwright.chromium.launch({ headless: true });
+  try {
+    const playwright = await import("playwright");
+    return await playwright.chromium.launch({ headless: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const shouldFallbackToBundled =
+      message.includes("Executable doesn't exist") ||
+      message.includes(
+        "Please run the following command to download new browsers",
+      );
+
+    if (!shouldFallbackToBundled) {
+      throw error;
+    }
+
+    console.warn(
+      "[browser-session-runtime] Playwright browser missing, falling back to bundled Chromium",
+      { message },
+    );
+    return launchBundledChromium();
+  }
 }
 
 function getConvexClient() {
