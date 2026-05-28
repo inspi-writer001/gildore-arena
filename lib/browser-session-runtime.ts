@@ -45,6 +45,7 @@ type SessionRuntime = {
   page: Page;
   screenshotPath: string;
   captureLoop?: ReturnType<typeof setInterval>;
+  captureInFlight?: Promise<void>;
   latestPayload?: BrowserStreamPayload;
   pointer?: BrowserStreamPayload["pointer"];
   pointerPulseId: number;
@@ -692,12 +693,28 @@ async function capture(sessionId: string) {
   const runtime = runtimeSessions.get(sessionId);
   if (!runtime) return;
 
-  const buffer = await captureToBuffer(runtime.page);
-  await persistFrame({
-    sessionId,
-    screenshotPath: runtime.screenshotPath,
-    buffer,
-  });
+  if (runtime.captureInFlight) {
+    await runtime.captureInFlight;
+    return;
+  }
+
+  runtime.captureInFlight = (async () => {
+    const buffer = await captureToBuffer(runtime.page);
+    await persistFrame({
+      sessionId,
+      screenshotPath: runtime.screenshotPath,
+      buffer,
+    });
+  })();
+
+  try {
+    await runtime.captureInFlight;
+  } finally {
+    const latestRuntime = runtimeSessions.get(sessionId);
+    if (latestRuntime) {
+      latestRuntime.captureInFlight = undefined;
+    }
+  }
 }
 
 async function startLiveCaptureLoop(sessionId: string) {
