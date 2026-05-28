@@ -39,7 +39,12 @@ export type ChartVisionDecision = {
   nextState?: SetupLifecycleState;
   setupType?: SetupType;
   isFollowUp?: boolean;
-  confirmationStatus?: "none" | "forming" | "confirmed" | "failed";
+  confirmationStatus?:
+    | "none"
+    | "forming"
+    | "confirmed"
+    | "failed"
+    | "missed";
   updatedZone?: { low: number; high: number; projectedPrice: number };
   updatedInvalidationZone?: { low: number; high: number; note: string };
   stateTransitionReason?: string;
@@ -442,7 +447,9 @@ Output guardrails:
         raw.nextState === "invalidated" ||
         raw.nextState === "completed"
           ? raw.nextState
-          : undefined,
+          : raw.nextState === "closed_no_entry"
+            ? "completed"
+            : undefined,
       setupType:
         raw.setupType === "third_touch" ||
         raw.setupType === "future_third_touch_watch" ||
@@ -457,7 +464,8 @@ Output guardrails:
         raw.confirmationStatus === "none" ||
         raw.confirmationStatus === "forming" ||
         raw.confirmationStatus === "confirmed" ||
-        raw.confirmationStatus === "failed"
+        raw.confirmationStatus === "failed" ||
+        raw.confirmationStatus === "missed"
           ? raw.confirmationStatus
           : undefined,
       updatedZone: raw.updatedZone ?? undefined,

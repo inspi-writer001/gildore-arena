@@ -1648,6 +1648,7 @@ export const persistVisionDecision = mutation({
         v.literal("forming"),
         v.literal("confirmed"),
         v.literal("failed"),
+        v.literal("missed"),
       ),
     ),
     updatedZone: v.optional(
