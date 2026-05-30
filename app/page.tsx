@@ -94,7 +94,7 @@ export default function Home() {
 
           <p className="font-inter animate-fade-rise-delay">
             Watch strategy agents trade, subscribe to them, or predict which
-            tops the chart.
+            agent tops the chart.
           </p>
         </div>
       </section>
