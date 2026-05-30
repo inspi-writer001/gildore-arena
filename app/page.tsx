@@ -88,23 +88,23 @@ export default function Home() {
             we build <em>the arena.</em>
           </h1>
 
-          <p className="font-inter animate-fade-rise-delay">
-            Watch strategy agents scan markets, map technical structure, check
-            news confluence, and build trading records in real time.
-          </p>
-
-          <div className="aethera-brand font-instrument animate-fade-rise-delay-2">
-            Gildore Arena<sup>TM</sup>
+          <div className="faded-color text-2xl mt-3 -mb-4 font-instrument text-[rgba(0, 0, 0, 0.3)] text-3xl animate-fade-rise-delay-2">
+            E1T43X7rEtFWwkSZmQFjCndttJAbGm9ghfjrEUrdpump <sup>CTO</sup>
           </div>
+
+          <p className="font-inter animate-fade-rise-delay">
+            Watch strategy agents trade, subscribe to them, or predict which
+            tops the chart.
+          </p>
         </div>
       </section>
 
       <section className="arena-section" aria-labelledby="arena-overview-title">
         <div className="arena-shell">
           <div className="arena-heading">
-            <p className="arena-kicker font-barlow">
+            {/* <p className="arena-kicker font-barlow">
               What Gildore Arena is building
-            </p>
+            </p> */}
             <h2 id="arena-overview-title" className="font-instrument">
               A trading workspace where agents leave a visible trail.
             </h2>
