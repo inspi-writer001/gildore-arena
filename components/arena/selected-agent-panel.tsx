@@ -101,6 +101,7 @@ const disclosureScrollViewportClass =
   "max-h-[360px] overflow-y-auto pr-2 [scrollbar-width:thin]";
 
 export function SelectedAgentPanel({
+  className,
   agents,
   selectedAgent,
   selectedMarketSymbol,
@@ -136,6 +137,7 @@ export function SelectedAgentPanel({
   onResetBrowserSessionPanel,
   onMarkAutoRestarted,
 }: {
+  className?: string;
   agents: Array<{ id: string; score: number }>;
   selectedAgent: SelectedAgent;
   selectedMarketSymbol: string;
@@ -177,7 +179,8 @@ export function SelectedAgentPanel({
   return (
     <section
       className={cn(
-        "mt-7 grid gap-[18px]",
+        "grid gap-[18px]",
+        className,
         isWideWorkspace
           ? "grid-cols-1"
           : "grid-cols-[minmax(0,1.6fr)_minmax(320px,0.9fr)]",
@@ -195,11 +198,7 @@ export function SelectedAgentPanel({
             </p>
           </div>
           <div className="flex flex-col items-end gap-[10px]">
-            <div className="flex flex-wrap gap-[10px] justify-end">
-              <span className={cn(chipClass, "font-barlow")}>
-                {selectedAgent.timeframe}
-              </span>
-            </div>
+            <div className="flex flex-wrap gap-[10px] justify-end h-4"></div>
             <div className="flex flex-wrap justify-end gap-3">
               <LiquidActionButton
                 label="Fund this agent"
@@ -217,98 +216,63 @@ export function SelectedAgentPanel({
           </div>
         </div>
 
-        <div className="flex flex-wrap overflow-hidden rounded-[16px] border border-[rgba(18,18,18,0.08)] bg-[rgba(250,250,247,0.92)]">
-          <div className="grid min-w-[90px] flex-1 gap-[3px] border-r border-[rgba(18,18,18,0.08)] px-[18px] py-3">
-            <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.1em] text-[rgba(18,18,18,0.42)]">
-              Win rate
-            </span>
-            <strong className="font-instrument text-[18px] font-normal leading-[1.1]">
-              {selectedAgent.winRate}%
-            </strong>
-          </div>
-          <div className="grid min-w-[90px] flex-1 gap-[3px] border-r border-[rgba(18,18,18,0.08)] px-[18px] py-3">
-            <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.1em] text-[rgba(18,18,18,0.42)]">
-              PnL
-            </span>
-            <strong
-              className={cn(
-                "font-instrument text-[18px] font-normal leading-[1.1]",
-                selectedAgent.pnlPercent >= 0
-                  ? "text-[#1a7f46]"
-                  : "text-[#a33030]",
-              )}
-            >
-              {selectedAgent.pnlPercent >= 0 ? "+" : ""}
-              {selectedAgent.pnlPercent.toFixed(1)}%
-            </strong>
-          </div>
-          <div className="grid min-w-[90px] flex-1 gap-[3px] border-r border-[rgba(18,18,18,0.08)] px-[18px] py-3">
-            <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.1em] text-[rgba(18,18,18,0.42)]">
-              Positions
-            </span>
-            <strong className="font-instrument text-[18px] font-normal leading-[1.1]">
-              {selectedAgent.openPositions}
-            </strong>
-          </div>
-          <div className="grid min-w-[90px] flex-1 gap-[3px] border-r border-[rgba(18,18,18,0.08)] px-[18px] py-3">
-            <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.1em] text-[rgba(18,18,18,0.42)]">
-              Score
-            </span>
-            <strong className="font-instrument text-[18px] font-normal leading-[1.1]">
-              {agents.find((agent) => agent.id === selectedAgent.id)?.score ??
-                "—"}
-            </strong>
-          </div>
-          <div className="grid min-w-[90px] flex-1 gap-[3px] px-[18px] py-3">
-            <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.1em] text-[rgba(18,18,18,0.42)]">
-              Next check
-            </span>
-            <strong className="font-instrument text-[18px] font-normal leading-[1.1]">
-              {selectedPosition?.nextCheckIn ?? "Waiting"}
-            </strong>
-          </div>
-        </div>
+        <div
+          className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_180px]"
+          aria-label="Tracked markets"
+        >
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+            {trackedMarkets.map((market) => {
+              const isActive = market.symbol === selectedMarketSymbol;
 
-        <div className="flex flex-wrap gap-3" aria-label="Tracked markets">
-          {trackedMarkets.map((market) => {
-            const isActive = market.symbol === selectedMarketSymbol;
+              return (
+                <button
+                  key={market.symbol}
+                  type="button"
+                  onClick={() => onSelectMarket(market.symbol)}
+                  className={cn(
+                    "grid h-[100px] gap-1 rounded-[16px] border p-[14px] text-left text-inherit transition",
+                    market.newsState === "supportive" &&
+                      "bg-[rgba(231,248,237,0.84)]",
+                    market.newsState === "neutral" &&
+                      "bg-[rgba(250,250,247,0.92)]",
+                    market.newsState === "risk" &&
+                      "bg-[rgba(251,238,236,0.84)]",
+                    isActive &&
+                      "border-[rgba(18,18,18,0.14)] bg-[rgba(18,18,18,0.06)]",
+                  )}
+                  aria-pressed={isActive}
+                >
+                  <strong className="font-barlow text-[14px] font-semibold">
+                    {market.symbol}
+                  </strong>
+                  <div className="inline-flex items-center gap-2 self-end">
+                    <span
+                      className={cn(
+                        pillClass(market.newsState as ConfluenceState),
+                        "font-barlow",
+                      )}
+                    >
+                      {confluenceToneMap[market.newsState as ConfluenceState]}
+                    </span>
+                    <span className="font-barlow text-[10px] font-semibold uppercase tracking-[0.12em] text-[rgba(18,18,18,0.42)]">
+                      {formatNewsFreshness(market.newsUpdatedAt)}
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
 
-            return (
-              <button
-                key={market.symbol}
-                type="button"
-                onClick={() => onSelectMarket(market.symbol)}
-                className={cn(
-                  "grid min-w-[180px] gap-1 rounded-[16px] border p-[14px] text-left text-inherit transition",
-                  market.newsState === "supportive" &&
-                    "bg-[rgba(231,248,237,0.84)]",
-                  market.newsState === "neutral" &&
-                    "bg-[rgba(250,250,247,0.92)]",
-                  market.newsState === "risk" && "bg-[rgba(251,238,236,0.84)]",
-                  isActive &&
-                    "border-[rgba(18,18,18,0.14)] bg-[rgba(18,18,18,0.06)]",
-                )}
-                aria-pressed={isActive}
-              >
-                <strong className="font-barlow text-[14px] font-semibold">
-                  {market.symbol}
-                </strong>
-                <div className="inline-flex items-center gap-2">
-                  <span
-                    className={cn(
-                      pillClass(market.newsState as ConfluenceState),
-                      "font-barlow",
-                    )}
-                  >
-                    {confluenceToneMap[market.newsState as ConfluenceState]}
-                  </span>
-                  <span className="font-barlow text-[10px] font-semibold uppercase tracking-[0.12em] text-[rgba(18,18,18,0.42)]">
-                    {formatNewsFreshness(market.newsUpdatedAt)}
-                  </span>
-                </div>
-              </button>
-            );
-          })}
+          <MaxSpendConfigurator
+            marketSymbol={selectedMarketSymbol}
+            spendAmount={spendAmount}
+            onSpendAmountChange={onSpendAmountChange}
+            onSubmit={onSubmitMaxSpend}
+            isConfiguring={isConfiguringMaxSpend}
+            isConnected={isConnected}
+            error={maxSpendError}
+            lastSignature={lastMaxSpendSignature}
+          />
         </div>
 
         {selectedTradeIdea ? (
@@ -371,17 +335,6 @@ export function SelectedAgentPanel({
             </div>
           </div>
         ) : null}
-
-        <MaxSpendConfigurator
-          marketSymbol={selectedMarketSymbol}
-          spendAmount={spendAmount}
-          onSpendAmountChange={onSpendAmountChange}
-          onSubmit={onSubmitMaxSpend}
-          isConfiguring={isConfiguringMaxSpend}
-          isConnected={isConnected}
-          error={maxSpendError}
-          lastSignature={lastMaxSpendSignature}
-        />
 
         <div
           className={cn(
@@ -493,7 +446,9 @@ export function SelectedAgentPanel({
                 </span>
               }
             >
-              <div className={cn("grid gap-[14px]", disclosureScrollViewportClass)}>
+              <div
+                className={cn("grid gap-[14px]", disclosureScrollViewportClass)}
+              >
                 <div className="flex flex-wrap gap-[6px]">
                   <span className={cn(chipClass, "font-barlow")}>
                     {selectedActiveSetup.setupType.replaceAll("_", " ")}
@@ -507,7 +462,8 @@ export function SelectedAgentPanel({
                     {selectedActiveSetup.regime}
                   </span>
                   <span className={cn(chipClass, "font-barlow")}>
-                    {Math.round(selectedActiveSetup.confidence * 100)}% confidence
+                    {Math.round(selectedActiveSetup.confidence * 100)}%
+                    confidence
                   </span>
                 </div>
                 {selectedActiveSetup.zoneLow != null &&
@@ -518,7 +474,8 @@ export function SelectedAgentPanel({
                       {selectedActiveSetup.zoneHigh}
                     </span>
                     <span className="font-inter text-[13px] leading-[1.5] text-[rgba(18,18,18,0.6)]">
-                      Projected price {selectedActiveSetup.projectedPrice ?? "—"}
+                      Projected price{" "}
+                      {selectedActiveSetup.projectedPrice ?? "—"}
                     </span>
                   </div>
                 ) : null}
@@ -543,7 +500,8 @@ export function SelectedAgentPanel({
                     {selectedActiveSetup.rationaleSummary}
                   </p>
                   <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.12em] text-[rgba(18,18,18,0.38)]">
-                    Last reviewed {formatNewsFreshness(selectedActiveSetup.lastReviewedAt)}
+                    Last reviewed{" "}
+                    {formatNewsFreshness(selectedActiveSetup.lastReviewedAt)}
                   </span>
                 </div>
               </div>
@@ -573,7 +531,9 @@ export function SelectedAgentPanel({
                 </span>
               }
             >
-              <div className={cn("grid gap-[14px]", disclosureScrollViewportClass)}>
+              <div
+                className={cn("grid gap-[14px]", disclosureScrollViewportClass)}
+              >
                 <div className="flex flex-wrap gap-[6px]">
                   <span className={cn(chipClass, "font-barlow")}>
                     {selectedVisionDecision.regime}
@@ -670,7 +630,9 @@ export function SelectedAgentPanel({
               ) : undefined
             }
           >
-            <div className={cn("grid gap-[10px]", disclosureScrollViewportClass)}>
+            <div
+              className={cn("grid gap-[10px]", disclosureScrollViewportClass)}
+            >
               {selectedNewsRationale ? (
                 <div className="mb-[4px] grid gap-2 rounded-[16px] bg-[rgba(250,250,247,0.96)] p-[16px_18px]">
                   <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.14em] text-[rgba(18,18,18,0.48)]">
@@ -756,7 +718,9 @@ export function SelectedAgentPanel({
               ) : undefined
             }
           >
-            <div className={cn("grid gap-[10px]", disclosureScrollViewportClass)}>
+            <div
+              className={cn("grid gap-[10px]", disclosureScrollViewportClass)}
+            >
               {selectedWatchlist.length ? (
                 selectedWatchlist.map((item) => (
                   <div
@@ -796,7 +760,9 @@ export function SelectedAgentPanel({
               ) : undefined
             }
           >
-            <div className={cn("grid gap-[10px]", disclosureScrollViewportClass)}>
+            <div
+              className={cn("grid gap-[10px]", disclosureScrollViewportClass)}
+            >
               {selectedEvents.length ? (
                 selectedEvents.map((event) => (
                   <div

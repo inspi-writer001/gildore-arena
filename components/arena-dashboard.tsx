@@ -1,11 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import {
+  Fragment,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { useSignTransaction } from "@privy-io/react-auth/solana";
-import { ArrowLeft, Radar } from "lucide-react";
+import { ArrowLeft, ChevronDown, Radar } from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import type {
   SwingPointsForBrowser,
@@ -1077,6 +1084,28 @@ export default function ArenaDashboard() {
     selectedAnalysisRenderCache,
     lastScanAt,
   } = derived;
+
+  const handleToggleAgent = (agentId: string) => {
+    if (selectedAgent?.id === agentId) {
+      router.replace("/arena", {
+        scroll: false,
+      });
+      return;
+    }
+
+    const nextAgent = agents.find((agent) => agent.id === agentId);
+    const nextMarketSymbol = nextAgent?.primaryMarket;
+
+    router.replace(
+      nextMarketSymbol
+        ? `/arena?agent=${agentId}&market=${encodeURIComponent(nextMarketSymbol)}`
+        : `/arena?agent=${agentId}`,
+      {
+        scroll: false,
+      },
+    );
+  };
+
   const handleSelectMarket = (marketSymbol: string) => {
     router.replace(
       `/arena?agent=${selectedAgent?.id}&market=${encodeURIComponent(marketSymbol)}`,
@@ -1178,8 +1207,7 @@ export default function ArenaDashboard() {
                 : undefined,
             overlay: hasCachedConjurePayload
               ? {
-                  structureStatus:
-                    selectedAnalysisRenderCache.structureStatus,
+                  structureStatus: selectedAnalysisRenderCache.structureStatus,
                   verdict: selectedAnalysisRenderCache.verdict,
                   direction: selectedAnalysisRenderCache.direction,
                   t1Price: selectedAnalysisRenderCache.t1Price,
@@ -1188,10 +1216,8 @@ export default function ArenaDashboard() {
                   t2Date: selectedAnalysisRenderCache.t2Date,
                   zoneLow: selectedAnalysisRenderCache.zoneLow,
                   zoneHigh: selectedAnalysisRenderCache.zoneHigh,
-                  projectedPrice:
-                    selectedAnalysisRenderCache.projectedPrice,
-                  invalidationLow:
-                    selectedAnalysisRenderCache.invalidationLow,
+                  projectedPrice: selectedAnalysisRenderCache.projectedPrice,
+                  invalidationLow: selectedAnalysisRenderCache.invalidationLow,
                   invalidationHigh:
                     selectedAnalysisRenderCache.invalidationHigh,
                   invalidationNote:
@@ -1284,123 +1310,171 @@ export default function ArenaDashboard() {
             <tbody>
               {agents.map((agent, index) => {
                 const isSelected = agent.id === selectedAgent?.id;
+                const expandedAgent = isSelected ? selectedAgent : null;
+                const expandedMarketSymbol = isSelected
+                  ? selectedMarketSymbol
+                  : undefined;
                 const agentPositions = positions.filter(
                   (p) => p.agentId === agent.id,
                 );
                 return (
-                  <tr
-                    key={agent.id}
-                    className={cn(
-                      "border-b border-[rgba(18,18,18,0.055)] cursor-pointer transition-colors hover:bg-[rgba(18,18,18,0.03)]",
-                      isSelected && "bg-[rgba(18,18,18,0.055)]",
-                    )}
-                    onClick={() => {
-                      router.replace(`/arena?agent=${agent.id}`, {
-                        scroll: false,
-                      });
-                    }}
-                  >
-                    <td className="px-[14px] py-[13px] align-middle text-[rgba(18,18,18,0.35)] text-[12px] w-9 font-barlow">
-                      {String(index + 1).padStart(2, "0")}
-                    </td>
-                    <td className="px-[14px] py-[13px] align-middle">
-                      <strong className="font-barlow text-[14px] font-semibold">
-                        {agent.name}
-                      </strong>
-                    </td>
-                    <td className="px-[14px] py-[13px] align-middle text-[rgba(18,18,18,0.55)] text-[13px] font-inter">
-                      {agent.strategyLabel}
-                    </td>
-                    <td className="px-[14px] py-[13px] align-middle">
-                      <span className={cn(chipClass, "font-barlow")}>
-                        {statusLabelMap[agent.status]}
-                      </span>
-                    </td>
-                    <td className="px-[14px] py-[13px] align-middle font-barlow">
-                      {agent.winRate}%
-                    </td>
-                    <td
+                  <Fragment key={agent.id}>
+                    <tr
+                      key={agent.id}
                       className={cn(
-                        "px-[14px] py-[13px] align-middle font-barlow",
-                        agent.pnlPercent >= 0
-                          ? "text-[#1a7f46]"
-                          : "text-[#a33030]",
+                        "border-b border-[rgba(18,18,18,0.055)] cursor-pointer transition-colors hover:bg-[rgba(18,18,18,0.03)]",
+                        isSelected && "bg-[rgba(18,18,18,0.055)]",
                       )}
+                      onClick={() => handleToggleAgent(agent.id)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          handleToggleAgent(agent.id);
+                        }
+                      }}
+                      tabIndex={0}
+                      role="button"
+                      aria-expanded={isSelected}
+                      aria-controls={`agent-detail-${agent.id}`}
                     >
-                      {agent.pnlPercent >= 0 ? "+" : ""}
-                      {agent.pnlPercent.toFixed(1)}%
-                    </td>
-                    <td className="px-[14px] py-[13px] align-middle font-barlow">
-                      {agentPositions.length}
-                    </td>
-                    <td className="px-[14px] py-[13px] align-middle font-barlow">
-                      {agent.trackedMarkets.length}
-                    </td>
-                    <td className="px-[14px] py-[13px] align-middle text-[18px] font-normal text-right font-instrument">
-                      {agent.score}
-                    </td>
-                  </tr>
+                      <td className="px-[14px] py-[13px] align-middle text-[rgba(18,18,18,0.35)] text-[12px] w-9 font-barlow">
+                        {String(index + 1).padStart(2, "0")}
+                      </td>
+                      <td className="px-[14px] py-[13px] align-middle">
+                        <div className="flex items-center gap-3">
+                          <ChevronDown
+                            aria-hidden="true"
+                            size={16}
+                            className={cn(
+                              "text-[rgba(18,18,18,0.42)] transition-transform duration-200",
+                              isSelected && "rotate-180",
+                            )}
+                          />
+                          <strong className="font-barlow text-[14px] font-semibold">
+                            {agent.name}
+                          </strong>
+                        </div>
+                      </td>
+                      <td className="px-[14px] py-[13px] align-middle text-[rgba(18,18,18,0.55)] text-[13px] font-inter">
+                        {agent.strategyLabel}
+                      </td>
+                      <td className="px-[14px] py-[13px] align-middle">
+                        <span className={cn(chipClass, "font-barlow")}>
+                          {statusLabelMap[agent.status]}
+                        </span>
+                      </td>
+                      <td className="px-[14px] py-[13px] align-middle font-barlow">
+                        {agent.winRate}%
+                      </td>
+                      <td
+                        className={cn(
+                          "px-[14px] py-[13px] align-middle font-barlow",
+                          agent.pnlPercent >= 0
+                            ? "text-[#1a7f46]"
+                            : "text-[#a33030]",
+                        )}
+                      >
+                        {agent.pnlPercent >= 0 ? "+" : ""}
+                        {agent.pnlPercent.toFixed(1)}%
+                      </td>
+                      <td className="px-[14px] py-[13px] align-middle font-barlow">
+                        {agentPositions.length}
+                      </td>
+                      <td className="px-[14px] py-[13px] align-middle font-barlow">
+                        {agent.trackedMarkets.length}
+                      </td>
+                      <td className="px-[14px] py-[13px] align-middle text-[18px] font-normal text-right font-instrument">
+                        {agent.score}
+                      </td>
+                    </tr>
+                    {isSelected && expandedAgent && expandedMarketSymbol ? (
+                      <tr
+                        id={`agent-detail-${agent.id}`}
+                        key={`${agent.id}-detail`}
+                        className="border-b border-[rgba(18,18,18,0.055)]"
+                      >
+                        <td colSpan={9} className="px-0 pb-5 pt-0">
+                          <div className="rounded-b-[28px] border-x border-b border-[rgba(18,18,18,0.08)] bg-[rgba(255,255,255,0.44)] px-2 py-2 shadow-[0_24px_70px_rgba(15,15,15,0.06)] backdrop-blur-sm">
+                            <SelectedAgentPanel
+                              className="mt-0"
+                              agents={agents.map((agent) => ({
+                                id: agent.id,
+                                score: agent.score,
+                              }))}
+                              selectedAgent={expandedAgent}
+                              selectedMarketSymbol={expandedMarketSymbol}
+                              trackedMarkets={trackedMarkets}
+                              selectedTradeIdea={selectedTradeIdea}
+                              selectedPosition={selectedPosition}
+                              selectedTrace={selectedTrace}
+                              selectedWatchlist={selectedWatchlist}
+                              selectedEvents={selectedEvents}
+                              selectedNewsContexts={selectedNewsContexts}
+                              selectedNewsRationale={
+                                selectedNewsRationale ?? ""
+                              }
+                              selectedBrowserSession={
+                                selectedBrowserSession ?? null
+                              }
+                              selectedVisionDecision={
+                                selectedVisionDecision ?? null
+                              }
+                              selectedActiveSetup={selectedActiveSetup ?? null}
+                              isWideWorkspace={isWideWorkspace}
+                              conjureDitheringSize={conjureDitheringSize}
+                              isConjureRevealed={
+                                revealedConjureSelectionKey ===
+                                selectedConjureKey
+                              }
+                              isConjureLoading={
+                                revealedConjureSelectionKey ===
+                                  selectedConjureKey &&
+                                !selectedBrowserSession &&
+                                isStartingBrowserSession
+                              }
+                              autoRestartedConjureSelectionKey={
+                                autoRestartedConjureSelectionKey
+                              }
+                              conjureSelectionKey={selectedConjureKey ?? ""}
+                              onSelectMarket={handleSelectMarket}
+                              onOpenFundingModal={() =>
+                                setIsSubscribeModalOpen(true)
+                              }
+                              onOpenPrediction={handleOpenPrediction}
+                              spendAmount={maxSpendAmount}
+                              onSpendAmountChange={setMaxSpendAmount}
+                              onSubmitMaxSpend={handleMaxSpendSubmit}
+                              isConfiguringMaxSpend={isConfiguringMaxSpend}
+                              maxSpendError={maxSpendError}
+                              lastMaxSpendSignature={lastMaxSpendSignature}
+                              isConnected={isConnected}
+                              onRevealBrowserSession={() =>
+                                launchBrowserSession()
+                              }
+                              onForceRestartBrowserSession={() =>
+                                launchBrowserSession({ forceNew: true })
+                              }
+                              onResetBrowserSessionPanel={() => {
+                                setRevealedConjureSelectionKey(null);
+                                setAutoRestartedConjureSelectionKey(null);
+                                setIsStartingBrowserSession(false);
+                              }}
+                              onMarkAutoRestarted={() =>
+                                setAutoRestartedConjureSelectionKey(
+                                  selectedConjureKey,
+                                )
+                              }
+                            />
+                          </div>
+                        </td>
+                      </tr>
+                    ) : null}
+                  </Fragment>
                 );
               })}
             </tbody>
           </table>
         </section>
-
-        {selectedAgent ? (
-          <SelectedAgentPanel
-            agents={agents.map((agent) => ({
-              id: agent.id,
-              score: agent.score,
-            }))}
-            selectedAgent={selectedAgent}
-            selectedMarketSymbol={selectedMarketSymbol}
-            trackedMarkets={trackedMarkets}
-            selectedTradeIdea={selectedTradeIdea}
-            selectedPosition={selectedPosition}
-            selectedTrace={selectedTrace}
-            selectedWatchlist={selectedWatchlist}
-            selectedEvents={selectedEvents}
-            selectedNewsContexts={selectedNewsContexts}
-            selectedNewsRationale={selectedNewsRationale}
-            selectedBrowserSession={selectedBrowserSession}
-            selectedVisionDecision={selectedVisionDecision}
-            selectedActiveSetup={selectedActiveSetup}
-            isWideWorkspace={isWideWorkspace}
-            conjureDitheringSize={conjureDitheringSize}
-            isConjureRevealed={
-              revealedConjureSelectionKey === selectedConjureKey
-            }
-            isConjureLoading={
-              revealedConjureSelectionKey === selectedConjureKey &&
-              !selectedBrowserSession &&
-              isStartingBrowserSession
-            }
-            autoRestartedConjureSelectionKey={autoRestartedConjureSelectionKey}
-            conjureSelectionKey={selectedConjureKey ?? ""}
-            onSelectMarket={handleSelectMarket}
-            onOpenFundingModal={() => setIsSubscribeModalOpen(true)}
-            onOpenPrediction={handleOpenPrediction}
-            spendAmount={maxSpendAmount}
-            onSpendAmountChange={setMaxSpendAmount}
-            onSubmitMaxSpend={handleMaxSpendSubmit}
-            isConfiguringMaxSpend={isConfiguringMaxSpend}
-            maxSpendError={maxSpendError}
-            lastMaxSpendSignature={lastMaxSpendSignature}
-            isConnected={isConnected}
-            onRevealBrowserSession={() => launchBrowserSession()}
-            onForceRestartBrowserSession={() =>
-              launchBrowserSession({ forceNew: true })
-            }
-            onResetBrowserSessionPanel={() => {
-              setRevealedConjureSelectionKey(null);
-              setAutoRestartedConjureSelectionKey(null);
-              setIsStartingBrowserSession(false);
-            }}
-            onMarkAutoRestarted={() =>
-              setAutoRestartedConjureSelectionKey(selectedConjureKey)
-            }
-          />
-        ) : null}
       </section>
       {selectedAgent ? (
         <AgentFundingModal
