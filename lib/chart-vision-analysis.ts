@@ -175,6 +175,25 @@ The price you report for T1 and T2 MUST be the candle WICK extreme, not the body
 - A candle body closing aggressively through the line is invalidation.
 - When invalidation happened, return \`structureStatus="broken"\` and provide an \`invalidationZone\` plus \`invalidationNote\`.
 
+### Missed entry vs broken structure — CRITICAL distinction
+These two outcomes are completely different. Do NOT conflate them.
+
+**MISSED ENTRY** — price moved through the staged entry zone IN the trade direction without a confirming candle:
+- Short example: setup staged at 4,455–4,483. Price dropped below 4,455 without a shooting star or bearish engulfing. Price is now at 4,420, below the entry zone.
+- The descending resistance trendline is still above current price and still intact. Price did not close above the line.
+- The third-touch entry was simply missed. The bearish structure is if anything confirmed — price fell, the line held as resistance.
+- Return: \`verdict = "invalid"\`, \`structureVerdict = "watch_future_touch"\`, \`nextState = "watching"\`.
+- Do NOT return \`structureVerdict = "broken"\`. The trendline is NOT broken.
+
+**BROKEN STRUCTURE** — price closed aggressively through the trendline in the OPPOSING direction:
+- Short example: price produced a full candle body closing ABOVE the descending resistance line. The line no longer holds as resistance.
+- Return: \`verdict = "reject"\`, \`structureVerdict = "broken"\`, \`nextState = "invalidated"\`.
+
+**The decisive test for bearish descending resistance short setups**:
+Ask — is current price ABOVE or BELOW the trendline?
+- Price is BELOW the trendline → trendline is intact as resistance. Even if the staged entry zone was missed, use \`watch_future_touch\`. Await a future rally back to the line for a clean third touch.
+- Price has closed ABOVE the trendline with a full body → structure is broken. Use \`broken\`.
+
 ### Candlestick confirmation required
 - Bullish: hammer, bullish engulfing, doji at support, tweezer bottom.
 - Bearish: shooting star, bearish engulfing, doji at resistance, tweezer top.
@@ -258,7 +277,12 @@ Previous setup context:
       }
 - Prior rationale: ${followUpSetup.rationaleSummary}
 
-Do not rediscover from scratch unless the prior structure is clearly broken. Judge what changed relative to the stored setup: zone interaction, confirmation, failure, or a better secondary retrace.`
+Do not rediscover from scratch unless the prior structure is clearly broken. Judge what changed relative to the stored setup across these distinct outcomes:
+- Zone interaction: price approached or touched the entry zone — did a confirmation candle appear?
+- Missed entry: price moved through the staged zone IN the trade direction without a trigger. The trendline is still intact above/below current price. Return nextState = "watching", structureVerdict = "watch_future_touch", verdict = "invalid". Do NOT call this "broken".
+- Confirmed entry: price touched the zone and produced a valid confirmation candle. Return nextState = "confirmed".
+- Invalidation: price closed through the trendline itself in the opposing direction. Return nextState = "invalidated", structureVerdict = "broken".
+- Secondary retrace: missed entry that has since set up a cleaner retrace back into the zone from a new angle. Return nextState = "secondary_retrace".`
     : "This is a fresh discovery review. Identify the best active setup from the current chart sequence.";
 
   return `You are reviewing ${screenshotCount} sequential chart screenshots following a deliberate multi-timeframe discovery flow. ${flowDescription}
@@ -423,7 +447,7 @@ Output guardrails:
     const correctedT1 = parseAnchor(raw.correctedT1);
     const correctedT2 = parseAnchor(raw.correctedT2);
 
-    return {
+    const parsed: ChartVisionDecision = {
       regime: raw.regime ?? "mixed",
       verdict: raw.verdict ?? "reject",
       structureVerdict:
@@ -512,6 +536,27 @@ Output guardrails:
           ? raw.stateTransitionReason
           : undefined,
     };
+
+    // Layer 2 safety net: resolve model contradictions between structureVerdict and nextState.
+    // When the model's own nextState says the setup continues (watching, staged, missed_entry,
+    // secondary_retrace) but structureVerdict says "broken", trust nextState — the improved
+    // prompt already guides the model to return the correct nextState for missed entries.
+    const continuationStates: SetupLifecycleState[] = [
+      "watching",
+      "staged",
+      "missed_entry",
+      "secondary_retrace",
+    ];
+    if (
+      parsed.structureVerdict === "broken" &&
+      parsed.nextState !== undefined &&
+      continuationStates.includes(parsed.nextState)
+    ) {
+      parsed.structureVerdict = "watch_future_touch";
+      if (parsed.verdict === "reject") parsed.verdict = "invalid";
+    }
+
+    return parsed;
   } catch {
     return {
       regime: "mixed",
