@@ -8,6 +8,8 @@ import {
   confluenceToneMap,
   DisclosureSection,
   EmptyState,
+  formatReviewFreshness,
+  formatSyncFreshness,
   LiquidActionButton,
   pillClass,
   surfaceCard,
@@ -49,6 +51,7 @@ type TrackedMarket = {
   symbol: string;
   newsState: ConfluenceState;
   newsUpdatedAt: number | null;
+  marketSyncStatus?: "seeded" | "live" | "failed" | "no_data" | null;
 };
 
 type SelectedNewsContext = {
@@ -86,16 +89,6 @@ type SelectedVisionDecision = {
   issues: string[];
 };
 
-function formatNewsFreshness(timestamp: number | null) {
-  if (!timestamp) return "news stale";
-
-  const deltaSeconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
-  if (deltaSeconds < 3600) {
-    return `${Math.max(1, Math.floor(deltaSeconds / 60))}m`;
-  }
-  if (deltaSeconds < 86400) return `${Math.floor(deltaSeconds / 3600)}h`;
-  return `${Math.floor(deltaSeconds / 86400)}d`;
-}
 
 const disclosureScrollViewportClass =
   "max-h-[360px] overflow-y-auto pr-2 [scrollbar-width:thin]";
@@ -230,7 +223,7 @@ export function SelectedAgentPanel({
                   type="button"
                   onClick={() => onSelectMarket(market.symbol)}
                   className={cn(
-                    "grid h-[100px] gap-1 rounded-[16px] border p-[14px] text-left text-inherit transition",
+                    "grid h-[100px] gap-1 rounded-[16px] border border-transparent p-[14px] text-left text-inherit transition",
                     market.newsState === "supportive" &&
                       "bg-[rgba(231,248,237,0.84)]",
                     market.newsState === "neutral" &&
@@ -238,7 +231,7 @@ export function SelectedAgentPanel({
                     market.newsState === "risk" &&
                       "bg-[rgba(251,238,236,0.84)]",
                     isActive &&
-                      "border-[rgba(18,18,18,0.14)] bg-[rgba(18,18,18,0.06)]",
+                      "border-[rgba(18,18,18,0.82)] bg-[rgba(18,18,18,0.06)]",
                   )}
                   aria-pressed={isActive}
                 >
@@ -246,17 +239,21 @@ export function SelectedAgentPanel({
                     {market.symbol}
                   </strong>
                   <div className="inline-flex items-center gap-2 self-end">
-                    <span
-                      className={cn(
-                        pillClass(market.newsState as ConfluenceState),
-                        "font-barlow",
-                      )}
-                    >
-                      {confluenceToneMap[market.newsState as ConfluenceState]}
-                    </span>
-                    <span className="font-barlow text-[10px] font-semibold uppercase tracking-[0.12em] text-[rgba(18,18,18,0.42)]">
-                      {formatNewsFreshness(market.newsUpdatedAt)}
-                    </span>
+                    {market.marketSyncStatus !== "no_data" && (
+                      <>
+                        <span
+                          className={cn(
+                            pillClass(market.newsState as ConfluenceState),
+                            "font-barlow",
+                          )}
+                        >
+                          {confluenceToneMap[market.newsState as ConfluenceState]}
+                        </span>
+                        <span className="font-barlow text-[10px] font-semibold uppercase tracking-[0.12em] text-[rgba(18,18,18,0.42)]">
+                          {formatSyncFreshness(market.newsUpdatedAt)}
+                        </span>
+                      </>
+                    )}
                   </div>
                 </button>
               );
@@ -501,7 +498,7 @@ export function SelectedAgentPanel({
                   </p>
                   <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.12em] text-[rgba(18,18,18,0.38)]">
                     Last reviewed{" "}
-                    {formatNewsFreshness(selectedActiveSetup.lastReviewedAt)}
+                    {formatReviewFreshness(selectedActiveSetup.lastReviewedAt)}
                   </span>
                 </div>
               </div>

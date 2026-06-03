@@ -19,7 +19,7 @@ import {
 import { fetchMarketCalendar } from "../lib/economic-calendar";
 import { deriveFibonacciArenaState } from "../lib/fibonacci-engine";
 import { fetchMarketNews } from "../lib/news-ingestion";
-import { fetchPythHistory } from "../lib/pyth-history";
+import { fetchPythHistory, getPythHistorySymbol } from "../lib/pyth-history";
 import { deriveThirdTouchArenaState } from "../lib/third-touch-engine";
 
 export const listAgents = query({
@@ -142,6 +142,7 @@ function mergeMarketConfluence(args: {
       state: "supportive" | "neutral" | "risk";
       sourceLabel: string;
       publishedAtLabel: string;
+      publishedAtMs?: number | null;
       note: string;
       url?: string;
     }>;
@@ -154,6 +155,7 @@ function mergeMarketConfluence(args: {
       state: "supportive" | "neutral" | "risk";
       sourceLabel: string;
       publishedAtLabel: string;
+      publishedAtMs?: number | null;
       note: string;
       url?: string;
     }>;
@@ -272,6 +274,9 @@ type AnalysisJobStatus =
 type AnalysisJobTrigger = "automatic" | "manual";
 type AnalysisReviewOutcome = "productive" | "neutral" | "stale" | "error";
 
+const CLAIMED_JOB_STALE_AFTER_MS = 15 * 60_000;
+const RUNNING_JOB_STALE_AFTER_MS = 90 * 60_000;
+
 const ANALYSIS_NIGHT_START_HOUR = 23;
 const ANALYSIS_DAY_START_HOUR = 6;
 
@@ -347,6 +352,28 @@ function computeNextReviewAt(args: {
     nextReviewAt: args.now + intervalMinutes * 60_000,
     isNightWindow: night,
   };
+}
+
+function isAnalysisJobStale(
+  job: Doc<"analysisJobs">,
+  now: number,
+) {
+  if (job.status === "claimed") {
+    return (
+      job.claimedAt != null &&
+      now - job.claimedAt >= CLAIMED_JOB_STALE_AFTER_MS
+    );
+  }
+
+  if (job.status === "running") {
+    const startedAt = job.startedAt ?? job.claimedAt;
+    return (
+      startedAt != null &&
+      now - startedAt >= RUNNING_JOB_STALE_AFTER_MS
+    );
+  }
+
+  return false;
 }
 
 function coerceSetupStateFromOutcome(
@@ -686,6 +713,7 @@ export const seedArena = mutation({
         newsRationale:
           "Seeded placeholder confluence. Replace with live market-wide news after the first scan.",
         newsUpdatedAt: Date.now(),
+        marketSyncStatus: market.assetClass === "synthetic" ? "no_data" : "seeded",
       });
     }
 
@@ -1013,6 +1041,14 @@ export const updateMarketSnapshot = internalMutation({
     ),
     newsRationale: v.optional(v.string()),
     newsUpdatedAt: v.optional(v.number()),
+    marketSyncStatus: v.optional(
+      v.union(
+        v.literal("seeded"),
+        v.literal("live"),
+        v.literal("failed"),
+        v.literal("no_data"),
+      ),
+    ),
   },
   handler: async (ctx, args) => {
     const market = await ctx.db
@@ -1034,6 +1070,7 @@ export const updateMarketSnapshot = internalMutation({
       newsState: args.newsState,
       newsRationale: args.newsRationale,
       newsUpdatedAt: args.newsUpdatedAt,
+      marketSyncStatus: args.marketSyncStatus,
     });
   },
 });
@@ -1053,6 +1090,7 @@ export const persistNewsContexts = internalMutation({
         ),
         sourceLabel: v.string(),
         publishedAtLabel: v.string(),
+        publishedAtMs: v.optional(v.number()),
         note: v.string(),
         url: v.optional(v.string()),
       }),
@@ -1082,6 +1120,7 @@ export const persistNewsContexts = internalMutation({
         state: item.state,
         sourceLabel: item.sourceLabel,
         publishedAtLabel: item.publishedAtLabel,
+        ...(item.publishedAtMs != null ? { publishedAtMs: item.publishedAtMs } : {}),
         note: item.note,
         rationale: args.overallReason,
         ...(item.url ? { url: item.url } : {}),
@@ -1292,6 +1331,21 @@ export const runArenaScanCycle = internalAction({
       for (const marketSymbol of trackedMarkets) {
         const runStartedAt = Date.now();
 
+        // Synthetic / browser-only markets have no Pyth feed and no news source
+        if (!getPythHistorySymbol(marketSymbol)) {
+          await ctx.runMutation(internal.arena.updateMarketSnapshot, {
+            symbol: marketSymbol,
+            price: 0,
+            changePercent: 0,
+            dailyRange: "",
+            sessionBias: "mixed",
+            source: "none",
+            lastUpdatedAt: Date.now(),
+            marketSyncStatus: "no_data",
+          });
+          continue;
+        }
+
         try {
           const candles = await fetchPythHistory(marketSymbol, agent.timeframe);
           if (!newsByMarket.has(marketSymbol)) {
@@ -1306,6 +1360,7 @@ export const runArenaScanCycle = internalAction({
                   state: item.state,
                   sourceLabel: item.sourceLabel,
                   publishedAtLabel: item.publishedAtLabel,
+                  publishedAtMs: item.publishedAtMs ?? undefined,
                   note: item.note,
                   url: item.url,
                 })),
@@ -1318,6 +1373,7 @@ export const runArenaScanCycle = internalAction({
                   state: item.state,
                   sourceLabel: item.sourceLabel,
                   publishedAtLabel: item.publishedAtLabel,
+                  publishedAtMs: item.eventAtMs ?? undefined,
                   note: item.note,
                   url: item.url,
                 })),
@@ -1334,7 +1390,10 @@ export const runArenaScanCycle = internalAction({
               await ctx.runMutation(internal.arena.persistNewsContexts, {
                 marketSymbol,
                 overallReason: mergedConfluence.overallReason,
-                items: mergedConfluence.items,
+                items: mergedConfluence.items.map((item) => ({
+                  ...item,
+                  publishedAtMs: item.publishedAtMs ?? undefined,
+                })),
               });
             }
           }
@@ -1343,6 +1402,16 @@ export const runArenaScanCycle = internalAction({
             newsByMarket.get(marketSymbol)?.overallState ?? "neutral";
 
           if (!candles?.length) {
+            await ctx.runMutation(internal.arena.updateMarketSnapshot, {
+              symbol: marketSymbol,
+              price: 0,
+              changePercent: 0,
+              dailyRange: "",
+              sessionBias: "mixed",
+              source: "pyth",
+              lastUpdatedAt: Date.now(),
+              marketSyncStatus: "failed",
+            });
             await ctx.runMutation(internal.arena.recordScanRun, {
               agentSlug: agent.slug,
               marketSymbol,
@@ -1391,6 +1460,7 @@ export const runArenaScanCycle = internalAction({
               newsByMarket.get(marketSymbol)?.overallReason ??
               "No current market-wide news rationale is available.",
             newsUpdatedAt: Date.now(),
+            marketSyncStatus: "live",
           });
 
           if (agent.slug === "fibonacci-trend") {
@@ -1453,6 +1523,16 @@ export const runArenaScanCycle = internalAction({
             error: undefined,
           });
         } catch (error) {
+          await ctx.runMutation(internal.arena.updateMarketSnapshot, {
+            symbol: marketSymbol,
+            price: 0,
+            changePercent: 0,
+            dailyRange: "",
+            sessionBias: "mixed",
+            source: "pyth",
+            lastUpdatedAt: Date.now(),
+            marketSyncStatus: "failed",
+          });
           await ctx.runMutation(internal.arena.recordScanRun, {
             agentSlug: agent.slug,
             marketSymbol,
@@ -2077,17 +2157,32 @@ export const claimNextDueAnalysisJob = mutation({
       .sort((a, b) => a.nextReviewAt - b.nextReviewAt);
 
     for (const schedule of dueSchedules) {
-      const existingActiveJob = (
+      const existingActiveJobs = (
         await ctx.db
           .query("analysisJobs")
           .withIndex("by_agentSlug_marketSymbol", (q) =>
             q.eq("agentSlug", schedule.agentSlug).eq("marketSymbol", schedule.marketSymbol),
           )
           .collect()
-      ).find(
+      ).filter(
         (job) =>
           job.status === "queued" || job.status === "claimed" || job.status === "running",
       );
+
+      for (const activeJob of existingActiveJobs) {
+        if (!isAnalysisJobStale(activeJob, args.now)) continue;
+
+        await ctx.db.patch(activeJob._id, {
+          status: "failed",
+          finishedAt: args.now,
+          error: `stale_analysis_job_timeout:${activeJob.status}`,
+        });
+      }
+
+      const existingActiveJob = existingActiveJobs.find((job) => {
+        if (job.status === "queued") return true;
+        return !isAnalysisJobStale(job, args.now);
+      });
 
       if (existingActiveJob) {
         if (existingActiveJob.status === "queued") {
@@ -2096,6 +2191,7 @@ export const claimNextDueAnalysisJob = mutation({
             claimedAt: args.now,
             attemptCount: existingActiveJob.attemptCount + 1,
             error: undefined,
+            finishedAt: undefined,
           });
           await ctx.db.patch(schedule._id, { lastJobId: existingActiveJob._id });
           return {
@@ -2297,10 +2393,9 @@ export const addMissingMarkets = mutation({
       { symbol: "GBP/USD", displayName: "Pound / US Dollar", assetClass: "forex", price: 1.2734, changePercent: 0.08, dailyRange: "1.2698 - 1.2751", sessionBias: "mixed" },
       { symbol: "USD/JPY", displayName: "US Dollar / Yen", assetClass: "forex", price: 153.42, changePercent: -0.14, dailyRange: "152.88 - 153.74", sessionBias: "mixed" },
       { symbol: "Volatility 10 Index", displayName: "Volatility 10 Index", assetClass: "synthetic", price: 9842.3, changePercent: 0.22, dailyRange: "9710.0 - 9890.0", sessionBias: "mixed" },
+      { symbol: "Volatility 15 (1s) Index", displayName: "Volatility 15 (1s) Index", assetClass: "synthetic", price: 13096.4, changePercent: -0.84, dailyRange: "12220.0 - 13512.0", sessionBias: "mixed" },
       { symbol: "Volatility 25 Index", displayName: "Volatility 25 Index", assetClass: "synthetic", price: 34182.6, changePercent: -0.41, dailyRange: "33640.0 - 34520.0", sessionBias: "mixed" },
       { symbol: "Volatility 75 Index", displayName: "Volatility 75 Index", assetClass: "synthetic", price: 102340.5, changePercent: 0.67, dailyRange: "101200.0 - 103100.0", sessionBias: "bullish" },
-      { symbol: "Crash 1000 Index", displayName: "Crash 1000 Index", assetClass: "synthetic", price: 8120.44, changePercent: -0.09, dailyRange: "8040.0 - 8180.0", sessionBias: "mixed" },
-      { symbol: "Boom 500 Index", displayName: "Boom 500 Index", assetClass: "synthetic", price: 19874.2, changePercent: 0.31, dailyRange: "19640.0 - 20010.0", sessionBias: "bullish" },
     ] as const;
 
     let added = 0;
@@ -2317,6 +2412,7 @@ export const addMissingMarkets = mutation({
           newsState: "neutral",
           newsRationale: "Placeholder. Replace after first live news scan.",
           newsUpdatedAt: Date.now(),
+          marketSyncStatus: market.assetClass === "synthetic" ? "no_data" : "seeded",
         });
         added += 1;
       }
@@ -2343,7 +2439,7 @@ export const updateAgentTrackedMarkets = mutation({
         "EUR/USD",
         "GBP/USD",
         "Volatility 10 Index",
-        "Crash 1000 Index",
+        "Volatility 15 (1s) Index",
       ],
     };
 

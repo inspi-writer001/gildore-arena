@@ -22,6 +22,8 @@ const marketNewsQueryMap: Record<string, string> = {
   "XAU/USD": '"gold" OR "XAU/USD" OR bullion OR "weaker dollar" OR fed OR treasury',
   "XAG/USD": '"silver" OR "XAG/USD" OR bullion OR "weaker dollar" OR industrial metals',
   "EUR/USD": '"EUR/USD" OR euro OR ecb OR fed OR "us dollar" OR "dollar index"',
+  "GBP/USD": '"GBP/USD" OR pound OR sterling OR cable OR "bank of england" OR "boe" OR fed OR "us dollar"',
+  "USD/JPY": '"USD/JPY" OR yen OR "bank of japan" OR "boj" OR "carry trade" OR "dollar yen" OR fomc OR fed',
 };
 
 const riskKeywords = [
@@ -66,6 +68,20 @@ const supportiveKeywordsByMarket: Record<string, string[]> = {
     "dollar slips",
     "weaker dollar",
     "hawkish ecb",
+  ],
+  "GBP/USD": [
+    "pound rises",
+    "sterling rises",
+    "cable gains",
+    "weaker dollar",
+    "hawkish boe",
+  ],
+  "USD/JPY": [
+    "dollar gains",
+    "yen weakens",
+    "hawkish fed",
+    "carry trade",
+    "boj dovish",
   ],
 };
 

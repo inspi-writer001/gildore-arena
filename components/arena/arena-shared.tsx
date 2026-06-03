@@ -40,15 +40,20 @@ export function formatRelativeMinutes(timestamp: number | null) {
   return `${Math.floor(deltaSeconds / 3600)}h ago`;
 }
 
-export function formatNewsFreshness(timestamp: number | null) {
-  if (!timestamp) return "news stale";
-
+function formatFreshness(timestamp: number | null, staleLabel: string) {
+  if (!timestamp) return staleLabel;
   const deltaSeconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
-  if (deltaSeconds < 3600) {
-    return `${Math.max(1, Math.floor(deltaSeconds / 60))}m`;
-  }
+  if (deltaSeconds < 3600) return `${Math.max(1, Math.floor(deltaSeconds / 60))}m`;
   if (deltaSeconds < 86400) return `${Math.floor(deltaSeconds / 3600)}h`;
   return `${Math.floor(deltaSeconds / 86400)}d`;
+}
+
+export function formatSyncFreshness(timestamp: number | null) {
+  return formatFreshness(timestamp, "stale");
+}
+
+export function formatReviewFreshness(timestamp: number | null) {
+  return formatFreshness(timestamp, "not reviewed");
 }
 
 export function formatEventTimeLabel(timestampSec?: number) {

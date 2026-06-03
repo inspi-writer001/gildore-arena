@@ -36,6 +36,8 @@ const marketCalendarCountryMap: Record<string, string[]> = {
   "XAU/USD": ["united states"],
   "XAG/USD": ["united states"],
   "EUR/USD": ["united states", "euro area"],
+  "GBP/USD": ["united kingdom", "united states"],
+  "USD/JPY": ["japan", "united states"],
 };
 
 const majorEventKeywords = [
@@ -106,6 +108,25 @@ const marketEventWeightBoosts: Record<string, Record<string, number>> = {
     nfp: 1.1,
     lagarde: 1.12,
     fomc: 1.08,
+  },
+  "GBP/USD": {
+    "bank of england": 1.2,
+    "interest rate": 1.14,
+    "rate decision": 1.14,
+    cpi: 1.12,
+    inflation: 1.1,
+    payroll: 1.08,
+    nfp: 1.08,
+    fomc: 1.06,
+  },
+  "USD/JPY": {
+    "bank of japan": 1.22,
+    "interest rate": 1.16,
+    "rate decision": 1.16,
+    fomc: 1.14,
+    powell: 1.1,
+    cpi: 1.08,
+    inflation: 1.06,
   },
 };
 

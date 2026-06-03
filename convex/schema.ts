@@ -128,6 +128,14 @@ export default defineSchema({
     ),
     newsRationale: v.optional(v.string()),
     newsUpdatedAt: v.optional(v.number()),
+    marketSyncStatus: v.optional(
+      v.union(
+        v.literal("seeded"),
+        v.literal("live"),
+        v.literal("failed"),
+        v.literal("no_data"),
+      ),
+    ),
   }).index("by_symbol", ["symbol"]),
 
   newsContexts: defineTable({
@@ -141,6 +149,7 @@ export default defineSchema({
     ),
     sourceLabel: v.string(),
     publishedAtLabel: v.string(),
+    publishedAtMs: v.optional(v.number()),
     note: v.string(),
     rationale: v.optional(v.string()),
     url: v.optional(v.string()),

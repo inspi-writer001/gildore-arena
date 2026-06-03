@@ -32,14 +32,14 @@ export const metadata: Metadata = {
   icons: {
     icon: [
       {
-        url: "/gildore-arena-logo.png",
-        type: "image/png",
+        url: "/gildore-arena-white.jpg",
+        type: "image/jpg",
       },
     ],
     apple: [
       {
-        url: "/gildore-arena-logo.png",
-        type: "image/png",
+        url: "/gildore-arena-white.jpg",
+        type: "image/jpg",
       },
     ],
   },

@@ -129,6 +129,7 @@ async function runAnalysisJob(client: ConvexHttpClient) {
 async function main() {
   loadWorkerEnv();
   const client = getConvexClient();
+  let idlePollCount = 0;
   console.log("[arena-worker] started", {
     pollIntervalMs: POLL_INTERVAL_MS,
     timezone: "Africa/Lagos",
@@ -138,8 +139,16 @@ async function main() {
     try {
       const didWork = await runAnalysisJob(client);
       if (!didWork) {
+        idlePollCount += 1;
+        console.log("[arena-worker] idle", {
+          idlePollCount,
+          nextPollInMs: POLL_INTERVAL_MS,
+        });
         await sleep(POLL_INTERVAL_MS);
+        continue;
       }
+
+      idlePollCount = 0;
     } catch (error) {
       console.error("[arena-worker] loop error", error);
       await sleep(POLL_INTERVAL_MS);

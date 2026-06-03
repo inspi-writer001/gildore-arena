@@ -27,7 +27,6 @@ import {
   DisclosureSection,
   EmptyState,
   formatEventTimeLabel,
-  formatNewsFreshness,
   formatUnknownError,
   LiquidActionButton,
   pillClass,
@@ -81,6 +80,7 @@ type ArenaSnapshot = {
     newsState?: ConfluenceState;
     newsRationale?: string;
     newsUpdatedAt?: number | null;
+    marketSyncStatus?: "seeded" | "live" | "failed" | "no_data" | null;
   }>;
   watchlistItems: Array<{
     _id: string;
@@ -152,6 +152,7 @@ type ArenaSnapshot = {
     state: ConfluenceState;
     sourceLabel: string;
     publishedAtLabel: string;
+    publishedAtMs?: number | null;
     note: string;
     rationale?: string;
     url?: string;
@@ -617,6 +618,7 @@ export default function ArenaDashboard() {
       newsState: market.newsState ?? "neutral",
       newsRationale: market.newsRationale ?? "",
       newsUpdatedAt: market.newsUpdatedAt ?? null,
+      marketSyncStatus: market.marketSyncStatus ?? null,
     }));
 
     const watchlistItems: WatchlistItem[] = snapshot.watchlistItems.map(
@@ -697,6 +699,7 @@ export default function ArenaDashboard() {
       state: item.state,
       sourceLabel: item.sourceLabel,
       publishedAt: item.publishedAtLabel,
+      publishedAtMs: item.publishedAtMs ?? null,
       note: item.note,
       rationale: item.rationale ?? "",
       url: item.url ?? "",
@@ -1250,22 +1253,16 @@ export default function ArenaDashboard() {
               Back to landing
             </Link>
 
-            <div className="font-barlow underline text-2xl font-normal leading-[0.95] mb-3">
+            <div className="font-barlow underline text-xl font-normal leading-[0.95] mb-3">
               Season Zer0
             </div>
 
-            <h1 className="max-w-[14ch] m-0 text-[clamp(32px,5vw,68px)] font-normal leading-[0.96] tracking-[-0.5px] font-instrument">
-              Strategy agents
-              <br />
-              <span className="whitespace-nowrap">tracking structure,</span>
-              <br />
-              confluence, and
-              <br />
-              execution state.
+            <h1 className="max-w-[14ch] whitespace-nowrap m-0 text-5xl font-normal leading-[0.96] tracking-[-0.5px] font-instrument">
+              Fire your Fund Manager
             </h1>
             <p className="max-w-[60ch] mt-5 mb-0 text-[rgba(18,18,18,0.64)] text-[16px] leading-[1.7] font-inter">
-              Monitor active agents, watched markets, chart annotations, and
-              staged trade logic as the arena evolves across each symbol.
+              replace blind trust with visible, competitive, machine-disciplined
+              trading performance.
             </p>
           </div>
 

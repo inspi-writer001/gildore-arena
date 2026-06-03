@@ -919,8 +919,6 @@ const DERIV_SYMBOL_SEARCH: Record<string, { term: string; selectPattern: RegExp;
   "Volatility 25 Index": { term: "volatility 25 index", selectPattern: /VOLATILITY\s*25\s*INDEX|R_25(?!\()/i, category: "Derived" },
   "Volatility 75 Index": { term: "volatility 75", selectPattern: /VOLATILITY\s*75\s*INDEX|R_75(?!\()/i, category: "Derived" },
   "Volatility 15 (1s) Index": { term: "volatility 15", selectPattern: /VOLATILITY\s*15\s*\(1S\)|R_15/i, category: "Derived" },
-  "Crash 1000 Index": { term: "crash 1000", selectPattern: /CRASH\s*1000|CRASH1000/i, category: "Derived" },
-  "Boom 500 Index": { term: "boom 500", selectPattern: /BOOM\s*500|BOOM500/i, category: "Derived" },
 };
 
 async function switchDerivSymbol(
