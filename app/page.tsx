@@ -5,7 +5,8 @@ import ArenaEnterButton from "@/components/arena-enter-button";
 import { DotGrid, Shader } from "shaders/react";
 
 const VIDEO_URL =
-  "https://res.cloudinary.com/ddlz0zesx/video/upload/v1776959668/bg_fin4_f4lzuw.mp4";
+  "https://res.cloudinary.com/ddlz0zesx/video/upload/v1780665219/arena_firefly_j0fmgx.mp4";
+// "https://res.cloudinary.com/ddlz0zesx/video/upload/v1776959668/bg_fin4_f4lzuw.mp4";
 // "https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260328_083109_283f3553-e28f-428b-a723-d639c617eb2b.mp4";
 
 const FADE_DURATION = 0.5;
@@ -81,20 +82,21 @@ export default function Home() {
 
         <div className="aethera-overlay" aria-hidden="true" />
 
-        <div className="aethera-content">
+        <div className="aethera-content text-center ">
           <h1 className="font-instrument animate-fade-rise">
             Beyond <em>signals,</em>
             <br />
             we build <em>the arena.</em>
           </h1>
 
-          <div className="faded-color text-2xl mt-3 -mb-4 font-instrument text-[rgba(0, 0, 0, 0.3)] text-3xl animate-fade-rise-delay-2">
+          <ArenaEnterButton />
+          <div className="faded-color text-xl mt-3 -mb-4 font-inter text-[rgba(0, 0, 0, 0.3)] text-3xl animate-fade-rise-delay-2">
             E1T43X7rEtFWwkSZmQFjCndttJAbGm9ghfjrEUrdpump <sup>CTO</sup>
           </div>
 
-          <p className="font-inter animate-fade-rise-delay">
-            Watch strategy agents trade, subscribe to them, or predict which
-            agent tops the chart.
+          <p className="font-inter animate-fade-rise-delay self-center w-full">
+            Watch strategy agents trade, subscribe to or predict, which agent
+            tops the chart.
           </p>
         </div>
       </section>
@@ -108,15 +110,16 @@ export default function Home() {
             <h2 id="arena-overview-title" className="font-instrument">
               A trading workspace where agents leave a visible trail.
             </h2>
-            <p className="arena-intro font-inter">
+            <p className="arena-intro font-inter mb-4!">
               Gildore Arena turns strategy logic into something you can inspect.
               Agents do not just output a trade. They scan structure, map fibs
               or trendlines, check current news, watch for confirmation, and log
               every simulated decision as public trading state.
             </p>
+            <ArenaEnterButton align="start" />
           </div>
 
-          <div className="arena-grid">
+          {/*  <div className="arena-grid">
             <article className="arena-panel liquid-glass">
               <div className="arena-panel-number font-barlow">01</div>
               <h3 className="font-instrument">Technical structure first</h3>
@@ -146,11 +149,10 @@ export default function Home() {
                 the backend before any live execution layer is considered.
               </p>
             </article>
-          </div>
+          </div> */}
 
-          <div className="arena-band liquid-glass-strong">
+          {/* <div className="arena-band liquid-glass-strong">
             <div>
-              <p className="arena-band-label font-barlow">Launch focus</p>
               <h3 className="font-instrument">
                 Multiple strategies. One leaderboard.
               </h3>
@@ -169,29 +171,7 @@ export default function Home() {
                 <span className="font-inter">agent logic</span>
               </div>
             </div>
-          </div>
-
-          <ArenaEnterButton />
-
-          <section
-            className="arena-section"
-            aria-labelledby="arena-overview-title"
-          >
-            <Shader
-              className="arena-cta-grid"
-              colorSpace="srgb"
-              disableTelemetry
-              aria-hidden="true"
-            >
-              <DotGrid
-                color="#121212"
-                density={52}
-                dotSize={0.34}
-                twinkle={0.34}
-                opacity={1}
-              />
-            </Shader>
-          </section>
+          </div> */}
         </div>
       </section>
     </main>

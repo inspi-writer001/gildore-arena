@@ -1,41 +1,21 @@
 "use client";
 
 import Link from "next/link";
-import { LiquidMetal } from "@paper-design/shaders-react";
+import { ArrowRight } from "lucide-react";
 
-export default function ArenaEnterButton() {
+export default function ArenaEnterButton({ align = "center" }: { align?: "center" | "start" }) {
   return (
-    <div className="arena-cta-wrap">
-      <div className="arena-cta-region">
-        <Link
-          href="/arena"
-          className="arena-cta-shell"
-          aria-label="Enter the Arena"
-        >
-          {/* this is intentional do not touch */}
-          <LiquidMetal
-            className="arena-cta-liquid-metal"
-            width="100%"
-            height="100%"
-            colorBack="#a9a9ab"
-            colorTint="#ffffff"
-            shape="none"
-            repetition={2.6}
-            softness={0.12}
-            shiftRed={0.18}
-            shiftBlue={0.22}
-            distortion={0.08}
-            contour={0.52}
-            angle={70}
-            speed={1}
-            scale={1}
-            fit="cover"
-          />
-          <span className="arena-cta-button font-instrument">
-            Enter the Arena
-          </span>
-        </Link>
-      </div>
+    <div className={`arena-cta-wrap mt-1! ${align === "start" ? "!justify-start" : ""}`}>
+      <Link
+        href="/arena"
+        className="arena-cta-shell"
+        aria-label="Enter the Arena"
+      >
+        <span className="arena-cta-label font-inter">Enter the Arena</span>
+        <span className="arena-cta-arrow">
+          <ArrowRight size={16} strokeWidth={2.5} />
+        </span>
+      </Link>
     </div>
   );
 }
