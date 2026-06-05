@@ -14,6 +14,7 @@ import {
   verifyFibonacciDrawing,
   estimateFibonacciPlacementError,
   type ChartVisionDecision,
+  type ChartVisionProfile,
   type FollowUpSetupContext,
 } from "./chart-vision-analysis";
 
@@ -56,6 +57,9 @@ type SessionRuntime = {
 
 const runtimeSessions = new Map<string, SessionRuntime>();
 const SCREENSHOT_ROOT = "/tmp/gildore-browser-sessions";
+// How long to keep a completed session alive after reaching "ready" so the
+// streaming UI can display the final drawn chart before the browser is closed.
+const SESSION_TTL_MS = 5 * 60 * 1000;
 
 function isServerlessRuntime() {
   return Boolean(
@@ -726,6 +730,29 @@ async function startLiveCaptureLoop(sessionId: string) {
   }, 450);
 }
 
+async function destroyBrowserSession(sessionId: string): Promise<void> {
+  const runtime = runtimeSessions.get(sessionId);
+  if (!runtime) return;
+
+  // Remove from the map first so no new work is dispatched to this session.
+  runtimeSessions.delete(sessionId);
+
+  if (runtime.captureLoop !== undefined) {
+    clearInterval(runtime.captureLoop);
+  }
+
+  runtime.listeners.clear();
+  runtime.latestPayload = undefined;
+
+  try {
+    await runtime.browser.close();
+  } catch (err) {
+    console.warn("[browser-session-runtime] browser.close failed during teardown", { sessionId, err });
+  }
+
+  console.log("[browser-session-runtime] session destroyed", { sessionId });
+}
+
 async function updatePointer(
   sessionId: string,
   page: Page,
@@ -1236,25 +1263,8 @@ async function captureStrategyScreenshots(
   }
 
   if (agentSlug === "third-touch") {
-    setActionLabel(sessionId, "Switching to 4h — higher-timeframe structure");
-    await switchDerivTimeframe(sessionId, page, "4h");
-    await page.waitForTimeout(800);
-    await page.mouse.move(chartCx, chartCy);
-    await page.mouse.wheel(0, 5000);
-    await page.waitForTimeout(700);
-    await snap("View 1/6 — 4h higher-timeframe structure: dominant regime, active cycle, broad decision area");
-
-    setActionLabel(sessionId, "4h: centering active structure");
-    await dragPointerWithTelemetry({
-      sessionId,
-      page,
-      from: { x: chartCx, y: chartCy },
-      to: { x: chartCx + 220, y: chartCy },
-      steps: 12,
-    });
-    await snap("View 2/6 — 4h active structure: broader context with current decision area still in view");
-
-    setActionLabel(sessionId, "Switching to 1h — intermediate confirmation");
+    // View 1 — 1h: full T1→T2 slope + regime
+    setActionLabel(sessionId, "Switching to 1h — full structure");
     await switchDerivTimeframe(sessionId, page, "1h");
     await page.waitForTimeout(900);
     await page.mouse.click(chartCx, chartCy);
@@ -1262,9 +1272,9 @@ async function captureStrategyScreenshots(
     await page.mouse.move(chartCx, chartCy);
     await page.mouse.wheel(0, 8500);
     await page.waitForTimeout(900);
-    await autoScaleYAxis(page);
-    await snap("View 3/6 — 1h intermediate structure: confirm key swings, slope, and area of interest");
+    await snap("View 1/6 — 1h full structure: dominant regime, T1 origin, T1→T2 slope, full swing history visible");
 
+    // View 2 — 1h: pan to reaction area
     setActionLabel(sessionId, "1h: focusing reaction path");
     await dragPointerWithTelemetry({
       sessionId,
@@ -1273,29 +1283,51 @@ async function captureStrategyScreenshots(
       to: { x: chartCx - 180, y: chartCy },
       steps: 10,
     });
-    await snap("View 4/6 — 1h reaction path: assess whether a missed entry can still become a valid retrace setup");
+    await snap("View 2/6 — 1h reaction path: T3 interaction zone and missed entry / retrace context");
 
-    setActionLabel(sessionId, "Switching to 15m — execution structure");
+    // View 3 — 15m current state
+    setActionLabel(sessionId, "Switching to 15m — current state");
     await switchDerivTimeframe(sessionId, page, "15m");
     await page.waitForTimeout(900);
     await page.mouse.click(chartCx, chartCy);
     await page.waitForTimeout(200);
     await page.mouse.move(chartCx, chartCy);
-    await page.mouse.wheel(0, 10000);
+    await page.mouse.wheel(0, 5000);
     await page.waitForTimeout(900);
-    await autoScaleYAxis(page);
-    await snap("View 5/6 — 15m execution structure: immediate reclaim / rejection behavior around the decision area");
+    await snap("View 3/6 — 15m current state: where price is NOW relative to the projected zone, recent candle behaviour");
 
-    setActionLabel(sessionId, "15m drawing canvas — execution zone");
+    // Views 4–6: three progressive backward pans at 380px each
+    // Each pan shifts ~27h further back; three pans ≈ 3.4 days — exposes the T3 touch area
+
+    setActionLabel(sessionId, "15m: panning back — zone approach");
     await dragPointerWithTelemetry({
       sessionId,
       page,
       from: { x: chartCx, y: chartCy },
-      to: { x: chartCx + 120, y: chartCy },
-      steps: 8,
+      to: { x: chartCx + 380, y: chartCy },
+      steps: 16,
     });
-    await autoScaleYAxis(page);
-    await snap("View 6/6 — 15m DRAWING CANVAS: focus on the execution rectangle and current price interaction");
+    await snap("View 4/6 — 15m zone approach: how price behaved as it neared the projected trendline level");
+
+    setActionLabel(sessionId, "15m: panning further back — T3 area");
+    await dragPointerWithTelemetry({
+      sessionId,
+      page,
+      from: { x: chartCx, y: chartCy },
+      to: { x: chartCx + 380, y: chartCy },
+      steps: 16,
+    });
+    await snap("View 5/6 — 15m T3 zone: CRITICAL — look here for whether T3 already occurred. If price touched and bounced from the ascending line, this is missed entry not staged.");
+
+    setActionLabel(sessionId, "15m: panning furthest back — T2 slope and drawing canvas");
+    await dragPointerWithTelemetry({
+      sessionId,
+      page,
+      from: { x: chartCx, y: chartCy },
+      to: { x: chartCx + 380, y: chartCy },
+      steps: 16,
+    });
+    await snap("View 6/6 — 15m DRAWING CANVAS: furthest back — T2 region visible, ascending slope on execution frame");
 
     return screenshots;
   }
@@ -2727,6 +2759,7 @@ export async function startControlledBrowserSession(args: {
         currentStatus: "ready",
       });
       await capture(args.sessionId);
+      setTimeout(() => { void destroyBrowserSession(args.sessionId); }, SESSION_TTL_MS).unref();
       return {
         ok: true,
         screenshotPath,
@@ -2877,6 +2910,7 @@ export async function startControlledBrowserSession(args: {
           sessionId: args.sessionId,
           screenshotPath,
         });
+        setTimeout(() => { void destroyBrowserSession(args.sessionId); }, SESSION_TTL_MS).unref();
         return {
           ok: true,
           screenshotPath,
@@ -3236,6 +3270,7 @@ export async function startControlledBrowserSession(args: {
       sessionId: args.sessionId,
       screenshotPath,
     });
+    setTimeout(() => { void destroyBrowserSession(args.sessionId); }, SESSION_TTL_MS).unref();
     return {
       ok: true,
       screenshotPath,
@@ -3262,6 +3297,7 @@ export async function startControlledBrowserSession(args: {
       await capture(args.sessionId);
     } catch {}
 
+    void destroyBrowserSession(args.sessionId);
     throw error;
   }
 }
@@ -4282,6 +4318,7 @@ export async function startFibonacciBrowserSession(args: {
     setActionLabel(args.sessionId, undefined);
 
     console.log("[fib-browser-session] session ready", { sessionId: args.sessionId });
+    setTimeout(() => { void destroyBrowserSession(args.sessionId); }, SESSION_TTL_MS).unref();
     return { ok: true, screenshotPath, reused: false };
   } catch (error) {
     console.error("[fib-browser-session] startup failed", {
@@ -4296,6 +4333,7 @@ export async function startFibonacciBrowserSession(args: {
       error: error instanceof Error ? error.message : "fib_browser_session_failed",
     });
     try { await capture(args.sessionId); } catch {}
+    void destroyBrowserSession(args.sessionId);
     throw error;
   }
 }
@@ -4355,4 +4393,71 @@ export function subscribeControlledBrowserStream(
   return () => {
     runtime.listeners.delete(onFrame);
   };
+}
+
+export type DebugCaptureResult = {
+  screenshots: string[];
+  decision: ChartVisionDecision;
+  durationMs: number;
+};
+
+export async function captureAndAnalyzeForDebug(args: {
+  agentSlug: string;
+  marketSymbol: string;
+  timeframe: string;
+  targetUrl: string;
+}): Promise<DebugCaptureResult> {
+  const startedAt = Date.now();
+  const sessionId = `debug-${Date.now()}`;
+  console.log("[debug] captureAndAnalyzeForDebug starting", args);
+
+  console.log("[debug] launching browser");
+  const browser = await launchBrowser();
+  console.log("[debug] browser launched");
+
+  try {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    console.log("[debug] new page created, navigating to", args.targetUrl);
+
+    await page.goto(args.targetUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+    await page.waitForTimeout(3000);
+    console.log("[debug] page loaded");
+
+    console.log("[debug] switching symbol to", args.marketSymbol);
+    await switchDerivSymbol(sessionId, page, args.marketSymbol);
+    console.log("[debug] symbol switched");
+
+    console.log("[debug] switching timeframe to", args.timeframe);
+    await switchDerivTimeframe(sessionId, page, args.timeframe);
+    await page.waitForTimeout(800);
+    console.log("[debug] timeframe switched, starting screenshot capture");
+
+    const buffers = await captureStrategyScreenshots(
+      sessionId,
+      page,
+      args.timeframe,
+      args.agentSlug,
+    );
+    console.log("[debug] captured", buffers.length, "screenshots");
+
+    const screenshots = buffers.map(
+      (buf) => `data:image/png;base64,${buf.toString("base64")}`,
+    );
+
+    const profile: ChartVisionProfile =
+      args.agentSlug === "third-touch" ? "third-touch-execution" : "default";
+
+    console.log("[debug] running vision analysis with profile", profile);
+    const decision = await analyzeChartWithVision(buffers, undefined, profile);
+    console.log("[debug] vision analysis complete", {
+      verdict: decision.verdict,
+      structureVerdict: decision.structureVerdict,
+      confidence: decision.confidence,
+    });
+
+    return { screenshots, decision, durationMs: Date.now() - startedAt };
+  } finally {
+    await browser.close();
+    console.log("[debug] browser closed");
+  }
 }

@@ -251,7 +251,7 @@ Use these as a starting hypothesis — correct them if the visual evidence disag
 
   const flowDescription =
     profile === "third-touch-execution"
-      ? "Views 1–2 are the 4h timeframe for higher-timeframe structure. Views 3–4 are the 1h timeframe for intermediate confirmation. Views 5–6 are the 15m execution timeframe, ending at the drawing canvas."
+      ? "Views 1–2 are the 1h timeframe: View 1 is a full zoom-out showing the complete T1→T2 slope and regime; View 2 is panned to the T3 reaction zone. Views 3–6 are the 15m execution timeframe, moving progressively backward in time: View 3 is current price, Views 4–6 each pan ~27 hours further back, with View 5 being the critical T3 check window and View 6 reaching the T2 region."
       : "Views 1–2 are the 8h timeframe showing the CURRENT STRUCTURAL CYCLE (~4 months). Views 3–6 are the trading timeframe (4h or similar) at decreasing zoom, ending at the drawing canvas.";
 
   const followUpSection = followUpSetup
@@ -294,19 +294,24 @@ ${followUpSection}
 Your task:
 1. ${
    profile === "third-touch-execution"
-     ? "From Views 1–2 (4h): establish the dominant regime and the higher-timeframe structure that still governs the setup. Ignore stale historical structure outside the active cycle."
+     ? "From Views 1–2 (1h): establish the dominant regime, confirm T1 and T2, map the full T1→T2 slope, and assess whether the T3 zone has already been visited."
      : 'From Views 1–2 (8h): establish the dominant regime. Identify the trough (bullish) or peak (bearish) that STARTED the current multi-week rally visible in the chart. This is T1. Ask yourself: "Before this rally began, where was the lowest point?" — that is T1. Ignore ancient historical lows from completely different market cycles that are not connected to the current move.'
  }
 2. ${
    profile === "third-touch-execution"
-     ? "From Views 3–4 (1h): confirm the active structure, T1, T2, and the meaningful reaction area. If the first clean third-touch entry was missed, assess whether the retrace still offers a valid continuation entry from the same decision region."
+     ? "From Views 3–6 (15m): View 3 shows current price vs the zone. Views 4–6 progressively pan backward. In Views 5–6 specifically, look for any prior T3 touch of the ascending line. If price visibly touched and bounced from the line, T3 is done — return watch_future_touch or missed_entry."
      : "From Views 3–4 (trading TF zoomed out): confirm T1 is the lowest point BEFORE the rally — not a correction low mid-rally. Then identify T2 — the first significant higher low that sets the slope. T2 is typically 10–30+ days after T1."
  }
 3. **Slope sanity check**: Project the T1→T2 line to the rightmost visible candle. For a bullish setup, the projected line should be at or below current price — price is above support or touching it. If the line is well ABOVE current price, your T2 is wrong (line is too steep). Adjust until the projection makes contact sense with current price.
 4. ${
    profile === "third-touch-execution"
-     ? "From Views 5–6 (15m): assess the execution zone. Focus on the rectangle / area of interest, the immediate reclaim or rejection behavior, and whether price action justifies entry now."
+     ? "From Views 3–6 (15m): View 3 is current. Views 4–6 pan progressively further back. View 5 is the critical T3 check — if the ascending trendline was visibly touched and price bounced in that window, T3 already occurred. View 6 confirms the slope and T2 region. Only treat current price as a T3 candidate if no prior trendline touch appears in Views 4, 5, or 6."
      : "From Views 5–6: Assess the T3 zone — is current price approaching or touching the projected line?"
+ }
+4b. ${
+   profile === "third-touch-execution"
+     ? "From Views 5–6 (15m execution): if T3 is still pending, assess the tight execution zone and confirmation candle quality."
+     : ""
  }
 5. Return your trade verdict: valid, staged, invalid, or reject.
 6. Separately return structureVerdict:
@@ -347,12 +352,12 @@ export async function analyzeChartWithVision(
   const labels =
     profile === "third-touch-execution"
       ? [
-          "View 1 of 6 — 4H TIMEFRAME, higher-timeframe structural context. Establish regime and the active cycle that still governs the setup.",
-          "View 2 of 6 — 4H TIMEFRAME, broader structure with the active decision area still visible. Confirm the setup direction is still structurally valid.",
-          "View 3 of 6 — 1H TIMEFRAME, full intermediate structure. Confirm the key swings and the main area of interest.",
-          "View 4 of 6 — 1H TIMEFRAME, reaction path into the decision area. Assess whether a missed first entry can still become a valid retrace entry.",
-          "View 5 of 6 — 15M TIMEFRAME, execution structure. Focus on the zone reaction and immediate reclaim / rejection behavior.",
-          "View 6 of 6 — 15M TIMEFRAME, DRAWING CANVAS. Report viewSixPos for T1 and T2 only if confidently visible here, and focus heavily on the interaction rectangle.",
+          "View 1 of 6 — 1H TIMEFRAME, full structure. Establish the dominant regime, identify T1 (structural origin), confirm T2 (first significant higher low / lower high), and map the full T1→T2 slope.",
+          "View 2 of 6 — 1H TIMEFRAME, reaction path. Panned to show the T3 interaction zone. Assess whether a clean third touch has formed, is forming, or has been missed.",
+          "View 3 of 6 — 15M TIMEFRAME, CURRENT STATE. Where price is RIGHT NOW relative to the projected trendline. Use this to judge proximity to the zone and recent candle behaviour.",
+          "View 4 of 6 — 15M TIMEFRAME, panned ~27h back from View 3. Shows how price approached the projected trendline level. Look for the first signs of a T3 interaction.",
+          "View 5 of 6 — 15M TIMEFRAME, CRITICAL T3 CHECK. Panned ~27h further back from View 4. If T3 already occurred, the touch and bounce should be visible here. A clean bounce from the ascending line means T3 is done — return watch_future_touch or missed_entry, NOT staged.",
+          "View 6 of 6 — 15M DRAWING CANVAS. Panned ~27h further back from View 5. The T2 region should be visible or approaching. Confirms the ascending slope on the execution frame. Report viewSixPos for T2 if visible.",
         ]
       : [
           "View 1 of 6 — 8H TIMEFRAME, current structural cycle (~4 months). Identify the dominant regime. Note the major trough that launched the current multi-week rally — this is the candidate T1 origin.",
