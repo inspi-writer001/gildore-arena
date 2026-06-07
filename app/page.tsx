@@ -91,7 +91,7 @@ export default function Home() {
 
           <ArenaEnterButton />
           <div className="faded-color text-xl mt-3 -mb-4 font-inter text-[rgba(0, 0, 0, 0.3)] text-3xl animate-fade-rise-delay-2">
-            E1T43X7rEtFWwkSZmQFjCndttJAbGm9ghfjrEUrdpump <sup>CTO</sup>
+            HmDAoa5tN3CQJRGtPdfkPYyriTNUEBXJqAfGJvCVBAGS
           </div>
 
           <p className="font-inter animate-fade-rise-delay self-center w-full">

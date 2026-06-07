@@ -1472,12 +1472,19 @@ async function activateDrawingTool(
   sessionId: string,
   page: Page,
   chartFrame: ReturnType<typeof getChartFrame>,
-  tool: "trendline" | "rectangle",
+  tool: "trendline" | "rectangle" | "long_position" | "short_position",
   chartCx: number,
   chartCy: number,
 ): Promise<ToolActivationResult> {
-  // keyboard shortcuts for the Deriv/TradingView chart
-  const shortcut = tool === "trendline" ? "Alt+t" : "Alt+Shift+r";
+  // keyboard shortcuts for the Deriv/TradingView chart.
+  // NOTE: Alt+Shift+L activates Long Position (same as Alt+L) in Deriv's TV version —
+  // there is no reliable keyboard shortcut for Short Position. Leave it empty so we
+  // don't accidentally activate the wrong tool and then fire draw clicks on top of it.
+  const shortcut =
+    tool === "trendline" ? "Alt+t" :
+    tool === "rectangle" ? "Alt+Shift+r" :
+    tool === "long_position" ? "Alt+l" :
+    "";
 
   // toolbar button selectors — tried in order as fallback
   const toolbarSelectors =
@@ -1488,49 +1495,99 @@ async function activateDrawingTool(
           'button[title*="Trend"]',
           'button[aria-label*="Trend"]',
         ]
-      : [
+      : tool === "rectangle"
+      ? [
           '[data-name="rect-tool"]',
           '[data-name="rectangle-tool"]',
           '[data-tooltip*="Rectangle"]',
           'button[title*="Rectangle"]',
           'button[aria-label*="Rectangle"]',
+        ]
+      : tool === "long_position"
+      ? [
+          '[data-name="long-position"]',
+          '[data-name="long_position"]',
+          '[data-tooltip*="Long Position"]',
+          'button[title*="Long Position"]',
+          'button[aria-label*="Long Position"]',
+        ]
+      : [
+          '[data-name="short-position"]',
+          '[data-name="short_position"]',
+          '[data-tooltip*="Short Position"]',
+          'button[title*="Short Position"]',
+          'button[aria-label*="Short Position"]',
         ];
 
   // Ensure the chart iframe has focus before sending keyboard events
   await page.mouse.click(chartCx, chartCy);
   await page.waitForTimeout(200);
 
-  // Try via page-level keyboard (original path)
-  await page.keyboard.press(shortcut).catch(() => {});
-  await page.waitForTimeout(200);
-
-  // Also try via the frame body — more reliable when the iframe owns focus
-  await chartFrame.locator("body").press(shortcut).catch(() => {});
-  await page.waitForTimeout(400);
-
-  await dismissDerivTooltips(page, chartFrame);
-  await saveDrawingCheckpoint(sessionId, page, `tool_activate_${tool}_shortcut`);
-
-  // Check if any toolbar button for this tool is now in an active/pressed state
-  const activeViaShortcut = await chartFrame.evaluate((selectors: string[]) => {
-    for (const sel of selectors) {
-      const el = document.querySelector(sel);
-      if (!el) continue;
-      if (
-        el.classList.contains("active") ||
-        el.getAttribute("data-active") === "true" ||
-        el.getAttribute("aria-pressed") === "true" ||
-        el.getAttribute("data-selected") === "true"
-      ) {
-        return true;
+  // For long/short: scan the DOM first so we know what selectors actually exist
+  if (tool === "long_position" || tool === "short_position") {
+    const toolbarScan = await chartFrame.evaluate(() => {
+      const hits: Array<{ tag: string; name: string | null; tooltip: string | null; x: number; y: number; w: number; h: number }> = [];
+      for (const el of Array.from(document.querySelectorAll<HTMLElement>("[data-name]"))) {
+        const name = el.getAttribute("data-name") ?? "";
+        if (/position|long|short|predict|measure/i.test(name)) {
+          const r = el.getBoundingClientRect();
+          hits.push({ tag: el.tagName, name, tooltip: el.getAttribute("data-tooltip"), x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) });
+        }
       }
-    }
-    return false;
-  }, toolbarSelectors).catch(() => false);
+      // Also grab all left-sidebar button data-names so we can see the full toolbar
+      const sidebar: string[] = [];
+      for (const el of Array.from(document.querySelectorAll<HTMLElement>("[data-name]"))) {
+        const r = el.getBoundingClientRect();
+        if (r.left < 60 && r.width > 0) sidebar.push(el.getAttribute("data-name") ?? "?");
+      }
+      return { hits, sidebar: [...new Set(sidebar)] };
+    }).catch(() => ({ hits: [], sidebar: [] }));
+    console.log(`[drawing/${tool}] DOM toolbar scan:`, JSON.stringify(toolbarScan, null, 2));
+  }
 
-  if (activeViaShortcut) {
-    console.log(`[drawing] ${tool} activated via keyboard shortcut`);
-    return "shortcut";
+  // Try via page-level keyboard (original path) — skip if shortcut is empty
+  if (shortcut) {
+    console.log(`[drawing/${tool}] pressing keyboard shortcut: ${shortcut}`);
+    await page.keyboard.press(shortcut).catch(() => {});
+    await page.waitForTimeout(200);
+
+    // Also try via the frame body — more reliable when the iframe owns focus
+    await chartFrame.locator("body").press(shortcut).catch(() => {});
+    await page.waitForTimeout(400);
+
+    await dismissDerivTooltips(page, chartFrame);
+    await saveDrawingCheckpoint(sessionId, page, `tool_activate_${tool}_shortcut`);
+
+    // Check if any toolbar button for this tool is now in an active/pressed state
+    const activeViaShortcut = await chartFrame.evaluate((selectors: string[]) => {
+      for (const sel of selectors) {
+        const el = document.querySelector(sel);
+        if (!el) continue;
+        if (
+          el.classList.contains("active") ||
+          el.getAttribute("data-active") === "true" ||
+          el.getAttribute("aria-pressed") === "true" ||
+          el.getAttribute("data-selected") === "true"
+        ) {
+          return true;
+        }
+      }
+      return false;
+    }, toolbarSelectors).catch(() => false);
+
+    console.log(`[drawing/${tool}] shortcut activeViaShortcut=${activeViaShortcut}`);
+
+    if (activeViaShortcut) {
+      console.log(`[drawing] ${tool} activated via keyboard shortcut`);
+      return "shortcut";
+    }
+
+    // Shortcut did not activate the right tool — send Escape via the FRAME (not page)
+    // so TradingView's canvas receives it and cancels any accidentally activated tool.
+    if (tool === "long_position" || tool === "short_position") {
+      await chartFrame.locator("body").press("Escape").catch(() => {});
+      await page.waitForTimeout(150);
+    }
   }
 
   console.log(`[drawing] ${tool} shortcut did not confirm active — trying toolbar click`);
@@ -1540,14 +1597,14 @@ async function activateDrawingTool(
     const locator = chartFrame.locator(selector).first();
     try {
       const count = await locator.count();
-      if (count === 0) continue;
-      const visible = await locator.isVisible().catch(() => false);
-      if (!visible) continue;
-      const box = await locator.boundingBox().catch(() => null);
-      if (!box) continue;
+      const visible = count > 0 ? await locator.isVisible().catch(() => false) : false;
+      const box = visible ? await locator.boundingBox().catch(() => null) : null;
+      console.log(`[drawing/${tool}] selector "${selector}" → count=${count} visible=${visible} box=${box ? `(${Math.round(box.x)},${Math.round(box.y)} ${Math.round(box.width)}×${Math.round(box.height)})` : "null"}`);
+      if (count === 0 || !visible || !box) continue;
 
       const bx = box.x + box.width / 2;
       const by = box.y + box.height / 2;
+      console.log(`[drawing/${tool}] clicking toolbar at (${Math.round(bx)}, ${Math.round(by)})`);
       await movePointerWithTelemetry({ sessionId, page, to: { x: bx, y: by }, steps: 8 });
       await updatePointer(sessionId, page, { x: bx, y: by, click: true });
       await locator.click();
@@ -1568,12 +1625,188 @@ async function activateDrawingTool(
         }
       }
 
+      // Long/Short Position tools may appear in a sub-panel — detect and select.
+      if (tool === "long_position" || tool === "short_position") {
+        const label = tool === "long_position" ? "Long Position" : "Short Position";
+        const posItem = chartFrame.getByText(label, { exact: true }).first();
+        const submenuOpen = await posItem.isVisible().catch(() => false);
+        console.log(`[drawing/${tool}] sub-panel "${label}" visible=${submenuOpen}`);
+        if (submenuOpen) {
+          await posItem.click({ force: true, timeout: 3000 }).catch(() => {});
+          await page.waitForTimeout(300);
+          console.log(`[drawing] ${label} selected from sub-panel`);
+        }
+      }
+
       await dismissDerivTooltips(page, chartFrame);
       await saveDrawingCheckpoint(sessionId, page, `tool_activate_${tool}_toolbar`);
       console.log(`[drawing] ${tool} activated via toolbar button (${selector})`);
       return "toolbar";
-    } catch {
+    } catch (err) {
+      console.log(`[drawing/${tool}] selector "${selector}" threw: ${String(err)}`);
       continue;
+    }
+  }
+
+  // Last resort for long/short: try multiple strategies to open the prediction group flyout.
+  if (tool === "long_position" || tool === "short_position") {
+    const label = tool === "long_position" ? "Long Position" : "Short Position";
+    const groupSel = '[data-name="linetool-group-prediction-and-measurement"]';
+    const groupLoc = chartFrame.locator(groupSel).first();
+    const groupCount = await groupLoc.count().catch(() => 0);
+    console.log(`[drawing/${tool}] prediction group selector count=${groupCount}`);
+
+    if (groupCount > 0) {
+      const groupBox = await groupLoc.boundingBox().catch(() => null);
+      if (groupBox) {
+        const gx = groupBox.x + groupBox.width / 2;
+        const gy = groupBox.y + groupBox.height / 2;
+
+        // Helper: scan both the chart frame AND outer page for matching text (TradingView
+        // may portal flyout menus into the outer document rather than the blob iframe).
+        const scanForLabel = async (): Promise<boolean> => {
+          // Frame scan — position-related keywords anywhere in the iframe DOM
+          const frameItems = await chartFrame.evaluate((target: string) => {
+            const results: Array<{ tag: string; text: string; x: number; y: number }> = [];
+            for (const el of Array.from(document.querySelectorAll<HTMLElement>("*"))) {
+              if (el.children.length > 0) continue;
+              const r = el.getBoundingClientRect();
+              if (r.width === 0 || r.height === 0) continue;
+              const text = (el.textContent ?? "").trim();
+              if (text.toLowerCase().includes("position") || text === target) {
+                results.push({ tag: el.tagName, text: text.slice(0, 50), x: Math.round(r.left), y: Math.round(r.top) });
+              }
+            }
+            return results.slice(0, 20);
+          }, label).catch(() => [] as Array<{ tag: string; text: string; x: number; y: number }>);
+          console.log(`[drawing/${tool}] frame items with "position":`, JSON.stringify(frameItems));
+
+          // Outer-page scan — some TV builds portal context menus outside the iframe
+          const outerItems = await page.evaluate((target: string) => {
+            const results: Array<{ tag: string; text: string; x: number; y: number }> = [];
+            for (const el of Array.from(document.querySelectorAll<HTMLElement>("*"))) {
+              if (el.children.length > 0) continue;
+              const r = el.getBoundingClientRect();
+              if (r.width === 0 || r.height === 0) continue;
+              const text = (el.textContent ?? "").trim();
+              if (text === target || text.toLowerCase().includes("position")) {
+                results.push({ tag: el.tagName, text: text.slice(0, 50), x: Math.round(r.left), y: Math.round(r.top) });
+              }
+            }
+            return results.slice(0, 20);
+          }, label).catch(() => [] as Array<{ tag: string; text: string; x: number; y: number }>);
+          console.log(`[drawing/${tool}] outer-page items with "position":`, JSON.stringify(outerItems));
+
+          return frameItems.some((i) => i.text === label) || outerItems.some((i) => i.text === label);
+        };
+
+        // Strategy A: explicit mouse.move hover with 1.5s hold (covers CSS :hover flyouts)
+        await page.mouse.move(gx, gy);
+        await page.waitForTimeout(1500);
+        await saveDrawingCheckpoint(sessionId, page, `tool_group_hover_${tool}`);
+        let found = await scanForLabel();
+        console.log(`[drawing/${tool}] after mouse.move hover: found="${found}"`);
+
+        if (!found) {
+          // Strategy B: click the BOTTOM edge of the group button — this is where TV puts
+          // the "expand" chevron that opens the tool-selection flyout.
+          await page.mouse.click(gx, groupBox.y + groupBox.height - 4);
+          await page.waitForTimeout(600);
+          await saveDrawingCheckpoint(sessionId, page, `tool_group_bottom_click_${tool}`);
+          found = await scanForLabel();
+          console.log(`[drawing/${tool}] after bottom-edge click: found="${found}"`);
+        }
+
+        if (found) {
+          // Try frame first, then outer page
+          const frameLoc = chartFrame.getByText(label, { exact: true }).first();
+          const frameVis = await frameLoc.isVisible().catch(() => false);
+          if (frameVis) {
+            await frameLoc.click({ force: true, timeout: 3000 }).catch(() => {});
+          } else {
+            const outerLoc = page.getByText(label, { exact: true }).first();
+            await outerLoc.click({ force: true, timeout: 3000 }).catch(() => {});
+          }
+          await page.waitForTimeout(400);
+          console.log(`[drawing/${tool}] activated via prediction group flyout`);
+          return "toolbar";
+        }
+
+        // Flyout did not open — press Escape via the FRAME so TradingView receives it
+        // and cancels any tool that was accidentally activated by the group button click.
+        await chartFrame.locator("body").press("Escape").catch(() => {});
+        await page.waitForTimeout(150);
+      }
+    }
+  }
+
+  // JS API fallback: use the TradingView Charting Library widget directly.
+  // Works when addInitScript has captured __gildoreWidget in the blob iframe.
+  if (tool === "long_position" || tool === "short_position") {
+    const drawingTypeNames = [
+      tool,
+      tool.replace("_", "-"),
+      tool === "short_position" ? "LineToolRiskRewardShort" : "LineToolRiskRewardLong",
+      tool === "short_position" ? "ShortPosition" : "LongPosition",
+      tool === "short_position" ? "risk_reward_short" : "risk_reward_long",
+    ];
+
+    const jsResult = await chartFrame.evaluate((names: string[]) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const w = window as any;
+      let widget = w.__gildoreWidget;
+      if (!widget) {
+        const tvMethods = ["activeChart", "chart", "onChartReady", "headerReady", "subscribe"];
+        for (const key of Object.getOwnPropertyNames(w)) {
+          if (key.startsWith("__") || key === "window" || key === "self") continue;
+          try {
+            const val = w[key];
+            if (val && typeof val === "object" && !Array.isArray(val)) {
+              const matches = tvMethods.filter((m) => typeof val[m] === "function").length;
+              if (matches >= 3) { widget = val; break; }
+            }
+          } catch { /* skip */ }
+        }
+      }
+      if (!widget) return "no_widget";
+
+      // Collect ALL methods from the full prototype chains of both widget and chart
+      function allMethods(obj: unknown): string[] {
+        const seen = new Set<string>();
+        let proto = obj as Record<string, unknown> | null;
+        while (proto && proto !== Object.prototype) {
+          for (const k of Object.getOwnPropertyNames(proto)) {
+            if (typeof (obj as Record<string, unknown>)[k] === "function") seen.add(k);
+          }
+          proto = Object.getPrototypeOf(proto) as Record<string, unknown> | null;
+        }
+        return [...seen];
+      }
+
+      try {
+        const chart = widget.activeChart();
+        const widgetMethods = allMethods(widget);
+        const chartMethods = allMethods(chart);
+        const drawRelated = [...new Set([...widgetMethods, ...chartMethods])].filter((m) =>
+          /draw|shape|tool|position|trading|line|mode/i.test(m),
+        );
+        console.log("[gildore] draw-related methods:", JSON.stringify(drawRelated));
+
+        for (const name of names) {
+          try {
+            if (typeof chart.startDrawing === "function") { chart.startDrawing(name); return "chart.startDrawing:" + name; }
+            if (typeof widget.startDrawing === "function") { widget.startDrawing(name); return "widget.startDrawing:" + name; }
+          } catch { /* try next */ }
+        }
+        return "no_startDrawing — draw-related: " + JSON.stringify(drawRelated.slice(0, 20));
+      } catch (e) {
+        return "error: " + String(e);
+      }
+    }, drawingTypeNames).catch(() => "evaluate_threw");
+    console.log(`[drawing/${tool}] JS API result:`, jsResult);
+    if (typeof jsResult === "string" && (jsResult.startsWith("chart.startDrawing:") || jsResult.startsWith("widget.startDrawing:"))) {
+      await page.waitForTimeout(300);
+      return "shortcut";
     }
   }
 
@@ -4460,4 +4693,494 @@ export async function captureAndAnalyzeForDebug(args: {
     await browser.close();
     console.log("[debug] browser closed");
   }
+}
+
+// Starts a debug browser session that stays alive and streams frames so the
+// debug page can show a live browser view. Registers in runtimeSessions like
+// the conjure flow, enabling the existing SSE stream endpoint to work.
+export async function startDebugBrowserSession(args: {
+  agentSlug: string;
+  marketSymbol: string;
+  timeframe: string;
+  targetUrl: string;
+}): Promise<{ sessionId: string; durationMs: number }> {
+  const startedAt = Date.now();
+  const sessionId = `debug-live-${Date.now()}`;
+  console.log("[debug-live] starting session", args);
+
+  const browser = await launchBrowser();
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+
+  // Capture __gildoreWidget so the JS API fallback in activateDrawingTool works.
+  await page.addInitScript(`
+    (function () {
+      let _tv;
+      Object.defineProperty(window, 'TradingView', {
+        configurable: true,
+        enumerable: true,
+        get: function () { return _tv; },
+        set: function (v) {
+          if (v && typeof v === 'object') {
+            _tv = new Proxy(v, {
+              set: function (target, prop, value) {
+                if (prop === 'widget' && typeof value === 'function') {
+                  var Orig = value;
+                  function GildoreWidget() {
+                    var inst = new (Function.prototype.bind.apply(Orig, [null].concat(Array.prototype.slice.call(arguments))))();
+                    window.__gildoreWidget = inst;
+                    console.log('[gildore] TradingView widget captured (debug session)');
+                    return inst;
+                  }
+                  GildoreWidget.prototype = Orig.prototype;
+                  Object.setPrototypeOf(GildoreWidget, Orig);
+                  target[prop] = GildoreWidget;
+                  return true;
+                }
+                target[prop] = value;
+                return true;
+              }
+            });
+          } else {
+            _tv = v;
+          }
+        }
+      });
+    })();
+  `);
+
+  const screenshotPath = `${SCREENSHOT_ROOT}/${sessionId}.png`;
+  await fs.mkdir(SCREENSHOT_ROOT, { recursive: true });
+
+  // Register in runtimeSessions BEFORE the capture loop starts so the SSE
+  // stream endpoint can find the session immediately.
+  const runtime: SessionRuntime = {
+    browser,
+    page,
+    screenshotPath,
+    pointerPulseId: 0,
+    listeners: new Set(),
+    currentActionLabel: "Launching browser...",
+  };
+  runtimeSessions.set(sessionId, runtime);
+  await startLiveCaptureLoop(sessionId);
+
+  try {
+    setActionLabel(sessionId, "Loading chart");
+    await page.goto(args.targetUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+    await page.waitForTimeout(3000);
+
+    setActionLabel(sessionId, `Switching to ${args.marketSymbol}`);
+    await switchDerivSymbol(sessionId, page, args.marketSymbol);
+
+    setActionLabel(sessionId, `Switching to ${args.timeframe}`);
+    await switchDerivTimeframe(sessionId, page, args.timeframe);
+    await page.waitForTimeout(800);
+
+    setActionLabel(sessionId, "Capturing analysis screenshots");
+    const buffers = await captureStrategyScreenshots(sessionId, page, args.timeframe, args.agentSlug);
+    console.log("[debug-live] captured", buffers.length, "screenshots");
+
+    const profile: ChartVisionProfile =
+      args.agentSlug === "third-touch" ? "third-touch-execution" : "default";
+
+    setActionLabel(sessionId, "Running vision analysis...");
+    const decision = await analyzeChartWithVision(buffers, undefined, profile);
+    console.log("[debug-live] analysis complete", {
+      verdict: decision.verdict,
+      structureVerdict: decision.structureVerdict,
+      confidence: decision.confidence,
+    });
+
+    // Store decision on runtime so stream payloads carry it to the client.
+    const liveRuntime = runtimeSessions.get(sessionId);
+    if (liveRuntime) liveRuntime.visionDecision = decision;
+
+    // Reset to current-price 15m view (undo the backward pans from screenshot flow).
+    setActionLabel(sessionId, "Returning to current price view");
+    await switchDerivTimeframe(sessionId, page, "15m");
+    await page.waitForTimeout(900);
+    await page.mouse.click(720, 450);
+    await page.waitForTimeout(200);
+    await page.mouse.wheel(0, 5000);
+    await page.waitForTimeout(900);
+    await autoScaleYAxis(page);
+
+    const zoneStr = decision.correctedZone
+      ? `${decision.direction?.toUpperCase()} @ ${decision.correctedZone.projectedPrice ?? "–"}`
+      : "–";
+    setActionLabel(
+      sessionId,
+      decision.verdict === "valid"
+        ? `Entry zone found — ${zoneStr}`
+        : `Analysis complete — ${decision.verdict}`,
+    );
+    await capture(sessionId);
+
+    // Clear the action label after 3s so the viewport becomes interactive.
+    setTimeout(() => { setActionLabel(sessionId, undefined); }, 3000).unref();
+
+    // Auto-destroy after TTL (same as regular sessions).
+    setTimeout(() => { void destroyBrowserSession(sessionId); }, SESSION_TTL_MS).unref();
+
+    return { sessionId, durationMs: Date.now() - startedAt };
+  } catch (error) {
+    void destroyBrowserSession(sessionId);
+    throw error;
+  }
+}
+
+// Draw a Long or Short Position (risk/reward) annotation via the TradingView JS API.
+// Uses createMultipointShape with the confirmed shape names "linetoolriskrewardlong" /
+// "linetoolriskrewardshort" from the charting library bundle. Returns true on success.
+async function drawPositionViaJsApi(
+  page: Page,
+  side: "long_position" | "short_position",
+  entryPrice: number,
+  tpPrice: number,
+): Promise<boolean> {
+  let chartFrame: ReturnType<typeof getChartFrame>;
+  try { chartFrame = getChartFrame(page); } catch { return false; }
+
+  const shapeName = side === "short_position" ? "linetoolriskrewardshort" : "linetoolriskrewardlong";
+  // SL is mirrored at the same distance as TP, on the opposite side.
+  const tpDelta = Math.abs(entryPrice - tpPrice);
+  const slPrice = side === "short_position" ? entryPrice + tpDelta : entryPrice - tpDelta;
+
+  const result = await chartFrame.evaluate(
+    ({ shapeName, entryPrice, tpPrice, slPrice }: {
+      shapeName: string; entryPrice: number; tpPrice: number; slPrice: number;
+    }) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const w = window as any;
+      let widget = w.__gildoreWidget;
+      if (!widget) {
+        const tvMethods = ["activeChart", "chart", "onChartReady", "headerReady", "subscribe"];
+        for (const key of Object.getOwnPropertyNames(w)) {
+          if (key.startsWith("__") || key === "window" || key === "self") continue;
+          try {
+            const val = w[key];
+            if (val && typeof val === "object" && !Array.isArray(val)) {
+              const matches = tvMethods.filter((m) => typeof val[m] === "function").length;
+              if (matches >= 3) { w.__gildoreWidget = val; widget = val; break; }
+            }
+          } catch { /* skip */ }
+        }
+      }
+      if (!widget) return { ok: false, reason: "no_widget" };
+
+      try {
+        const chart = widget.activeChart();
+        const range = chart.getVisibleRange() as { from: number; to: number } | null;
+        if (!range?.to) return { ok: false, reason: "no_visible_range" };
+
+        // Place the annotation at the very right edge (current/near-future time).
+        const span = range.to - range.from;
+        const annoTime = Math.round(range.to - span * 0.01);
+
+        // TradingView risk/reward shapes take 3 points: [stop, entry, profit].
+        // Try 3-point first, fall back to 2-point if it throws.
+        const points3 = [
+          { time: annoTime, price: slPrice },
+          { time: annoTime, price: entryPrice },
+          { time: annoTime, price: tpPrice },
+        ];
+        const points2 = [
+          { time: annoTime, price: entryPrice },
+          { time: annoTime, price: tpPrice },
+        ];
+
+        for (const pts of [points3, points2]) {
+          try {
+            const id = chart.createMultipointShape(pts, { shape: shapeName, disableSelection: false, overrides: {} });
+            if (id !== null && id !== undefined) return { ok: true, shapeName, pts: pts.length, id: String(id) };
+          } catch { /* try fewer points */ }
+        }
+        return { ok: false, reason: "createMultipointShape_threw_for_both_point_counts" };
+      } catch (e) {
+        return { ok: false, reason: "error: " + String(e) };
+      }
+    },
+    { shapeName, entryPrice, tpPrice, slPrice },
+  ).catch((e) => ({ ok: false, reason: "evaluate_threw: " + String(e) }));
+
+  console.log("[debug-live/draw] drawPositionViaJsApi result:", result);
+  return result.ok;
+}
+
+// Asks Claude Haiku to locate entry and TP prices visually on a chart screenshot.
+// Returns Y pixel coordinates in page space (0 = image top), or null on failure.
+// Asks Haiku to read two visible price-axis labels and their Y positions, then uses
+// those as linear calibration anchors to compute entry / TP pixel coordinates.
+async function findPriceYsWithHaiku(
+  page: Page,
+  entryPrice: number,
+  tpPrice: number,
+  topClamp: number,
+  botClamp: number,
+): Promise<{ entryY: number; tpY: number } | null> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return null;
+
+  let screenshot: Buffer;
+  try {
+    screenshot = await page.screenshot({ type: "png" });
+  } catch {
+    return null;
+  }
+
+  // Ask Haiku to read two anchor labels from the price axis instead of estimating ratios.
+  // Two real label positions give an accurate linear mapping for any price in between.
+  const prompt =
+    `This is a screenshot of a TradingView/Deriv financial chart (1440×900 pixels). ` +
+    `The price axis is on the RIGHT side of the image. Higher on screen = higher price.\n\n` +
+    `Step 1 — read the HIGHEST visible price label on the right Y axis near the top of the chart. ` +
+    `Record its numeric value and its Y pixel coordinate from the top of the image.\n` +
+    `Step 2 — read the LOWEST visible price label near the bottom of the chart. ` +
+    `Record its value and Y pixel.\n\n` +
+    `Reply ONLY with valid JSON (no markdown):\n` +
+    `{"highPrice":<number>,"highY":<integer>,"lowPrice":<number>,"lowY":<integer>}`;
+
+  try {
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 80,
+        messages: [{
+          role: "user",
+          content: [
+            { type: "image", source: { type: "base64", media_type: "image/png", data: screenshot.toString("base64") } },
+            { type: "text", text: prompt },
+          ],
+        }],
+      }),
+    });
+
+    if (!resp.ok) return null;
+    const data = await resp.json() as { content?: Array<{ text: string }> };
+    const raw = (data.content?.[0]?.text ?? "").trim().replace(/```[a-z]*\n?/g, "").replace(/```/g, "").trim();
+    const parsed = JSON.parse(raw) as { highPrice?: number; highY?: number; lowPrice?: number; lowY?: number };
+    const { highPrice, highY, lowPrice, lowY } = parsed;
+    if (
+      typeof highPrice !== "number" || typeof highY !== "number" ||
+      typeof lowPrice !== "number" || typeof lowY !== "number" ||
+      highPrice <= lowPrice
+    ) return null;
+
+    // Build a linear price→Y mapping from the two anchor labels.
+    const slope = (lowY - highY) / (lowPrice - highPrice); // positive: lower price = larger Y
+    const intercept = highY - slope * highPrice;
+    const priceToY = (p: number) => Math.max(topClamp, Math.min(botClamp, Math.round(slope * p + intercept)));
+
+    const entryY = priceToY(entryPrice);
+    const tpY = priceToY(tpPrice);
+    console.log("[debug-live] haiku anchor calibration", { highPrice, highY, lowPrice, lowY, slope: slope.toFixed(4) }, "→", { entryY, tpY });
+    return { entryY, tpY };
+  } catch {
+    return null;
+  }
+}
+
+// Draws the Long or Short Position tool on the chart at the agent's entry zone.
+// The session must be alive (startDebugBrowserSession was called) and the
+// runtime's visionDecision must be populated.
+export async function drawEntryOnChart(sessionId: string): Promise<void> {
+  const runtime = runtimeSessions.get(sessionId);
+  if (!runtime) throw new Error("session_not_found");
+  if (!runtime.visionDecision) throw new Error("no_vision_decision");
+
+  const decision = runtime.visionDecision;
+  if (!decision.correctedZone) throw new Error("no_entry_zone");
+  if (!decision.direction) throw new Error("no_direction");
+
+  const { page } = runtime;
+  const viewport = page.viewportSize() ?? { width: 1440, height: 900 };
+
+  const CL = 160;
+  const CR = viewport.width - 90;
+  const CT = 58;
+  const CB = viewport.height - 38;
+  const CW = CR - CL;
+  const CH = CB - CT;
+  const chartCx = Math.round(CL + CW * 0.5);
+  const chartCy = Math.round(CT + CH * 0.5);
+
+  const chartFrame = getChartFrame(page);
+
+  // Compute prices up-front so they're available for the Haiku fallback.
+  const entryPrice =
+    decision.correctedZone.projectedPrice ??
+    (decision.correctedZone.low + decision.correctedZone.high) / 2;
+
+  const tpPrice =
+    decision.direction === "long"
+      ? decision.correctedZone.high
+      : decision.correctedZone.low;
+
+  console.log("[debug-live/draw] start", {
+    direction: decision.direction,
+    entryPrice,
+    tpPrice,
+    zone: decision.correctedZone,
+    viewport,
+    chartCx,
+    chartCy,
+    CT,
+    CB,
+    CL,
+    CR,
+  });
+
+  // Dismiss any open tooltips / menus, then click the chart to give it focus.
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(300);
+  await page.mouse.click(chartCx, chartCy);
+  await page.waitForTimeout(200);
+
+  // ── Calibrate price → Y (three strategies, first success wins) ────────────
+  setActionLabel(sessionId, "Calibrating price axis...");
+  await dismissDerivTooltips(page, chartFrame);
+
+  const iframeOffset = await page.evaluate(() => {
+    const blob = Array.from(document.querySelectorAll("iframe")).find((f) =>
+      f.src.startsWith("blob:"),
+    );
+    if (blob) {
+      const r = blob.getBoundingClientRect();
+      return { x: r.left, y: r.top };
+    }
+    return { x: 0, y: 0 };
+  }).catch(() => ({ x: 0, y: 0 }));
+
+  // CT is relative to the iframe top, so we add iframeOffset.y.
+  // CB = viewport.height - 38 is already in page coordinates, so we do NOT add iframeOffset.y.
+  const topClamp = iframeOffset.y + CT + 12;
+  const botClamp = CB - 12;
+
+  let priceToY: ((price: number) => number) | null = null;
+  let directEntryY: number | null = null;
+  let directTpY: number | null = null;
+
+  // Strategy 1: DOM scan — wider threshold, space-aware format, includes SVG <text>
+  const rawPts = await chartFrame.evaluate(() => {
+    const axisXThreshold = window.innerWidth * 0.55;
+    const results: Array<{ price: number; frameY: number }> = [];
+    const seen = new Set<string>();
+    const all = [
+      ...Array.from(document.querySelectorAll<Element>("*")),
+      ...Array.from(document.querySelectorAll<Element>("text")),
+    ];
+    for (const el of all) {
+      const r = (el as HTMLElement).getBoundingClientRect?.();
+      if (!r) continue;
+      if (
+        r.left < axisXThreshold || r.width === 0 || r.height < 2 ||
+        r.height > 60 || r.top < 0 || r.bottom > window.innerHeight
+      ) continue;
+      const text = (el.textContent ?? "").trim();
+      if (!text || seen.has(text)) continue;
+      seen.add(text);
+      const clean = text.replace(/[\s,]/g, "");
+      const price = parseFloat(clean);
+      if (!isNaN(price) && price > 10 && price < 10_000_000 && /^[\d\s,\.]+$/.test(text)) {
+        results.push({ price, frameY: r.top + r.height / 2 });
+      }
+    }
+    return results;
+  }).catch(() => [] as Array<{ price: number; frameY: number }>);
+
+  const calPts = rawPts.map((pt) => ({ price: pt.price, y: iframeOffset.y + pt.frameY }));
+
+  if (calPts.length >= 2) {
+    const n = calPts.length;
+    const sx = calPts.reduce((s, p) => s + p.price, 0);
+    const sy = calPts.reduce((s, p) => s + p.y, 0);
+    const sxy = calPts.reduce((s, p) => s + p.price * p.y, 0);
+    const sxx = calPts.reduce((s, p) => s + p.price * p.price, 0);
+    const m = (n * sxy - sx * sy) / (n * sxx - sx * sx);
+    const c = (sy - m * sx) / n;
+    priceToY = (price: number) => Math.max(topClamp, Math.min(botClamp, m * price + c));
+    console.log("[debug-live] calibration strategy 1 (DOM)", { pointCount: n });
+  }
+
+  // Strategy 2: cursor probe at chart top and bottom — reads the crosshair label
+  if (!priceToY) {
+    const topProbeY = iframeOffset.y + CT + 40;
+    const botProbeY = iframeOffset.y + CB - 40;
+    const topPrice = await probeCursorPrice(page, chartFrame, chartCx, topProbeY, iframeOffset.y);
+    const botPrice = await probeCursorPrice(page, chartFrame, chartCx, botProbeY, iframeOffset.y);
+
+    if (topPrice !== null && botPrice !== null && Math.abs(topPrice - botPrice) > 1) {
+      const m = (topProbeY - botProbeY) / (topPrice - botPrice);
+      const c = topProbeY - m * topPrice;
+      priceToY = (price: number) => Math.max(topClamp, Math.min(botClamp, m * price + c));
+      console.log("[debug-live] calibration strategy 2 (cursor probe)", { topPrice, botPrice });
+    }
+  }
+
+  // Strategy 3: Haiku vision — visually read the price axis from a screenshot
+  if (!priceToY) {
+    const haikuResult = await findPriceYsWithHaiku(page, entryPrice, tpPrice, topClamp, botClamp);
+    if (haikuResult) {
+      directEntryY = Math.max(topClamp, Math.min(botClamp, haikuResult.entryY));
+      directTpY = Math.max(topClamp, Math.min(botClamp, haikuResult.tpY));
+      console.log("[debug-live] calibration strategy 3 (haiku)", { directEntryY, directTpY });
+    }
+  }
+
+  console.log("[debug-live/draw] iframeOffset", iframeOffset, { topClamp, botClamp });
+
+  if (!priceToY && directEntryY === null) {
+    console.warn("[debug-live/draw] all calibration strategies failed", { rawPtsFound: rawPts.length });
+    throw new Error("price_calibration_failed");
+  }
+
+  const side = decision.direction === "long" ? "long_position" : "short_position";
+
+  // ── Strategy A: JS API via createMultipointShape (no UI interaction needed) ──
+  // Shape names confirmed from charts.deriv.com/charting_library/bundles/library.js:
+  // "linetoolriskrewardshort" and "linetoolriskrewardlong"
+  setActionLabel(sessionId, `Drawing ${side} annotation...`);
+  const jsDrawn = await drawPositionViaJsApi(page, side, entryPrice, tpPrice);
+
+  if (!jsDrawn) {
+    // ── Strategy B: UI automation — activate tool then click entry + TP ──────
+    setActionLabel(sessionId, `Activating ${side} tool...`);
+    const toolResult = await activateDrawingTool(sessionId, page, chartFrame, side, chartCx, chartCy);
+    console.log("[debug-live/draw] tool activation result:", toolResult);
+
+    // Place both clicks near the right edge of the chart so the annotation anchors
+    // at the current / near-future time rather than in the middle of history.
+    const clickX = CR - 60;
+    const entryY = directEntryY ?? priceToY!(entryPrice);
+    console.log("[debug-live/draw] clicking entry", { x: clickX, y: entryY, entryPrice });
+    setActionLabel(sessionId, `Placing ${decision.direction} entry at ${entryPrice.toFixed(2)}`);
+
+    await movePointerWithTelemetry({ sessionId, page, to: { x: clickX, y: entryY }, steps: 10 });
+    await updatePointer(sessionId, page, { x: clickX, y: entryY, click: true });
+    await page.mouse.click(clickX, entryY);
+    await page.waitForTimeout(600);
+
+    const tpY = directTpY ?? priceToY!(tpPrice);
+    console.log("[debug-live/draw] clicking TP", { x: clickX, y: tpY, tpPrice });
+    await movePointerWithTelemetry({ sessionId, page, to: { x: clickX, y: tpY }, steps: 10 });
+    await updatePointer(sessionId, page, { x: clickX, y: tpY, click: true });
+    await page.mouse.click(clickX, tpY);
+    await page.waitForTimeout(400);
+
+    // Deselect tool and settle.
+    await chartFrame.locator("body").press("Escape").catch(() => {});
+    await page.waitForTimeout(300);
+  }
+
+  setActionLabel(sessionId, "Entry marked ✓");
+  await capture(sessionId);
+  // Clear label after 2s so the viewport unlocks for panning / zooming.
+  setTimeout(() => { setActionLabel(sessionId, undefined); }, 2000).unref();
+  console.log("[debug-live] entry drawn", { entryPrice, tpPrice, side });
 }

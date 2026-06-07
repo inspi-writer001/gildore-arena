@@ -3,9 +3,15 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 
-export default function ArenaEnterButton({ align = "center" }: { align?: "center" | "start" }) {
+export default function ArenaEnterButton({
+  align = "center",
+}: {
+  align?: "center" | "start";
+}) {
   return (
-    <div className={`arena-cta-wrap mt-1! ${align === "start" ? "!justify-start" : ""}`}>
+    <div
+      className={`animate-fade-rise-delay-2 arena-cta-wrap mt-1! ${align === "start" ? "!justify-start" : ""}`}
+    >
       <Link
         href="/arena"
         className="arena-cta-shell"

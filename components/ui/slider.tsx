@@ -30,7 +30,7 @@ function Slider({
       min={min}
       max={max}
       className={cn(
-        "relative flex w-full touch-none select-none items-center data-[disabled]:opacity-50",
+        "relative flex w-full touch-none select-none items-center data-[disabled]:opacity-50 hover:cursor-pointer",
         className,
       )}
       {...props}

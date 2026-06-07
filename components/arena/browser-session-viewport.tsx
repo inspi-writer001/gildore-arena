@@ -3,17 +3,20 @@
 import { useEffect, useRef, useState } from "react";
 import { ImageDithering } from "@paper-design/shaders-react";
 import { cn } from "@/lib/utils";
+import type { ChartVisionDecision } from "@/lib/chart-vision-analysis";
 
 export function BrowserSessionViewport({
   sessionId,
   sessionStatus,
   onRestart,
   onStartupExhausted,
+  onDecision,
 }: {
   sessionId: string;
   sessionStatus: string;
   onRestart?: () => Promise<void>;
   onStartupExhausted?: () => void;
+  onDecision?: (d: ChartVisionDecision) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [pointerOverlay, setPointerOverlay] = useState<{
@@ -44,11 +47,16 @@ export function BrowserSessionViewport({
   const eventSourceRef = useRef<EventSource | null>(null);
   const hasEverConnectedRef = useRef(false);
   const startupExhaustedRef = useRef(onStartupExhausted);
+  const onDecisionRef = useRef(onDecision);
   const maxStreamRetries = 3;
 
   useEffect(() => {
     startupExhaustedRef.current = onStartupExhausted;
   }, [onStartupExhausted]);
+
+  useEffect(() => {
+    onDecisionRef.current = onDecision;
+  }, [onDecision]);
 
   useEffect(() => {
     function tick(ts: number) {
@@ -108,6 +116,7 @@ export function BrowserSessionViewport({
           frame: string;
           mimeType: string;
           actionLabel?: string;
+          visionDecision?: ChartVisionDecision;
           pointer?: {
             x: number;
             y: number;
@@ -124,6 +133,9 @@ export function BrowserSessionViewport({
         };
 
         setCurrentActionLabel(payload.actionLabel ?? undefined);
+        if (payload.visionDecision) {
+          onDecisionRef.current?.(payload.visionDecision);
+        }
 
         const image = new Image();
         image.onload = () => {
