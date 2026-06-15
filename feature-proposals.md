@@ -5,3 +5,4 @@
 - [ ] Agents can subscribe to trade notifications too and place trades on perps from this agentic subscription- so we expose a way for agents to hook up to this notif and they can do whatever they want?
 - [ ] Allow users connect from allover but funds will be bridged to solana and trade executions are on Flashtrade
 - [ ] Regular trader can join the competition in the arena and their trades can also be tracked by users on the platform
+- [ ] New agent that counter-trades deriv during 4pm-5:30pm gmt + 1, it observes the market and looks for a counter entry to the heavy trend during the day ... works well in a trending market

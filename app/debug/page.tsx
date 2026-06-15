@@ -64,6 +64,8 @@ export default function DebugPage() {
   const [entryPosting, setEntryPosting] = useState(false);
   const [entryDone, setEntryDone] = useState(false);
   const [entryError, setEntryError] = useState<string | null>(null);
+  const [capturedViews, setCapturedViews] = useState<string[]>([]);
+  const [expandedView, setExpandedView] = useState<number | null>(null);
   const elapsed = useElapsed(running);
 
   const agent = AGENTS.find((a) => a.slug === agentSlug) ?? AGENTS[0];
@@ -91,12 +93,13 @@ export default function DebugPage() {
         }),
         signal: controller.signal,
       });
-      const data = (await res.json()) as { ok: boolean; error?: string; sessionId?: string; durationMs?: number };
+      const data = (await res.json()) as { ok: boolean; error?: string; sessionId?: string; durationMs?: number; capturedViews?: string[] };
       if (!data.ok || !data.sessionId) {
         setError(data.error ?? "session_start_failed");
       } else {
         setSessionId(data.sessionId);
         setDurationMs(data.durationMs ?? null);
+        setCapturedViews(data.capturedViews ?? []);
       }
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
@@ -134,7 +137,7 @@ export default function DebugPage() {
   }
 
   const d = decision;
-  const hasEntryZone = !!d?.correctedZone && !!d?.direction;
+  const hasEntryZone = !!d?.correctedZone && (d?.direction === "long" || d?.direction === "short");
 
   return (
     <div className="min-h-screen bg-[#0c0c0c] text-[#e8e8e2] font-mono p-6">
@@ -217,6 +220,8 @@ export default function DebugPage() {
                 setSessionId(null);
                 setDecision(null);
                 setDurationMs(null);
+                setCapturedViews([]);
+                setExpandedView(null);
                 setEntryDone(false);
                 setEntryError(null);
               }}
@@ -232,6 +237,44 @@ export default function DebugPage() {
           <div className="bg-red-950/40 border border-red-800/60 rounded-xl p-4 mb-6 text-sm text-red-400">
             <p className="font-semibold mb-1">Error</p>
             <p>{error}</p>
+          </div>
+        )}
+
+        {/* Captured views strip */}
+        {capturedViews.length > 0 && (
+          <div className="mb-6">
+            <p className="text-[10px] uppercase tracking-[0.16em] text-zinc-500 mb-3">
+              Screenshots fed to vision ({capturedViews.length} views)
+            </p>
+            <div className="flex gap-3 overflow-x-auto pb-2">
+              {capturedViews.map((src, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => setExpandedView(expandedView === i ? null : i)}
+                  className="flex-shrink-0 flex flex-col gap-1.5 group"
+                >
+                  <div className={cn(
+                    "rounded-lg overflow-hidden border transition-colors",
+                    expandedView === i ? "border-amber-500" : "border-zinc-800 group-hover:border-zinc-600",
+                  )}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={src} alt={`View ${i + 1}`} className="w-[280px] h-auto block" />
+                  </div>
+                  <span className="text-[10px] text-zinc-500 text-center">View {i + 1}/{capturedViews.length}</span>
+                </button>
+              ))}
+            </div>
+            {expandedView !== null && (
+              <div className="mt-4 rounded-xl overflow-hidden border border-amber-500/40">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={capturedViews[expandedView]}
+                  alt={`View ${expandedView + 1} expanded`}
+                  className="w-full block"
+                />
+              </div>
+            )}
           </div>
         )}
 
@@ -265,19 +308,11 @@ export default function DebugPage() {
                       )}
                     >
                       {entryDone ? (
-                        <>Entry marked ✓</>
+                        <>{d?.direction === "long" ? "Long Opened ✓" : "Short Opened ✓"}</>
                       ) : entryPosting ? (
-                        <>Marking…</>
+                        <>Opening…</>
                       ) : (
-                        <>
-                          <span className="w-1.5 h-1.5 rounded-full bg-current" />
-                          Point Entry
-                          {d?.direction && (
-                            <span className="opacity-70 text-[10px]">
-                              ({d.direction.toUpperCase()})
-                            </span>
-                          )}
-                        </>
+                        <>{d?.direction === "long" ? "Open Long" : "Open Short"}</>
                       )}
                     </button>
                   </div>

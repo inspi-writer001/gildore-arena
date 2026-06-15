@@ -157,6 +157,26 @@ The screenshots follow a deliberate multi-timeframe sequence:
 - The line through T1→T2 is projected forward. A shallower slope is ALWAYS preferable. The projected line should arrive near or below current price for a bullish setup (price is touching or approaching support from above).
 - Prefer the line that the market has most clearly respected across the longest visible span.
 
+### T1 lifecycle — invalidation and fan rotation
+
+**T1 is a price floor, not just a coordinate.** The ascending structure remains valid only while price stays strictly above T1's price level.
+
+**T1 invalidation**: If ANY candle wick or body touches T1's exact price level (or trades below it), the current trendline structure is immediately invalidated — the slope has collapsed to a horizontal revisit of the origin.
+- After invalidation: scan for a swing low that formed at or below the touched level. If one is present, that swing is the new T1. Begin searching for a new T2 and T3 from this new anchor.
+- If no clean swing has yet formed at the touched level, return structureVerdict="none" until a new swing establishes itself.
+
+**Fan rotation (line broken, T1 price floor intact)**: If the ascending trendline drawn through T1→T2 is visually broken (price closed below the line) but T1's exact price level has NOT been touched or pierced by any candle:
+- T1 remains valid as the anchor.
+- Find the most recent significant swing low that formed AFTER the line break — this becomes the new T2.
+- Draw a new, shallower ascending line from T1 to this new T2. The line "fans out" from T1 as successive T2 anchors get progressively higher.
+- The new T2 must still be at least 10 days after T1.
+- Look for T3 on this new shallower line.
+
+**Decision tree at analysis time**:
+1. Has any candle wick or body touched or gone below T1's price? → Full invalidation. If a swing formed there or below, that swing is the new T1. Restart the sequence.
+2. Has the drawn line (T1→T2) been broken but T1's price level is untouched? → Fan rotation. Keep T1, find post-break swing as new T2, draw shallower line, watch for T3.
+3. Neither? → Structure intact. Assess T3 normally.
+
 ### CRITICAL: Anchor at wick extremes — never at body prices
 The price you report for T1 and T2 MUST be the candle WICK extreme, not the body:
 - **Bullish ascending support**: T1 price = the LOW (L) of the T1 candle (the bottom wick tip). T2 price = the LOW (L) of the T2 candle. The drawn line must run **BELOW all candle bodies** from T1 through to current price. If the line would cut through any candle body, the T2 anchor is wrong — choose a later swing whose wick low produces a line that stays under all bodies.
@@ -238,6 +258,8 @@ function buildUserPrompt(
   profile: ChartVisionProfile,
   followUpSetup?: FollowUpSetupContext | null,
 ): string {
+  const todayUtc = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+
   const candidateSection = candidate
     ? `The deterministic engine produced this candidate for context:
 - Direction: ${candidate.direction}
@@ -286,6 +308,8 @@ Do not rediscover from scratch unless the prior structure is clearly broken. Jud
     : "This is a fresh discovery review. Identify the best active setup from the current chart sequence.";
 
   return `You are reviewing ${screenshotCount} sequential chart screenshots following a deliberate multi-timeframe discovery flow. ${flowDescription}
+
+**Today's date is ${todayUtc} UTC.** The chart x-axis shows abbreviated day/month labels without the year. Use today's date as your anchor to correctly reconstruct full dates — e.g. if the axis shows "Jun 7" and today is 2026-06-15, the full date is 2026-06-07. Never default to January or any other month without explicit axis evidence.
 
 ${candidateSection}
 

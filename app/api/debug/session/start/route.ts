@@ -19,14 +19,14 @@ export async function POST(request: Request) {
       );
     }
 
-    const result = await startDebugBrowserSession({
+    const { sessionId, durationMs, capturedViews } = await startDebugBrowserSession({
       agentSlug: body.agentSlug,
       marketSymbol: body.marketSymbol,
       timeframe: body.timeframe,
       targetUrl: body.targetUrl ?? "https://charts.deriv.com/deriv",
     });
 
-    return NextResponse.json({ ok: true, ...result });
+    return NextResponse.json({ ok: true, sessionId, durationMs, capturedViews });
   } catch (error) {
     console.error("[debug/session/start] failed", error);
     return NextResponse.json(

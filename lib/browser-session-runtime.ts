@@ -1264,8 +1264,27 @@ async function captureStrategyScreenshots(
 
   if (agentSlug === "third-touch") {
     // View 1 — 1h: full T1→T2 slope + regime
+    // We click the "3m" range button to ensure the view shows ~3 months of 1h
+    // history, so the agent can see structure that started in April/May rather
+    // than only the most recent 10 days the default zoom would show.
     setActionLabel(sessionId, "Switching to 1h — full structure");
     await switchDerivTimeframe(sessionId, page, "1h");
+    await page.waitForTimeout(900);
+    const chartFrame = getChartFrame(page);
+    const rangeBtn3m = chartFrame.locator('button', { hasText: /^3m$/i }).first();
+    const rangeBtn3mPage = page.locator('button', { hasText: /^3m$/i }).first();
+    const clicked3m = await rangeBtn3m.isVisible().catch(() => false)
+      ? (await rangeBtn3m.click().catch(() => null), true)
+      : await rangeBtn3mPage.isVisible().catch(() => false)
+        ? (await rangeBtn3mPage.click().catch(() => null), true)
+        : false;
+    if (!clicked3m) {
+      // Fallback: zoom out via Ctrl+scroll if the range button isn't found
+      await page.mouse.move(chartCx, chartCy);
+      await page.keyboard.down("Control");
+      await page.mouse.wheel(0, -5000);
+      await page.keyboard.up("Control");
+    }
     await page.waitForTimeout(900);
     await page.mouse.click(chartCx, chartCy);
     await page.waitForTimeout(200);
@@ -1651,92 +1670,150 @@ async function activateDrawingTool(
   // Last resort for long/short: try multiple strategies to open the prediction group flyout.
   if (tool === "long_position" || tool === "short_position") {
     const label = tool === "long_position" ? "Long Position" : "Short Position";
-    const groupSel = '[data-name="linetool-group-prediction-and-measurement"]';
-    const groupLoc = chartFrame.locator(groupSel).first();
-    const groupCount = await groupLoc.count().catch(() => 0);
-    console.log(`[drawing/${tool}] prediction group selector count=${groupCount}`);
 
-    if (groupCount > 0) {
-      const groupBox = await groupLoc.boundingBox().catch(() => null);
-      if (groupBox) {
-        const gx = groupBox.x + groupBox.width / 2;
-        const gy = groupBox.y + groupBox.height / 2;
-
-        // Helper: scan both the chart frame AND outer page for matching text (TradingView
-        // may portal flyout menus into the outer document rather than the blob iframe).
-        const scanForLabel = async (): Promise<boolean> => {
-          // Frame scan — position-related keywords anywhere in the iframe DOM
-          const frameItems = await chartFrame.evaluate((target: string) => {
-            const results: Array<{ tag: string; text: string; x: number; y: number }> = [];
-            for (const el of Array.from(document.querySelectorAll<HTMLElement>("*"))) {
-              if (el.children.length > 0) continue;
-              const r = el.getBoundingClientRect();
-              if (r.width === 0 || r.height === 0) continue;
-              const text = (el.textContent ?? "").trim();
-              if (text.toLowerCase().includes("position") || text === target) {
-                results.push({ tag: el.tagName, text: text.slice(0, 50), x: Math.round(r.left), y: Math.round(r.top) });
-              }
-            }
-            return results.slice(0, 20);
-          }, label).catch(() => [] as Array<{ tag: string; text: string; x: number; y: number }>);
-          console.log(`[drawing/${tool}] frame items with "position":`, JSON.stringify(frameItems));
-
-          // Outer-page scan — some TV builds portal context menus outside the iframe
-          const outerItems = await page.evaluate((target: string) => {
-            const results: Array<{ tag: string; text: string; x: number; y: number }> = [];
-            for (const el of Array.from(document.querySelectorAll<HTMLElement>("*"))) {
-              if (el.children.length > 0) continue;
-              const r = el.getBoundingClientRect();
-              if (r.width === 0 || r.height === 0) continue;
-              const text = (el.textContent ?? "").trim();
-              if (text === target || text.toLowerCase().includes("position")) {
-                results.push({ tag: el.tagName, text: text.slice(0, 50), x: Math.round(r.left), y: Math.round(r.top) });
-              }
-            }
-            return results.slice(0, 20);
-          }, label).catch(() => [] as Array<{ tag: string; text: string; x: number; y: number }>);
-          console.log(`[drawing/${tool}] outer-page items with "position":`, JSON.stringify(outerItems));
-
-          return frameItems.some((i) => i.text === label) || outerItems.some((i) => i.text === label);
-        };
-
-        // Strategy A: explicit mouse.move hover with 1.5s hold (covers CSS :hover flyouts)
-        await page.mouse.move(gx, gy);
-        await page.waitForTimeout(1500);
-        await saveDrawingCheckpoint(sessionId, page, `tool_group_hover_${tool}`);
-        let found = await scanForLabel();
-        console.log(`[drawing/${tool}] after mouse.move hover: found="${found}"`);
-
-        if (!found) {
-          // Strategy B: click the BOTTOM edge of the group button — this is where TV puts
-          // the "expand" chevron that opens the tool-selection flyout.
-          await page.mouse.click(gx, groupBox.y + groupBox.height - 4);
-          await page.waitForTimeout(600);
-          await saveDrawingCheckpoint(sessionId, page, `tool_group_bottom_click_${tool}`);
-          found = await scanForLabel();
-          console.log(`[drawing/${tool}] after bottom-edge click: found="${found}"`);
+    // Helper: scan both the chart frame AND outer page for the menu item text.
+    const scanForLabel = async (): Promise<boolean> => {
+      const frameItems = await chartFrame.evaluate((target: string) => {
+        const results: Array<{ text: string }> = [];
+        for (const el of Array.from(document.querySelectorAll<HTMLElement>("*"))) {
+          if (el.children.length > 0) continue;
+          const r = el.getBoundingClientRect();
+          if (r.width === 0 || r.height === 0) continue;
+          const text = (el.textContent ?? "").trim();
+          if (text === target) results.push({ text });
         }
+        return results;
+      }, label).catch(() => [] as Array<{ text: string }>);
+      if (frameItems.some((i) => i.text === label)) return true;
 
-        if (found) {
-          // Try frame first, then outer page
-          const frameLoc = chartFrame.getByText(label, { exact: true }).first();
-          const frameVis = await frameLoc.isVisible().catch(() => false);
-          if (frameVis) {
-            await frameLoc.click({ force: true, timeout: 3000 }).catch(() => {});
-          } else {
-            const outerLoc = page.getByText(label, { exact: true }).first();
-            await outerLoc.click({ force: true, timeout: 3000 }).catch(() => {});
+      const outerItems = await page.evaluate((target: string) => {
+        const results: Array<{ text: string }> = [];
+        for (const el of Array.from(document.querySelectorAll<HTMLElement>("*"))) {
+          if (el.children.length > 0) continue;
+          const r = el.getBoundingClientRect();
+          if (r.width === 0 || r.height === 0) continue;
+          const text = (el.textContent ?? "").trim();
+          if (text === target) results.push({ text });
+        }
+        return results;
+      }, label).catch(() => [] as Array<{ text: string }>);
+      return outerItems.some((i) => i.text === label);
+    };
+
+    const clickLabelInFlyout = async (): Promise<boolean> => {
+      const frameLoc = chartFrame.getByText(label, { exact: true }).first();
+      if (await frameLoc.isVisible().catch(() => false)) {
+        await frameLoc.click({ force: true, timeout: 3000 }).catch(() => {});
+        return true;
+      }
+      const outerLoc = page.getByText(label, { exact: true }).first();
+      if (await outerLoc.isVisible().catch(() => false)) {
+        await outerLoc.click({ force: true, timeout: 3000 }).catch(() => {});
+        return true;
+      }
+      return false;
+    };
+
+    // Try multiple known data-name variants for the prediction/measurement group button.
+    const groupSelectors = [
+      '[data-name="linetool-group-prediction-and-measurement"]',
+      '[data-name="prediction-and-measurement"]',
+      '[data-name="linetool-group-prediction"]',
+      '[data-tooltip*="Long Position"]',
+      '[data-tooltip*="Prediction"]',
+    ];
+
+    let groupBox: { x: number; y: number; width: number; height: number } | null = null;
+    for (const sel of groupSelectors) {
+      const loc = chartFrame.locator(sel).first();
+      if (await loc.count().catch(() => 0) > 0) {
+        groupBox = await loc.boundingBox().catch(() => null);
+        if (groupBox) { console.log(`[drawing/${tool}] prediction group matched: ${sel}`); break; }
+      }
+    }
+
+    // Fallback: probe all sidebar buttons until one opens the flyout with our label.
+    if (!groupBox) {
+      console.log(`[drawing/${tool}] no known group selector matched — scanning sidebar buttons`);
+      const sidebarBtns = await chartFrame.evaluate(() => {
+        const seen = new Map<string, { x: number; y: number }>();
+        for (const el of Array.from(document.querySelectorAll<HTMLElement>("[data-name]"))) {
+          const name = el.getAttribute("data-name") ?? "";
+          const r = el.getBoundingClientRect();
+          if (r.left < 75 && r.width > 8 && r.height > 8 && !seen.has(name)) {
+            seen.set(name, { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) });
           }
+        }
+        return [...seen.values()];
+      }).catch(() => [] as Array<{ x: number; y: number }>);
+
+      for (const btn of sidebarBtns) {
+        await page.mouse.click(btn.x, btn.y);
+        await page.waitForTimeout(700);
+        if (await scanForLabel()) {
+          console.log(`[drawing/${tool}] flyout opened via sidebar scan at (${btn.x},${btn.y})`);
+          const clicked = await clickLabelInFlyout();
+          if (clicked) {
+            await page.waitForTimeout(400);
+            return "toolbar";
+          }
+        }
+        await chartFrame.locator("body").press("Escape").catch(() => {});
+        await page.waitForTimeout(150);
+      }
+    }
+
+    if (groupBox) {
+      const gx = groupBox.x + groupBox.width / 2;
+      const gy = groupBox.y + groupBox.height / 2;
+
+      // Try hover first (CSS :hover flyouts).
+      await page.mouse.move(gx, gy);
+      await page.waitForTimeout(1500);
+      let found = await scanForLabel();
+
+      // If hover didn't reveal the label, try right-click (shows ALL tools in the group).
+      if (!found) {
+        await page.mouse.click(gx, gy, { button: "right" });
+        await page.waitForTimeout(700);
+        found = await scanForLabel();
+      }
+
+      // Still not found — regular left-click as last resort.
+      if (!found) {
+        await page.keyboard.press("Escape");
+        await page.waitForTimeout(200);
+        await page.mouse.click(gx, groupBox.y + groupBox.height - 4);
+        await page.waitForTimeout(800);
+        found = await scanForLabel();
+      }
+
+      // Log visible leaf-node text so we know exactly what the flyout shows.
+      const flyoutText = await chartFrame.evaluate(() => {
+        const texts: string[] = [];
+        for (const el of Array.from(document.querySelectorAll<HTMLElement>("*"))) {
+          if (el.children.length > 0) continue;
+          const r = el.getBoundingClientRect();
+          if (r.width === 0 || r.height === 0) continue;
+          const t = (el.textContent ?? "").trim();
+          if (t.length > 1 && t.length < 60) texts.push(t);
+        }
+        return [...new Set(texts)].slice(0, 40);
+      }).catch(() => [] as string[]);
+      console.log(`[drawing/${tool}] flyout visible text:`, JSON.stringify(flyoutText));
+
+      if (found) {
+        const clicked = await clickLabelInFlyout();
+        if (clicked) {
           await page.waitForTimeout(400);
           console.log(`[drawing/${tool}] activated via prediction group flyout`);
           return "toolbar";
         }
-
-        // Flyout did not open — press Escape via the FRAME so TradingView receives it
-        // and cancels any tool that was accidentally activated by the group button click.
-        await chartFrame.locator("body").press("Escape").catch(() => {});
-        await page.waitForTimeout(150);
       }
+
+      // Dismiss the flyout without clicking random chart elements.
+      await chartFrame.locator("body").press("Escape").catch(() => {});
+      await page.waitForTimeout(150);
     }
   }
 
@@ -1744,6 +1821,8 @@ async function activateDrawingTool(
   // Works when addInitScript has captured __gildoreWidget in the blob iframe.
   if (tool === "long_position" || tool === "short_position") {
     const drawingTypeNames = [
+      // Confirmed name from charts.deriv.com/charting_library/bundles/library.js
+      tool === "short_position" ? "linetoolriskrewardshort" : "linetoolriskrewardlong",
       tool,
       tool.replace("_", "-"),
       tool === "short_position" ? "LineToolRiskRewardShort" : "LineToolRiskRewardLong",
@@ -1792,20 +1871,57 @@ async function activateDrawingTool(
         );
         console.log("[gildore] draw-related methods:", JSON.stringify(drawRelated));
 
+        // Try selectLineTool first (confirmed available in Deriv's charting library).
+        // It activates the tool for drawing so subsequent mouse clicks place it.
+        if (typeof widget.selectLineTool === "function") {
+          for (const name of names) {
+            try {
+              widget.selectLineTool(name);
+              // Read back to see if the tool changed — "cursor" means it didn't activate.
+              const selected = typeof widget.selectedLineTool === "function" ? String(widget.selectedLineTool()) : "";
+              console.log("[gildore] selectLineTool(" + name + ") → selectedLineTool=" + selected);
+              if (selected && selected !== "cursor") {
+                return "widget.selectLineTool:" + name + ":confirmed:" + selected;
+              }
+              // Tool stayed on cursor — try next name.
+            } catch { /* try next name */ }
+          }
+          // None confirmed via readback — call with the primary name and proceed anyway.
+          // The group button click may have already put the chart in drawing mode, making
+          // selectLineTool effective even without a selectedLineTool confirmation.
+          try {
+            widget.selectLineTool(names[0]);
+            return "widget.selectLineTool:" + names[0] + ":unconfirmed";
+          } catch { /* fall through */ }
+        }
+        if (typeof chart.selectLineTool === "function") {
+          for (const name of names) {
+            try {
+              chart.selectLineTool(name);
+              return "chart.selectLineTool:" + name;
+            } catch { /* try next */ }
+          }
+        }
         for (const name of names) {
           try {
             if (typeof chart.startDrawing === "function") { chart.startDrawing(name); return "chart.startDrawing:" + name; }
             if (typeof widget.startDrawing === "function") { widget.startDrawing(name); return "widget.startDrawing:" + name; }
           } catch { /* try next */ }
         }
-        return "no_startDrawing — draw-related: " + JSON.stringify(drawRelated.slice(0, 20));
+        return "no_activationMethod — draw-related: " + JSON.stringify(drawRelated.slice(0, 20));
       } catch (e) {
         return "error: " + String(e);
       }
     }, drawingTypeNames).catch(() => "evaluate_threw");
     console.log(`[drawing/${tool}] JS API result:`, jsResult);
-    if (typeof jsResult === "string" && (jsResult.startsWith("chart.startDrawing:") || jsResult.startsWith("widget.startDrawing:"))) {
-      await page.waitForTimeout(300);
+    if (typeof jsResult === "string" && (
+      jsResult.startsWith("widget.selectLineTool:") ||
+      jsResult.startsWith("chart.selectLineTool:") ||
+      jsResult.startsWith("chart.startDrawing:") ||
+      jsResult.startsWith("widget.startDrawing:")
+    )) {
+      // Give TradingView time to enter drawing mode before the first click.
+      await page.waitForTimeout(600);
       return "shortcut";
     }
   }
@@ -2984,6 +3100,44 @@ export async function startControlledBrowserSession(args: {
         skipHaikuLocate: true,
       });
       await capture(args.sessionId);
+      // Draw position entry annotation from cached data if direction is actionable
+      if (args.cachedOverlay.direction === "long" || args.cachedOverlay.direction === "short") {
+        const cachedRuntime = runtimeSessions.get(args.sessionId);
+        if (
+          cachedRuntime &&
+          args.swingPoints.zoneLow !== undefined &&
+          args.swingPoints.zoneHigh !== undefined
+        ) {
+          cachedRuntime.visionDecision = {
+            regime: args.cachedOverlay.direction === "short" ? "bearish" : "bullish",
+            verdict: args.cachedOverlay.verdict,
+            structureVerdict: "drawable",
+            direction: args.cachedOverlay.direction,
+            structureStatus: args.cachedOverlay.structureStatus,
+            confidence: 0.7,
+            correctedZone: {
+              low: args.swingPoints.zoneLow,
+              high: args.swingPoints.zoneHigh,
+              projectedPrice:
+                args.swingPoints.projectedPrice ??
+                (args.swingPoints.zoneLow + args.swingPoints.zoneHigh) / 2,
+            },
+            invalidationZone: args.cachedOverlay.invalidationZone,
+            rationale: "",
+            issues: [],
+          };
+          try {
+            setActionLabel(args.sessionId, "Drawing position entry");
+            await drawEntryOnChart(args.sessionId);
+            await capture(args.sessionId);
+          } catch (entryErr) {
+            console.warn(
+              "[browser-session-runtime] cached overlay position entry draw failed (non-fatal):",
+              entryErr,
+            );
+          }
+        }
+      }
       setActionLabel(args.sessionId, undefined);
       await writeStepState({
         sessionId: args.sessionId,
@@ -3470,6 +3624,21 @@ export async function startControlledBrowserSession(args: {
         );
         await page.waitForTimeout(1500);
         setActionLabel(args.sessionId, undefined);
+      }
+      // Draw position entry annotation if the vision decision has an actionable direction
+      if (
+        (decision.direction === "long" || decision.direction === "short") &&
+        decision.correctedZone
+      ) {
+        try {
+          setActionLabel(args.sessionId, "Drawing position entry");
+          await drawEntryOnChart(args.sessionId);
+          await capture(args.sessionId);
+          setActionLabel(args.sessionId, undefined);
+        } catch (entryErr) {
+          setActionLabel(args.sessionId, undefined);
+          console.warn("[browser-session-runtime] position entry draw failed (non-fatal):", entryErr);
+        }
       }
     } catch (err) {
       console.error("[vision-agent] error:", err);
@@ -4703,7 +4872,7 @@ export async function startDebugBrowserSession(args: {
   marketSymbol: string;
   timeframe: string;
   targetUrl: string;
-}): Promise<{ sessionId: string; durationMs: number }> {
+}): Promise<{ sessionId: string; durationMs: number; capturedViews: string[] }> {
   const startedAt = Date.now();
   const sessionId = `debug-live-${Date.now()}`;
   console.log("[debug-live] starting session", args);
@@ -4822,7 +4991,11 @@ export async function startDebugBrowserSession(args: {
     // Auto-destroy after TTL (same as regular sessions).
     setTimeout(() => { void destroyBrowserSession(sessionId); }, SESSION_TTL_MS).unref();
 
-    return { sessionId, durationMs: Date.now() - startedAt };
+    const capturedViews = buffers.map(
+      (buf) => `data:image/png;base64,${buf.toString("base64")}`,
+    );
+
+    return { sessionId, durationMs: Date.now() - startedAt, capturedViews };
   } catch (error) {
     void destroyBrowserSession(sessionId);
     throw error;
@@ -4837,17 +5010,18 @@ async function drawPositionViaJsApi(
   side: "long_position" | "short_position",
   entryPrice: number,
   tpPrice: number,
+  slPrice?: number,
 ): Promise<boolean> {
   let chartFrame: ReturnType<typeof getChartFrame>;
   try { chartFrame = getChartFrame(page); } catch { return false; }
 
   const shapeName = side === "short_position" ? "linetoolriskrewardshort" : "linetoolriskrewardlong";
-  // SL is mirrored at the same distance as TP, on the opposite side.
   const tpDelta = Math.abs(entryPrice - tpPrice);
-  const slPrice = side === "short_position" ? entryPrice + tpDelta : entryPrice - tpDelta;
+  // Use explicit SL if provided; otherwise mirror TP distance on the opposite side.
+  const resolvedSl = slPrice ?? (side === "short_position" ? entryPrice + tpDelta : entryPrice - tpDelta);
 
   const result = await chartFrame.evaluate(
-    ({ shapeName, entryPrice, tpPrice, slPrice }: {
+    async ({ shapeName, entryPrice, tpPrice, slPrice }: {
       shapeName: string; entryPrice: number; tpPrice: number; slPrice: number;
     }) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -4891,7 +5065,9 @@ async function drawPositionViaJsApi(
 
         for (const pts of [points3, points2]) {
           try {
-            const id = chart.createMultipointShape(pts, { shape: shapeName, disableSelection: false, overrides: {} });
+            // createMultipointShape may return a Promise in some charting library builds.
+            // Always await so the shape is fully registered before we return.
+            const id = await Promise.resolve(chart.createMultipointShape(pts, { shape: shapeName, disableSelection: false, overrides: {} }));
             if (id !== null && id !== undefined) return { ok: true, shapeName, pts: pts.length, id: String(id) };
           } catch { /* try fewer points */ }
         }
@@ -4900,7 +5076,7 @@ async function drawPositionViaJsApi(
         return { ok: false, reason: "error: " + String(e) };
       }
     },
-    { shapeName, entryPrice, tpPrice, slPrice },
+    { shapeName, entryPrice, tpPrice, slPrice: resolvedSl },
   ).catch((e) => ({ ok: false, reason: "evaluate_threw: " + String(e) }));
 
   console.log("[debug-live/draw] drawPositionViaJsApi result:", result);
@@ -4930,13 +5106,17 @@ async function findPriceYsWithHaiku(
 
   // Ask Haiku to read two anchor labels from the price axis instead of estimating ratios.
   // Two real label positions give an accurate linear mapping for any price in between.
+  // IMPORTANT: ignore the OHLC data in the top-left header (e.g. "O2713.9 H2716.8 L2713.8 C2716.6")
+  // — those are NOT price axis labels and will produce a flat/wrong slope.
   const prompt =
     `This is a screenshot of a TradingView/Deriv financial chart (1440×900 pixels). ` +
-    `The price axis is on the RIGHT side of the image. Higher on screen = higher price.\n\n` +
-    `Step 1 — read the HIGHEST visible price label on the right Y axis near the top of the chart. ` +
+    `The price axis is a VERTICAL COLUMN of evenly-spaced numeric labels on the FAR RIGHT edge of the image (x > 1200). ` +
+    `Do NOT read the OHLC values in the top-left header (O/H/L/C data) — those are NOT axis labels.\n\n` +
+    `Step 1 — find the HIGHEST price label in the right-side axis column. ` +
+    `It is a number like 2880 or 2860, positioned near the TOP of the chart. ` +
     `Record its numeric value and its Y pixel coordinate from the top of the image.\n` +
-    `Step 2 — read the LOWEST visible price label near the bottom of the chart. ` +
-    `Record its value and Y pixel.\n\n` +
+    `Step 2 — find the LOWEST price label in the right-side axis column. ` +
+    `It is near the BOTTOM of the chart. Record its value and Y pixel.\n\n` +
     `Reply ONLY with valid JSON (no markdown):\n` +
     `{"highPrice":<number>,"highY":<integer>,"lowPrice":<number>,"lowY":<integer>}`;
 
@@ -4973,8 +5153,17 @@ async function findPriceYsWithHaiku(
     ) return null;
 
     // Build a linear price→Y mapping from the two anchor labels.
-    const slope = (lowY - highY) / (lowPrice - highPrice); // positive: lower price = larger Y
+    const slope = (lowY - highY) / (lowPrice - highPrice); // should be positive: lower price → larger Y
     const intercept = highY - slope * highPrice;
+
+    // Sanity checks: slope must be NEGATIVE (higher price → smaller Y → higher on screen),
+    // and the two anchor Y values must be at least 100px apart (otherwise Haiku read OHLC
+    // header labels clustered at the same Y, producing a flat/useless calibration).
+    if (slope >= 0 || Math.abs(highY - lowY) < 100) {
+      console.warn("[debug-live] haiku calibration rejected", { highPrice, highY, lowPrice, lowY, slope: slope.toFixed(4), reason: slope >= 0 ? "non-negative slope (wrong direction)" : "anchors too close" });
+      return null;
+    }
+
     const priceToY = (p: number) => Math.max(topClamp, Math.min(botClamp, Math.round(slope * p + intercept)));
 
     const entryY = priceToY(entryPrice);
@@ -4996,7 +5185,7 @@ export async function drawEntryOnChart(sessionId: string): Promise<void> {
 
   const decision = runtime.visionDecision;
   if (!decision.correctedZone) throw new Error("no_entry_zone");
-  if (!decision.direction) throw new Error("no_direction");
+  if (decision.direction !== "long" && decision.direction !== "short") throw new Error("no_direction");
 
   const { page } = runtime;
   const viewport = page.viewportSize() ?? { width: 1440, height: 900 };
@@ -5017,16 +5206,35 @@ export async function drawEntryOnChart(sessionId: string): Promise<void> {
     decision.correctedZone.projectedPrice ??
     (decision.correctedZone.low + decision.correctedZone.high) / 2;
 
-  const tpPrice =
-    decision.direction === "long"
-      ? decision.correctedZone.high
-      : decision.correctedZone.low;
+  // Use the invalidation zone to anchor SL, then project TP at 1:2 R:R minimum.
+  // Falling back to mirroring zone bounds produces a ~15-point box that TradingView
+  // renders as a flag icon rather than the full green/red position annotation.
+  let tpPrice: number;
+  let slPrice: number | undefined;
+
+  if (decision.direction === "short") {
+    const naturalSl = decision.invalidationZone?.high ?? decision.correctedZone.high;
+    const slDist = Math.abs(naturalSl - entryPrice);
+    const minDist = (decision.correctedZone.high - decision.correctedZone.low) * 2 || 30;
+    const effectiveDist = Math.max(slDist, minDist);
+    slPrice = entryPrice + effectiveDist;
+    tpPrice = entryPrice - effectiveDist * 2;
+  } else {
+    const naturalSl = decision.invalidationZone?.low ?? decision.correctedZone.low;
+    const slDist = Math.abs(entryPrice - naturalSl);
+    const minDist = (decision.correctedZone.high - decision.correctedZone.low) * 2 || 30;
+    const effectiveDist = Math.max(slDist, minDist);
+    slPrice = entryPrice - effectiveDist;
+    tpPrice = entryPrice + effectiveDist * 2;
+  }
 
   console.log("[debug-live/draw] start", {
     direction: decision.direction,
     entryPrice,
     tpPrice,
+    slPrice,
     zone: decision.correctedZone,
+    invalidationZone: decision.invalidationZone,
     viewport,
     chartCx,
     chartCy,
@@ -5146,13 +5354,21 @@ export async function drawEntryOnChart(sessionId: string): Promise<void> {
   // Shape names confirmed from charts.deriv.com/charting_library/bundles/library.js:
   // "linetoolriskrewardshort" and "linetoolriskrewardlong"
   setActionLabel(sessionId, `Drawing ${side} annotation...`);
-  const jsDrawn = await drawPositionViaJsApi(page, side, entryPrice, tpPrice);
+  const jsDrawn = await drawPositionViaJsApi(page, side, entryPrice, tpPrice, slPrice);
 
   if (!jsDrawn) {
     // ── Strategy B: UI automation — activate tool then click entry + TP ──────
     setActionLabel(sessionId, `Activating ${side} tool...`);
     const toolResult = await activateDrawingTool(sessionId, page, chartFrame, side, chartCx, chartCy);
     console.log("[debug-live/draw] tool activation result:", toolResult);
+
+    // Only fire clicks when we confirmed the correct tool is active.
+    // Clicking with an unconfirmed tool places whatever was last active (flags, notes, etc.).
+    if (toolResult === "unknown") {
+      console.warn("[debug-live/draw] tool activation unconfirmed — skipping clicks to avoid phantom drawing");
+      setActionLabel(sessionId, `Could not activate ${side} tool on chart`);
+      return;
+    }
 
     // Place both clicks near the right edge of the chart so the annotation anchors
     // at the current / near-future time rather than in the middle of history.
