@@ -39,7 +39,8 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "shaders": "2.4",
-    "tailwind-merge": "^3.5.0"
+    "tailwind-merge": "^3.5.0",
+    "viem": "^2.53.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.2.4",

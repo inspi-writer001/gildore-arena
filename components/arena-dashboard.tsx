@@ -19,8 +19,18 @@ import type {
   FibonacciLegForBrowser,
 } from "@/lib/browser-session-runtime";
 import { cn } from "@/lib/utils";
-import { useSolanaWallet } from "@/components/convex-client-provider";
+import {
+  useEcosystemWallet,
+  useSolanaWallet,
+} from "@/components/convex-client-provider";
 import { encodeBase64 } from "@/lib/base64";
+import {
+  CELO_USDC_FEE_CURRENCY_ADDRESS,
+  GILDORE_VAULT_CELO_ABI,
+  GILDORE_VAULT_CELO_ADDRESS,
+  parseCeloDepositAmount,
+} from "@/lib/celo/gildore-vault-celo";
+import { celo } from "viem/chains";
 import {
   chipClass,
   confluenceToneMap,
@@ -408,6 +418,8 @@ export default function ArenaDashboard() {
   const { rpc, chain, selectedWallet, selectedAccount, isConnected } =
     useSolanaWallet();
   const { signTransaction } = useSignTransaction();
+  const eco = useEcosystemWallet();
+  const isCelo = eco.ecosystem === "celo";
   const snapshot = useQuery(api.arena.getArenaSnapshot, {}) as
     | ArenaSnapshot
     | undefined;
@@ -464,7 +476,79 @@ export default function ArenaDashboard() {
   const selectedAgentSlug = searchParams.get("agent");
   const selectedMarketParam = searchParams.get("market");
 
+  const handleSubscribeSubmitCelo = async (
+    event: FormEvent<HTMLFormElement>,
+  ) => {
+    event.preventDefault();
+    if (!selectedAgent || !depositAmount.trim()) {
+      return;
+    }
+    const celoAddress = eco.address;
+    if (!eco.isConnected || !celoAddress) {
+      setFundingError("Connect a Celo wallet before funding this agent.");
+      return;
+    }
+    if (!GILDORE_VAULT_CELO_ADDRESS) {
+      setFundingError("Celo vault is not configured for this environment.");
+      return;
+    }
+
+    setIsFundingAgent(true);
+    setFundingError(null);
+
+    try {
+      const walletClient = await eco.getCeloWalletClient();
+      if (!walletClient) {
+        throw new Error("No Celo wallet available.");
+      }
+      const agentId = await eco.celoPublicClient.readContract({
+        address: GILDORE_VAULT_CELO_ADDRESS,
+        abi: GILDORE_VAULT_CELO_ABI,
+        functionName: "deriveAgentId",
+        args: [selectedAgent.name],
+      });
+      const amountBaseUnits = parseCeloDepositAmount(depositAmount.trim());
+      const txHash = await walletClient.writeContract({
+        address: GILDORE_VAULT_CELO_ADDRESS,
+        abi: GILDORE_VAULT_CELO_ABI,
+        functionName: "depositForAgentUse",
+        args: [agentId, amountBaseUnits],
+        account: celoAddress as `0x${string}`,
+        chain: celo,
+        ...(eco.isMiniPay && CELO_USDC_FEE_CURRENCY_ADDRESS
+          ? { feeCurrency: CELO_USDC_FEE_CURRENCY_ADDRESS }
+          : {}),
+      });
+
+      setLastFundingSignature(txHash);
+      setDepositAmount("");
+      setIsSubscribeModalOpen(false);
+      console.log("[subscription] Funded Celo agent vault:", {
+        agentId: selectedAgent.id,
+        amountBaseUnits: amountBaseUnits.toString(),
+        txHash,
+      });
+    } catch (error) {
+      console.error("[fund-agent-vault-celo] failed", {
+        agentId: selectedAgent.id,
+        agentName: selectedAgent.name,
+        amountUi: depositAmount.trim(),
+        address: celoAddress,
+        error,
+      });
+      setFundingError(
+        formatUnknownError(error) || "Failed to fund agent vault.",
+      );
+    } finally {
+      setIsFundingAgent(false);
+    }
+  };
+
   const handleSubscribeSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    if (isCelo) {
+      return handleSubscribeSubmitCelo(event);
+    }
+
     event.preventDefault();
     if (!selectedAgent || !depositAmount.trim()) {
       return;
@@ -527,7 +611,80 @@ export default function ArenaDashboard() {
     }
   };
 
+  const handleMaxSpendSubmitCelo = async (
+    event: FormEvent<HTMLFormElement>,
+  ) => {
+    event.preventDefault();
+    if (!selectedAgent || !maxSpendAmount.trim()) {
+      return;
+    }
+    const celoAddress = eco.address;
+    if (!eco.isConnected || !celoAddress) {
+      setMaxSpendError("Connect a Celo wallet before configuring max spendable.");
+      return;
+    }
+    if (!GILDORE_VAULT_CELO_ADDRESS) {
+      setMaxSpendError("Celo vault is not configured for this environment.");
+      return;
+    }
+
+    setIsConfiguringMaxSpend(true);
+    setMaxSpendError(null);
+
+    try {
+      const walletClient = await eco.getCeloWalletClient();
+      if (!walletClient) {
+        throw new Error("No Celo wallet available.");
+      }
+      const agentId = await eco.celoPublicClient.readContract({
+        address: GILDORE_VAULT_CELO_ADDRESS,
+        abi: GILDORE_VAULT_CELO_ABI,
+        functionName: "deriveAgentId",
+        args: [selectedAgent.name],
+      });
+      const amountBaseUnits = parseCeloDepositAmount(maxSpendAmount.trim());
+      const txHash = await walletClient.writeContract({
+        address: GILDORE_VAULT_CELO_ADDRESS,
+        abi: GILDORE_VAULT_CELO_ABI,
+        functionName: "registerTickerForMe",
+        args: [agentId, amountBaseUnits],
+        account: celoAddress as `0x${string}`,
+        chain: celo,
+        ...(eco.isMiniPay && CELO_USDC_FEE_CURRENCY_ADDRESS
+          ? { feeCurrency: CELO_USDC_FEE_CURRENCY_ADDRESS }
+          : {}),
+      });
+
+      setLastMaxSpendSignature(txHash);
+      setMaxSpendAmount("");
+      console.log("[register-ticker-celo] Configured max spendable:", {
+        agentId: selectedAgent.id,
+        marketSymbol: selectedMarketSymbol,
+        amountBaseUnits: amountBaseUnits.toString(),
+        txHash,
+      });
+    } catch (error) {
+      console.error("[register-ticker-celo] failed", {
+        agentId: selectedAgent.id,
+        agentName: selectedAgent.name,
+        marketSymbol: selectedMarketSymbol,
+        amountUi: maxSpendAmount.trim(),
+        address: celoAddress,
+        error,
+      });
+      setMaxSpendError(
+        formatUnknownError(error) || "Failed to configure max spendable.",
+      );
+    } finally {
+      setIsConfiguringMaxSpend(false);
+    }
+  };
+
   const handleMaxSpendSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    if (isCelo) {
+      return handleMaxSpendSubmitCelo(event);
+    }
+
     event.preventDefault();
     if (!selectedAgent || !maxSpendAmount.trim()) {
       return;
@@ -941,7 +1098,7 @@ export default function ArenaDashboard() {
       <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(0,0,0,0.05),transparent_28%),linear-gradient(180deg,#f4f4f1_0%,#ecece8_100%)] text-[#121212]">
         <section className="w-full max-w-[1280px] mx-auto px-6 pt-8 pb-16">
           {/* ── Header skeleton ── */}
-          <header className="grid grid-cols-[minmax(0,1.8fr)_minmax(280px,0.9fr)] gap-6 items-start">
+          <header className="grid grid-cols-1 gap-6 items-start md:grid-cols-[minmax(0,1.8fr)_minmax(280px,0.9fr)]">
             <div
               className={cn(
                 skelBase,
@@ -965,7 +1122,7 @@ export default function ArenaDashboard() {
           </header>
 
           {/* ── Leaderboard table skeleton ── */}
-          <section className="mt-6">
+          <section className="mt-6 overflow-x-auto">
             <table className="w-full border-collapse text-[13px]">
               <thead>
                 <tr className="border-b border-[rgba(18,18,18,0.1)]">
@@ -979,10 +1136,13 @@ export default function ArenaDashboard() {
                     "Positions",
                     "Markets",
                     "Score",
-                  ].map((h) => (
+                  ].map((h, i) => (
                     <th
                       key={h}
-                      className="font-barlow px-[14px] py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap"
+                      className={cn(
+                        "font-barlow px-[14px] py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap",
+                        [2, 6, 7].includes(i) && "hidden md:table-cell",
+                      )}
                     >
                       {h}
                     </th>
@@ -1001,7 +1161,7 @@ export default function ArenaDashboard() {
                     <td className="px-[14px] py-[13px] align-middle">
                       <div className={cn(skelBase, "w-[90px] h-[15px]")} />
                     </td>
-                    <td className="px-[14px] py-[13px] align-middle">
+                    <td className="hidden px-[14px] py-[13px] align-middle md:table-cell">
                       <div className={cn(skelBase, "w-[160px] h-[14px]")} />
                     </td>
                     <td className="px-[14px] py-[13px] align-middle">
@@ -1018,10 +1178,10 @@ export default function ArenaDashboard() {
                     <td className="px-[14px] py-[13px] align-middle">
                       <div className={cn(skelBase, "w-[44px] h-[14px]")} />
                     </td>
-                    <td className="px-[14px] py-[13px] align-middle">
+                    <td className="hidden px-[14px] py-[13px] align-middle md:table-cell">
                       <div className={cn(skelBase, "w-[44px] h-[14px]")} />
                     </td>
-                    <td className="px-[14px] py-[13px] align-middle">
+                    <td className="hidden px-[14px] py-[13px] align-middle md:table-cell">
                       <div className={cn(skelBase, "w-[44px] h-[14px]")} />
                     </td>
                     <td className="px-[14px] py-[13px] align-middle">
@@ -1243,7 +1403,7 @@ export default function ArenaDashboard() {
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(0,0,0,0.05),transparent_28%),linear-gradient(180deg,#f4f4f1_0%,#ecece8_100%)] text-[#121212]">
       <section className="w-full max-w-[1280px] mx-auto px-6 pt-8 pb-16">
-        <header className="grid grid-cols-[minmax(0,1.8fr)_minmax(280px,0.9fr)] gap-6 items-start">
+        <header className="grid grid-cols-1 gap-6 items-start md:grid-cols-[minmax(0,1.8fr)_minmax(280px,0.9fr)]">
           <div>
             <Link
               href="/"
@@ -1257,7 +1417,7 @@ export default function ArenaDashboard() {
               Season Zer0
             </div>
 
-            <h1 className="max-w-[14ch] whitespace-nowrap m-0 text-5xl font-normal leading-[0.96] tracking-[-0.5px] font-instrument">
+            <h1 className="max-w-[14ch] whitespace-nowrap m-0 text-[clamp(32px,8vw,48px)] font-normal leading-[0.96] tracking-[-0.5px] font-instrument">
               Fire your Fund Manager
             </h1>
             <p className="max-w-[60ch] mt-5 mb-0 text-[rgba(18,18,18,0.64)] text-[16px] leading-[1.7] font-inter">
@@ -1271,7 +1431,7 @@ export default function ArenaDashboard() {
           </div>
         </header>
 
-        <section className="mt-6" aria-label="Arena leaderboard">
+        <section className="mt-6 overflow-x-auto" aria-label="Arena leaderboard">
           <table className="w-full border-collapse text-[13px]">
             <thead>
               <tr className="border-b border-[rgba(18,18,18,0.1)]">
@@ -1281,7 +1441,7 @@ export default function ArenaDashboard() {
                 <th className="font-barlow px-[14px] py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap">
                   Agent
                 </th>
-                <th className="font-barlow px-[14px] py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap">
+                <th className="hidden font-barlow px-[14px] py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap md:table-cell">
                   Strategy
                 </th>
                 <th className="font-barlow px-[14px] py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap">
@@ -1293,10 +1453,10 @@ export default function ArenaDashboard() {
                 <th className="font-barlow px-[14px] py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap">
                   PnL
                 </th>
-                <th className="font-barlow px-[14px] py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap">
+                <th className="hidden font-barlow px-[14px] py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap md:table-cell">
                   Positions
                 </th>
-                <th className="font-barlow px-[14px] py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap">
+                <th className="hidden font-barlow px-[14px] py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap md:table-cell">
                   Markets
                 </th>
                 <th className="font-barlow px-[14px] py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap">
@@ -1352,7 +1512,7 @@ export default function ArenaDashboard() {
                           </strong>
                         </div>
                       </td>
-                      <td className="px-[14px] py-[13px] align-middle text-[rgba(18,18,18,0.55)] text-[13px] font-inter">
+                      <td className="hidden px-[14px] py-[13px] align-middle text-[rgba(18,18,18,0.55)] text-[13px] font-inter md:table-cell">
                         {agent.strategyLabel}
                       </td>
                       <td className="px-[14px] py-[13px] align-middle">
@@ -1374,10 +1534,10 @@ export default function ArenaDashboard() {
                         {agent.pnlPercent >= 0 ? "+" : ""}
                         {agent.pnlPercent.toFixed(1)}%
                       </td>
-                      <td className="px-[14px] py-[13px] align-middle font-barlow">
+                      <td className="hidden px-[14px] py-[13px] align-middle font-barlow md:table-cell">
                         {agentPositions.length}
                       </td>
-                      <td className="px-[14px] py-[13px] align-middle font-barlow">
+                      <td className="hidden px-[14px] py-[13px] align-middle font-barlow md:table-cell">
                         {agent.trackedMarkets.length}
                       </td>
                       <td className="px-[14px] py-[13px] align-middle text-[18px] font-normal text-right font-instrument">
@@ -1444,7 +1604,7 @@ export default function ArenaDashboard() {
                               isConfiguringMaxSpend={isConfiguringMaxSpend}
                               maxSpendError={maxSpendError}
                               lastMaxSpendSignature={lastMaxSpendSignature}
-                              isConnected={isConnected}
+                              isConnected={isCelo ? eco.isConnected : isConnected}
                               onRevealBrowserSession={() =>
                                 launchBrowserSession()
                               }

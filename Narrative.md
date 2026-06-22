@@ -26,7 +26,7 @@ It is the sharpest, most memorable, and already matches the deck’s current hea
 
 ### Ideal user in one line
 
-We’re built for the trader or saver who is tired of losing money to emotion, missed entries, and opaque “experts.”
+We’re built for the trader who is tired of losing money to emotion, missed entries, and opaque “experts.”
 
 ### Ideal customer profile (ICP)
 

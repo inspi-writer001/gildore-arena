@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ConvexProvider, ConvexReactClient } from "convex/react";
 import {
   createSolanaRpc,
@@ -11,11 +11,15 @@ import {
   useLogin,
   useLogout,
   usePrivy,
+  useWallets as useEthereumWallets,
 } from "@privy-io/react-auth";
 import {
   useWallets,
   type ConnectedStandardSolanaWallet,
 } from "@privy-io/react-auth/solana";
+import { createPublicClient, createWalletClient, custom, http } from "viem";
+import { celo } from "viem/chains";
+import { isMiniPayEnvironment, type Ecosystem } from "@/lib/ecosystem";
 
 const solanaRpcUrl =
   process.env.NEXT_PUBLIC_SOLANA_RPC_URL ??
@@ -36,6 +40,28 @@ const solanaRpc = createSolanaRpc(
 const solanaRpcSubscriptions = createSolanaRpcSubscriptions(
   solanaSubscriptionsUrl as Parameters<typeof createSolanaRpcSubscriptions>[0],
 );
+const celoRpcUrl = process.env.NEXT_PUBLIC_CELO_RPC_URL ?? "https://forno.celo.org";
+const celoPublicClient = createPublicClient({
+  chain: celo,
+  transport: http(celoRpcUrl),
+});
+const ECOSYSTEM_STORAGE_KEY = "gildore-ecosystem";
+
+export type EcosystemWalletState = {
+  ecosystem: Ecosystem;
+  setEcosystem: (ecosystem: Ecosystem) => void;
+  isMiniPay: boolean;
+  ready: boolean;
+  isAuthenticated: boolean;
+  isConnected: boolean;
+  userEmail: string | null;
+  address: string | null;
+  chain: string;
+  login: () => void;
+  logout: () => Promise<void>;
+  celoPublicClient: typeof celoPublicClient;
+  getCeloWalletClient: () => Promise<ReturnType<typeof createWalletClient> | null>;
+};
 
 export type SolanaWalletState = {
   rpc: typeof solanaRpc;
@@ -96,6 +122,99 @@ export function useSolanaWallet(): SolanaWalletState {
   };
 }
 
+function readStoredEcosystem(): Ecosystem {
+  if (typeof window === "undefined") return "solana";
+  return window.localStorage.getItem(ECOSYSTEM_STORAGE_KEY) === "celo"
+    ? "celo"
+    : "solana";
+}
+
+export function useEcosystemWallet(): EcosystemWalletState {
+  const { ready, authenticated, user } = usePrivy();
+  const { login } = useLogin();
+  const { logout } = useLogout();
+  const { wallets: solanaWallets } = useWallets();
+  const { wallets: ethereumWallets } = useEthereumWallets();
+  const isMiniPay = useMemo(() => isMiniPayEnvironment(), []);
+  const [ecosystem, setEcosystemState] = useState<Ecosystem>(() =>
+    isMiniPay ? "celo" : readStoredEcosystem(),
+  );
+  const [miniPayAddress, setMiniPayAddress] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isMiniPay || typeof window === "undefined" || !window.ethereum) return;
+    createWalletClient({ chain: celo, transport: custom(window.ethereum) })
+      .getAddresses()
+      .then((addresses) => setMiniPayAddress(addresses[0] ?? null))
+      .catch((error) => {
+        console.error("[ecosystem-wallet] MiniPay auto-connect failed", error);
+      });
+  }, [isMiniPay]);
+
+  const setEcosystem = (next: Ecosystem) => {
+    if (isMiniPay) return;
+    setEcosystemState(next);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(ECOSYSTEM_STORAGE_KEY, next);
+    }
+  };
+
+  const userEmail =
+    user?.email?.address ??
+    user?.google?.email ??
+    user?.github?.email ??
+    user?.discord?.email ??
+    null;
+  const selectedSolanaWallet = selectPreferredWallet(solanaWallets);
+  const privyEthereumWallet = ethereumWallets.at(0) ?? null;
+
+  const getCeloWalletClient = async (): Promise<ReturnType<
+    typeof createWalletClient
+  > | null> => {
+    if (isMiniPay) {
+      if (typeof window === "undefined" || !window.ethereum) return null;
+      return createWalletClient({ chain: celo, transport: custom(window.ethereum) });
+    }
+    if (!privyEthereumWallet) return null;
+    const provider = await privyEthereumWallet.getEthereumProvider();
+    return createWalletClient({ chain: celo, transport: custom(provider) });
+  };
+
+  const shared = {
+    setEcosystem,
+    isMiniPay,
+    userEmail,
+    login: isMiniPay ? () => {} : () => login(),
+    logout: isMiniPay ? async () => {} : logout,
+    celoPublicClient,
+    getCeloWalletClient,
+  };
+
+  if (ecosystem === "celo") {
+    return {
+      ...shared,
+      ecosystem: "celo",
+      ready: isMiniPay ? true : ready,
+      isAuthenticated: isMiniPay ? Boolean(miniPayAddress) : authenticated,
+      isConnected: isMiniPay
+        ? Boolean(miniPayAddress)
+        : authenticated && Boolean(privyEthereumWallet),
+      address: isMiniPay ? miniPayAddress : (privyEthereumWallet?.address ?? null),
+      chain: "celo:mainnet",
+    };
+  }
+
+  return {
+    ...shared,
+    ecosystem: "solana",
+    ready,
+    isAuthenticated: authenticated,
+    isConnected: authenticated && Boolean(selectedSolanaWallet),
+    address: selectedSolanaWallet?.address ?? null,
+    chain: solanaChain,
+  };
+}
+
 export default function ConvexClientProvider({
   children,
 }: {
@@ -122,16 +241,21 @@ export default function ConvexClientProvider({
       config={{
         appearance: {
           theme: "dark",
-          walletChainType: "solana-only",
+          walletChainType: "ethereum-and-solana",
           landingHeader: "Enter Gildore Arena",
-          loginMessage: "Create your embedded Solana vault wallet to fund agents.",
+          loginMessage: "Create your embedded vault wallet to fund agents.",
           showWalletLoginFirst: false,
         },
         embeddedWallets: {
           solana: {
             createOnLogin: "users-without-wallets",
           },
+          ethereum: {
+            createOnLogin: "users-without-wallets",
+          },
         },
+        supportedChains: [celo],
+        defaultChain: celo,
         solana: {
           rpcs: {
             [solanaChain]: {

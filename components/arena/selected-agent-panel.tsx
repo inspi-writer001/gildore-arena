@@ -296,7 +296,7 @@ export function SelectedAgentPanel({
               </div>
             </div>
             <p className="font-inter">{selectedTradeIdea.thesis}</p>
-            <div className="mt-[18px] grid grid-cols-4 gap-3">
+            <div className="mt-[18px] grid grid-cols-2 gap-3 sm:grid-cols-4">
               <div>
                 <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.14em] text-[rgba(18,18,18,0.48)]">
                   Entry
@@ -429,7 +429,7 @@ export function SelectedAgentPanel({
       <aside
         className={cn(
           "grid gap-[18px]",
-          isWideWorkspace && "grid-cols-[repeat(3,minmax(0,1fr))]",
+          isWideWorkspace && "md:grid-cols-[repeat(3,minmax(0,1fr))]",
         )}
       >
         {selectedActiveSetup ? (
