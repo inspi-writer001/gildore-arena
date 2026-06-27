@@ -117,7 +117,8 @@ export default function RootLayout({
       )}
     >
       <head>
-        <link rel="preconnect" href="https://cheery-guanaco-492.eu-west-1.convex.cloud" />
+        <link rel="preconnect" href="https://auth.privy.io" />
+        <link rel="preconnect" href="https://explorer-api.walletconnect.com" />
       </head>
       <body className="overflow-x-hidden">
         <ConvexClientProvider>{children}</ConvexClientProvider>
