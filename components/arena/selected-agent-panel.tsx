@@ -255,8 +255,8 @@ function VaultControlSurface({
 
       <Separator className="bg-[rgba(18,18,18,0.06)]" />
 
-      {/* Max spend + Withdraw — side by side */}
-      <div className="flex divide-x divide-[rgba(18,18,18,0.06)]">
+      {/* Max spend + Withdraw — side by side on sm+, stacked on mobile */}
+      <div className="flex flex-col divide-y divide-[rgba(18,18,18,0.06)] sm:flex-row sm:divide-x sm:divide-y-0">
         {/* Max spend — expands to fill available width */}
         <div className="min-w-0 flex-1 p-[14px_18px]">
           <MaxSpendConfigurator
@@ -272,10 +272,10 @@ function VaultControlSurface({
           />
         </div>
 
-        {/* Withdraw — fixed-width column */}
+        {/* Withdraw */}
         <form
           onSubmit={onSubmitWithdraw}
-          className="flex w-[220px] shrink-0 flex-col justify-between gap-3 p-[14px_18px]"
+          className="flex flex-col justify-between gap-3 p-[14px_18px] sm:w-[220px] sm:shrink-0"
         >
           <span className="font-barlow text-[10px] font-semibold uppercase tracking-[0.14em] text-[rgba(18,18,18,0.42)]">
             Withdraw funds
@@ -486,18 +486,12 @@ export function SelectedAgentPanel({
 
   return (
     <section
-      className={cn(
-        "grid gap-[18px]",
-        className,
-        isWideWorkspace
-          ? "grid-cols-1"
-          : "grid-cols-[minmax(0,1.6fr)_minmax(320px,0.9fr)]",
-      )}
+      className={cn("grid grid-cols-1 gap-[18px]", className)}
       aria-label="Selected agent detail"
     >
       <article className={cn(surfaceCard, "grid gap-[18px] p-5")}>
         {/* Header */}
-        <div className="flex items-start justify-between gap-5">
+        <div className="flex flex-col gap-4">
           <div>
             <h2 className="m-0 font-instrument text-[clamp(30px,4vw,48px)] font-normal leading-[0.96] tracking-[-0.5px]">
               {selectedAgent.name}
@@ -506,9 +500,7 @@ export function SelectedAgentPanel({
               {selectedAgent.lastAction}
             </p>
           </div>
-          <div className="flex flex-col items-end gap-[10px]">
-            <div className="flex flex-wrap gap-[10px] justify-end h-4" />
-            <div className="flex flex-wrap justify-end gap-3">
+          <div className="flex flex-wrap justify-end gap-3">
               <LiquidActionButton
                 label="Fund this agent"
                 colorBack="#9a6f26"
@@ -521,7 +513,6 @@ export function SelectedAgentPanel({
                 colorTint="#ffffff"
                 onClick={onOpenPrediction}
               />
-            </div>
           </div>
         </div>
 

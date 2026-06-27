@@ -26,9 +26,10 @@ import {
 } from "@/components/convex-client-provider";
 import { encodeBase64 } from "@/lib/base64";
 import { vaultSnapshotKeys } from "@/lib/queries/solana-vault";
-import { celoVaultSnapshotKeys } from "@/lib/queries/celo-vault";
+import { celoVaultSnapshotKeys, celoUsdcBalanceKeys } from "@/lib/queries/celo-vault";
 import {
   CELO_DEPOSIT_TOKEN_ADDRESS,
+  CELO_DEPOSIT_TOKEN_DECIMALS,
   CELO_USDC_FEE_CURRENCY_ADDRESS,
   GILDORE_VAULT_CELO_ABI,
   GILDORE_VAULT_CELO_ADDRESS,
@@ -36,6 +37,7 @@ import {
   fetchCeloVaultSnapshot,
   parseCeloDepositAmount,
 } from "@/lib/celo/gildore-vault-celo";
+import { formatUnits } from "viem";
 import { getCeloChain } from "@/lib/ecosystem";
 import { useIsMobile } from "@/hooks/use-media-query";
 const celoChain = getCeloChain();
@@ -992,6 +994,27 @@ export default function ArenaDashboard() {
   const vaultSnapshot = isCelo ? celoVaultSnapshot : solanaVaultSnapshot;
   const isLoadingVault = isCelo ? isLoadingCeloVault : isLoadingSolanaVault;
 
+  // ── Celo USDC wallet balance (shown in the deposit modal) ──────────────────
+  const { data: rawUsdcBalance } = useTanstackQuery({
+    queryKey: celoUsdcBalanceKeys.balance(celoSnapshotAddress ?? ""),
+    queryFn: async () => {
+      const result = await eco.celoPublicClient.readContract({
+        address: CELO_DEPOSIT_TOKEN_ADDRESS!,
+        abi: MINIMAL_ERC20_ABI,
+        functionName: "balanceOf",
+        args: [celoSnapshotAddress! as `0x${string}`],
+      });
+      return result as bigint;
+    },
+    enabled: isCelo && !!celoSnapshotAddress && !!CELO_DEPOSIT_TOKEN_ADDRESS,
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+  });
+  const celoUsdcBalance =
+    rawUsdcBalance != null
+      ? parseFloat(formatUnits(rawUsdcBalance, CELO_DEPOSIT_TOKEN_DECIMALS)).toFixed(2)
+      : null;
+
   // ── Close position ─────────────────────────────────────────────────────────
   const handleClosePosition = async () => {
     if (!selectedAgent) return;
@@ -1417,8 +1440,9 @@ export default function ArenaDashboard() {
                     <th
                       key={h}
                       className={cn(
-                        "font-barlow px-[14px] py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap",
+                        "font-barlow px-2 md:px-3.5 py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap",
                         [2, 6, 7].includes(i) && "hidden md:table-cell",
+                        i === 8 && "hidden sm:table-cell",
                       )}
                     >
                       {h}
@@ -1432,16 +1456,16 @@ export default function ArenaDashboard() {
                     key={row}
                     className="border-b border-[rgba(18,18,18,0.055)] cursor-pointer transition-colors hover:bg-[rgba(18,18,18,0.03)]"
                   >
-                    <td className="px-[14px] py-[13px] align-middle">
+                    <td className="px-2 md:px-3.5 py-[13px] align-middle">
                       <div className={cn(skelBase, "w-[24px] h-[14px]")} />
                     </td>
-                    <td className="px-[14px] py-[13px] align-middle">
+                    <td className="px-2 md:px-3.5 py-[13px] align-middle">
                       <div className={cn(skelBase, "w-[90px] h-[15px]")} />
                     </td>
-                    <td className="hidden px-[14px] py-[13px] align-middle md:table-cell">
+                    <td className="hidden px-2 md:px-3.5 py-[13px] align-middle md:table-cell">
                       <div className={cn(skelBase, "w-[160px] h-[14px]")} />
                     </td>
-                    <td className="px-[14px] py-[13px] align-middle">
+                    <td className="px-2 md:px-3.5 py-[13px] align-middle">
                       <div
                         className={cn(
                           skelBase,
@@ -1449,19 +1473,19 @@ export default function ArenaDashboard() {
                         )}
                       />
                     </td>
-                    <td className="px-[14px] py-[13px] align-middle">
+                    <td className="px-2 md:px-3.5 py-[13px] align-middle">
                       <div className={cn(skelBase, "w-[44px] h-[14px]")} />
                     </td>
-                    <td className="px-[14px] py-[13px] align-middle">
+                    <td className="px-2 md:px-3.5 py-[13px] align-middle">
                       <div className={cn(skelBase, "w-[44px] h-[14px]")} />
                     </td>
-                    <td className="hidden px-[14px] py-[13px] align-middle md:table-cell">
+                    <td className="hidden px-2 md:px-3.5 py-[13px] align-middle md:table-cell">
                       <div className={cn(skelBase, "w-[44px] h-[14px]")} />
                     </td>
-                    <td className="hidden px-[14px] py-[13px] align-middle md:table-cell">
+                    <td className="hidden px-2 md:px-3.5 py-[13px] align-middle md:table-cell">
                       <div className={cn(skelBase, "w-[44px] h-[14px]")} />
                     </td>
-                    <td className="px-[14px] py-[13px] align-middle">
+                    <td className="hidden px-2 md:px-3.5 py-[13px] align-middle sm:table-cell">
                       <div
                         className={cn(
                           skelBase,
@@ -1712,31 +1736,31 @@ export default function ArenaDashboard() {
           <table className="w-full border-collapse text-[13px]">
             <thead>
               <tr className="border-b border-[rgba(18,18,18,0.1)]">
-                <th className="font-barlow px-[14px] py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap">
+                <th className="font-barlow px-2 md:px-3.5 py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap">
                   #
                 </th>
-                <th className="font-barlow px-[14px] py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap">
+                <th className="font-barlow px-2 md:px-3.5 py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap">
                   Agent
                 </th>
-                <th className="hidden font-barlow px-[14px] py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap md:table-cell">
+                <th className="hidden font-barlow px-2 md:px-3.5 py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap md:table-cell">
                   Strategy
                 </th>
-                <th className="font-barlow px-[14px] py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap">
+                <th className="font-barlow px-2 md:px-3.5 py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap">
                   Status
                 </th>
-                <th className="font-barlow px-[14px] py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap">
+                <th className="font-barlow px-2 md:px-3.5 py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap">
                   Win rate
                 </th>
-                <th className="font-barlow px-[14px] py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap">
+                <th className="font-barlow px-2 md:px-3.5 py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap">
                   PnL
                 </th>
-                <th className="hidden font-barlow px-[14px] py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap md:table-cell">
+                <th className="hidden font-barlow px-2 md:px-3.5 py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap md:table-cell">
                   Positions
                 </th>
-                <th className="hidden font-barlow px-[14px] py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap md:table-cell">
+                <th className="hidden font-barlow px-2 md:px-3.5 py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap md:table-cell">
                   Markets
                 </th>
-                <th className="font-barlow px-[14px] py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap">
+                <th className="hidden font-barlow px-2 md:px-3.5 py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap sm:table-cell">
                   Score
                 </th>
               </tr>
@@ -1771,10 +1795,10 @@ export default function ArenaDashboard() {
                       aria-expanded={isSelected}
                       aria-controls={`agent-detail-${agent.id}`}
                     >
-                      <td className="px-[14px] py-[13px] align-middle text-[rgba(18,18,18,0.35)] text-[12px] w-9 font-barlow">
+                      <td className="px-2 md:px-3.5 py-[13px] align-middle text-[rgba(18,18,18,0.35)] text-[12px] w-9 font-barlow">
                         {String(index + 1).padStart(2, "0")}
                       </td>
-                      <td className="px-[14px] py-[13px] align-middle">
+                      <td className="px-2 md:px-3.5 py-[13px] align-middle">
                         <div className="flex items-center gap-3">
                           <ChevronDown
                             aria-hidden="true"
@@ -1789,20 +1813,20 @@ export default function ArenaDashboard() {
                           </strong>
                         </div>
                       </td>
-                      <td className="hidden px-[14px] py-[13px] align-middle text-[rgba(18,18,18,0.55)] text-[13px] font-inter md:table-cell">
+                      <td className="hidden px-2 md:px-3.5 py-[13px] align-middle text-[rgba(18,18,18,0.55)] text-[13px] font-inter md:table-cell">
                         {agent.strategyLabel}
                       </td>
-                      <td className="px-[14px] py-[13px] align-middle">
+                      <td className="px-2 md:px-3.5 py-[13px] align-middle">
                         <span className={cn(chipClass, "font-barlow")}>
                           {statusLabelMap[agent.status]}
                         </span>
                       </td>
-                      <td className="px-[14px] py-[13px] align-middle font-barlow">
+                      <td className="px-2 md:px-3.5 py-[13px] align-middle font-barlow">
                         {agent.winRate}%
                       </td>
                       <td
                         className={cn(
-                          "px-[14px] py-[13px] align-middle font-barlow",
+                          "px-2 md:px-3.5 py-[13px] align-middle font-barlow",
                           agent.pnlPercent >= 0
                             ? "text-[#1a7f46]"
                             : "text-[#a33030]",
@@ -1811,13 +1835,13 @@ export default function ArenaDashboard() {
                         {agent.pnlPercent >= 0 ? "+" : ""}
                         {agent.pnlPercent.toFixed(1)}%
                       </td>
-                      <td className="hidden px-[14px] py-[13px] align-middle font-barlow md:table-cell">
+                      <td className="hidden px-2 md:px-3.5 py-[13px] align-middle font-barlow md:table-cell">
                         {agentPositions.length}
                       </td>
-                      <td className="hidden px-[14px] py-[13px] align-middle font-barlow md:table-cell">
+                      <td className="hidden px-2 md:px-3.5 py-[13px] align-middle font-barlow md:table-cell">
                         {agent.trackedMarkets.length}
                       </td>
-                      <td className="px-[14px] py-[13px] align-middle text-[18px] font-normal text-right font-instrument">
+                      <td className="hidden px-2 md:px-3.5 py-[13px] align-middle text-[18px] font-normal text-right font-instrument sm:table-cell">
                         {agent.score}
                       </td>
                     </tr>
@@ -1926,10 +1950,10 @@ export default function ArenaDashboard() {
       {selectedAgent ? (
         <AgentFundingModal
           agentName={selectedAgent.name}
-          agentStatus={selectedAgent.status}
           isOpen={isSubscribeModalOpen}
           isConnected={isConnected}
           depositAmount={depositAmount}
+          depositTokenBalance={isCelo ? celoUsdcBalance : null}
           fundingError={fundingError}
           lastFundingSignature={lastFundingSignature}
           isFundingAgent={isFundingAgent}
