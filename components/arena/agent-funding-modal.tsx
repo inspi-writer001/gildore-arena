@@ -93,14 +93,39 @@ export function AgentFundingModal({
 
             {!isConnected ? (
               <p className="m-0 rounded-[16px] border border-[rgba(255,223,153,0.12)] bg-[rgba(255,255,255,0.04)] px-4 py-3 font-inter text-[13px] leading-[1.6] text-[rgba(255,245,222,0.62)]">
-                Connect a Solana wallet before funding this agent.
+                Connect your wallet before funding this agent.
               </p>
             ) : null}
 
             {fundingError ? (
-              <p className="m-0 rounded-[16px] border border-[rgba(255,138,138,0.18)] bg-[rgba(120,24,24,0.18)] px-4 py-3 font-inter text-[13px] leading-[1.6] text-[#ffd3d3]">
-                {fundingError}
-              </p>
+              (() => {
+                const LOW_BALANCE_PREFIX = "__low_balance__";
+                if (fundingError.startsWith(LOW_BALANCE_PREFIX)) {
+                  const addFundsUrl = fundingError.slice(
+                    LOW_BALANCE_PREFIX.length,
+                  );
+                  return (
+                    <div className="grid gap-3 rounded-[16px] border border-[rgba(255,138,138,0.18)] bg-[rgba(120,24,24,0.18)] px-4 py-3">
+                      <p className="m-0 font-inter text-[13px] leading-[1.6] text-[#ffd3d3]">
+                        Your USDC balance is too low to complete this deposit.
+                      </p>
+                      <a
+                        href={addFundsUrl}
+                        target="_top"
+                        rel="noopener noreferrer"
+                        className="inline-flex w-fit items-center rounded-full border border-[rgba(255,138,138,0.3)] bg-[rgba(255,138,138,0.12)] px-4 py-1.5 font-barlow text-[11px] font-semibold uppercase tracking-[0.14em] text-[#ffd3d3] transition hover:bg-[rgba(255,138,138,0.22)]"
+                      >
+                        Add funds
+                      </a>
+                    </div>
+                  );
+                }
+                return (
+                  <p className="m-0 rounded-[16px] border border-[rgba(255,138,138,0.18)] bg-[rgba(120,24,24,0.18)] px-4 py-3 font-inter text-[13px] leading-[1.6] text-[#ffd3d3]">
+                    {fundingError}
+                  </p>
+                );
+              })()
             ) : null}
 
             {lastFundingSignature ? (

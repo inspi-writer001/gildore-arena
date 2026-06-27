@@ -37,6 +37,7 @@ import {
   parseCeloDepositAmount,
 } from "@/lib/celo/gildore-vault-celo";
 import { getCeloChain } from "@/lib/ecosystem";
+import { useIsMobile } from "@/hooks/use-media-query";
 const celoChain = getCeloChain();
 import {
   chipClass,
@@ -455,8 +456,13 @@ export default function ArenaDashboard() {
     autoRestartedConjureSelectionKey,
     setAutoRestartedConjureSelectionKey,
   ] = useState<string | null>(null);
-  const isWideWorkspace = true;
+  const isMobile = useIsMobile();
+  const isWideWorkspace = !isMobile;
   const conjureDitheringSize = 2;
+
+  const miniPayReceiptUrl = (txHash: string) =>
+    `https://link.minipay.xyz/receipt?tx=${txHash}&celebrate`;
+  const MINIPAY_ADD_FUNDS_URL = "https://link.minipay.xyz/add_cash?tokens=USDC";
   const didRenameRef = useRef(false);
   const [isSubscribeModalOpen, setIsSubscribeModalOpen] = useState(false);
   const [depositAmount, setDepositAmount] = useState("");
@@ -531,7 +537,7 @@ export default function ArenaDashboard() {
         args: [selectedAgent.name.toLowerCase()],
       });
       const amountBaseUnits = parseCeloDepositAmount(depositAmount.trim());
-      const feeCurrencyArgs = eco.isMiniPay && CELO_USDC_FEE_CURRENCY_ADDRESS
+      const feeCurrencyArgs = eco.isMiniPay
         ? { feeCurrency: CELO_USDC_FEE_CURRENCY_ADDRESS }
         : {};
 
@@ -573,6 +579,9 @@ export default function ArenaDashboard() {
       setLastFundingSignature(txHash);
       setDepositAmount("");
       setIsSubscribeModalOpen(false);
+      if (eco.isMiniPay) {
+        window.open(miniPayReceiptUrl(txHash), "_top");
+      }
       console.log("[subscription] Funded Celo agent vault:", {
         agentId: selectedAgent.id,
         amountBaseUnits: amountBaseUnits.toString(),
@@ -586,8 +595,16 @@ export default function ArenaDashboard() {
         address: celoAddress,
         error,
       });
+      const errMsg = formatUnknownError(error) || "Failed to fund agent vault.";
+      const isLowBalance =
+        typeof errMsg === "string" &&
+        (errMsg.toLowerCase().includes("insufficient") ||
+          errMsg.toLowerCase().includes("exceeds balance") ||
+          errMsg.toLowerCase().includes("transfer amount"));
       setFundingError(
-        formatUnknownError(error) || "Failed to fund agent vault.",
+        isLowBalance && eco.isMiniPay
+          ? `__low_balance__${MINIPAY_ADD_FUNDS_URL}`
+          : errMsg,
       );
     } finally {
       setIsFundingAgent(false);
@@ -604,7 +621,7 @@ export default function ArenaDashboard() {
       return;
     }
     if (!selectedWallet || !selectedAccount || !isConnected) {
-      setFundingError("Connect a Solana wallet before funding this agent.");
+      setFundingError("Connect your wallet before funding this agent.");
       return;
     }
 
@@ -693,7 +710,7 @@ export default function ArenaDashboard() {
         args: [selectedAgent.name.toLowerCase()],
       });
       const amountBaseUnits = parseCeloDepositAmount(maxSpendAmount.trim());
-      const feeCurrencyArgs = eco.isMiniPay && CELO_USDC_FEE_CURRENCY_ADDRESS
+      const feeCurrencyArgs = eco.isMiniPay
         ? { feeCurrency: CELO_USDC_FEE_CURRENCY_ADDRESS }
         : {};
       const { request: tickerRequest } = await eco.celoPublicClient.simulateContract({
@@ -710,6 +727,9 @@ export default function ArenaDashboard() {
 
       setLastMaxSpendSignature(txHash);
       setMaxSpendAmount("");
+      if (eco.isMiniPay) {
+        window.open(miniPayReceiptUrl(txHash), "_top");
+      }
       console.log("[register-ticker-celo] Configured max spendable:", {
         agentId: selectedAgent.id,
         marketSymbol: selectedMarketSymbol,
@@ -744,7 +764,7 @@ export default function ArenaDashboard() {
     }
     if (!selectedWallet || !selectedAccount || !isConnected) {
       setMaxSpendError(
-        "Connect a Solana wallet before configuring max spendable.",
+        "Connect your wallet before configuring max spendable.",
       );
       return;
     }
@@ -828,7 +848,7 @@ export default function ArenaDashboard() {
         args: [selectedAgent.name.toLowerCase()],
       });
       const amountBaseUnits = parseCeloDepositAmount(withdrawAmount.trim());
-      const feeCurrencyArgs = eco.isMiniPay && CELO_USDC_FEE_CURRENCY_ADDRESS
+      const feeCurrencyArgs = eco.isMiniPay
         ? { feeCurrency: CELO_USDC_FEE_CURRENCY_ADDRESS }
         : {};
       const { request: withdrawRequest } = await eco.celoPublicClient.simulateContract({
@@ -845,6 +865,9 @@ export default function ArenaDashboard() {
 
       setLastWithdrawSignature(txHash);
       setWithdrawAmount("");
+      if (eco.isMiniPay) {
+        window.open(miniPayReceiptUrl(txHash), "_top");
+      }
       console.log("[withdraw-celo] Withdrew from vault:", {
         agentId: selectedAgent.id,
         amountBaseUnits: amountBaseUnits.toString(),
@@ -870,7 +893,7 @@ export default function ArenaDashboard() {
     event.preventDefault();
     if (!selectedAgent || !withdrawAmount.trim()) return;
     if (!selectedWallet || !selectedAccount || !isConnected) {
-      setWithdrawError("Connect a Solana wallet before withdrawing.");
+      setWithdrawError("Connect your wallet before withdrawing.");
       return;
     }
 
@@ -1350,7 +1373,7 @@ export default function ArenaDashboard() {
   if (!snapshot || !derived) {
     return (
       <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(0,0,0,0.05),transparent_28%),linear-gradient(180deg,#f4f4f1_0%,#ecece8_100%)] text-[#121212]">
-        <section className="w-full max-w-[1280px] mx-auto px-6 pt-8 pb-16">
+        <section className="w-full max-w-[1280px] mx-auto px-3 sm:px-6 pt-8 pb-16">
           {/* ── Header skeleton ── */}
           <header className="grid grid-cols-1 gap-6 items-start md:grid-cols-[minmax(0,1.8fr)_minmax(280px,0.9fr)]">
             <div
@@ -1459,7 +1482,7 @@ export default function ArenaDashboard() {
   if (!derived.selectedAgent && !derived.agents?.length) {
     return (
       <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(0,0,0,0.05),transparent_28%),linear-gradient(180deg,#f4f4f1_0%,#ecece8_100%)] text-[#121212]">
-        <section className="w-full max-w-[1280px] mx-auto px-6 pt-8 pb-16">
+        <section className="w-full max-w-[1280px] mx-auto px-3 sm:px-6 pt-8 pb-16">
           <div className={cn(surfaceCard, "p-5")}>
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-[10px]">
@@ -1656,7 +1679,7 @@ export default function ArenaDashboard() {
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(0,0,0,0.05),transparent_28%),linear-gradient(180deg,#f4f4f1_0%,#ecece8_100%)] text-[#121212]">
-      <section className="w-full max-w-[1280px] mx-auto px-6 pt-8 pb-16">
+      <section className="w-full max-w-[1280px] mx-auto px-3 sm:px-6 pt-8 pb-16">
         <header className="grid grid-cols-1 gap-6 items-start md:grid-cols-[minmax(0,1.8fr)_minmax(280px,0.9fr)]">
           <div>
             <Link
@@ -1915,6 +1938,24 @@ export default function ArenaDashboard() {
           onSubmit={handleSubscribeSubmit}
         />
       ) : null}
+      <footer className="w-full py-6 text-center">
+        <div className="flex items-center justify-center gap-6">
+          <a
+            href="/terms"
+            target="_top"
+            className="font-barlow text-[11px] text-[rgba(247,239,231,0.36)] underline-offset-2 hover:text-[rgba(247,239,231,0.6)] hover:underline"
+          >
+            Terms of Service
+          </a>
+          <a
+            href="/privacy"
+            target="_top"
+            className="font-barlow text-[11px] text-[rgba(247,239,231,0.36)] underline-offset-2 hover:text-[rgba(247,239,231,0.6)] hover:underline"
+          >
+            Privacy Policy
+          </a>
+        </div>
+      </footer>
     </main>
   );
 }

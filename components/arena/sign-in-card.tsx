@@ -82,7 +82,9 @@ export function SignInCard() {
             <strong className="block min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-instrument text-[32px] font-normal leading-[0.95] text-[#fff7ea]">
               {isConnected && address
                 ? truncateBetween(address, 9, 3)
-                : "Sign in"}
+                : eco.isMiniPay
+                  ? "Connecting…"
+                  : "Sign in"}
             </strong>
           </span>
           <span className="flex shrink-0 items-center gap-2 rounded-full border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[rgba(247,239,231,0.84)] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
@@ -204,7 +206,21 @@ export function SignInCard() {
                   Close
                 </button>
               </div>
+              {eco.isMiniPay ? (
+                <a
+                  href="https://t.me/gildorearena"
+                  target="_top"
+                  rel="noopener noreferrer"
+                  className="font-barlow text-[11px] text-[rgba(247,239,231,0.44)] underline-offset-2 hover:text-[rgba(247,239,231,0.7)] hover:underline"
+                >
+                  Support
+                </a>
+              ) : null}
             </>
+          ) : eco.isMiniPay ? (
+            <p className="font-barlow text-[12px] leading-5 text-[rgba(247,239,231,0.72)]">
+              Auto-connecting your MiniPay wallet…
+            </p>
           ) : ready ? (
             <>
               <button

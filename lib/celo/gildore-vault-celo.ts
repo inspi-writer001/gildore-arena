@@ -7,12 +7,16 @@ type ContractReader = {
 export const GILDORE_VAULT_CELO_ADDRESS = process.env
   .NEXT_PUBLIC_GILDORE_VAULT_CELO_ADDRESS as Address | undefined;
 
-// Celo USDC fee-currency *adapter* address (mainnet) — required in the
-// `feeCurrency` field so MiniPay/CIP-64 transactions pay gas in USDC instead
-// of CELO. Override per network via env; leave unset on testnets where the
-// wallet still holds faucet CELO for gas.
-export const CELO_USDC_FEE_CURRENCY_ADDRESS = process.env
-  .NEXT_PUBLIC_CELO_FEE_CURRENCY_ADDRESS as Address | undefined;
+// CIP-64 fee-currency adapter address for USDC on Celo mainnet.
+// MiniPay requires an explicit feeCurrency so gas is paid in stablecoin,
+// never in CELO. Use the adapter (not the token address) for USDC/USDT.
+// https://docs.celo.org/protocol/transaction/eip1559-transactions#feecurrency
+const USDC_FEE_CURRENCY_ADAPTER_MAINNET: Address =
+  "0x2F25deB3848C207fc8E0c34035B3Ba7fC157602B";
+
+export const CELO_USDC_FEE_CURRENCY_ADDRESS: Address =
+  (process.env.NEXT_PUBLIC_CELO_FEE_CURRENCY_ADDRESS as Address | undefined) ??
+  USDC_FEE_CURRENCY_ADAPTER_MAINNET;
 
 export const CELO_DEPOSIT_TOKEN_ADDRESS = process.env
   .NEXT_PUBLIC_CELO_DEPOSIT_TOKEN_ADDRESS as Address | undefined;
