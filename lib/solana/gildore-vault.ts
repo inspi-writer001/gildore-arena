@@ -19,7 +19,7 @@ import {
 } from "@solana/kit";
 import { decodeBase64, encodeBase64 } from "../base64";
 
-const PROGRAM_ADDRESS = address("2um3F4vyQwcuhwrGdPHGMwwK5C4K5rFU84cxHPoYNMKg");
+const PROGRAM_ADDRESS = address("2Xefp1aBUabU12QNDPxpj3ieU7MjZzcS6uD7x4e9qye9");
 const SYSTEM_PROGRAM_ADDRESS = address("11111111111111111111111111111111");
 const TOKEN_PROGRAM_ADDRESS = address(
   "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
@@ -55,6 +55,7 @@ type UserState = {
 
 type TickerState = {
   amountToSpend: bigint;
+  isInPosition: boolean;
 };
 
 type FundingTokenInfo = {
@@ -99,6 +100,21 @@ export type PreparedRegisterTickerTransaction = {
   userStateAddress: Address;
   tickerAddress: Address;
   userStateVaultAddress: Address;
+  transactionMessage: TransactionMessageWithBlockhashLifetime;
+};
+
+export type PreparedWithdrawTransaction = {
+  amountBaseUnits: bigint;
+  mint: Address;
+  decimals: number;
+  agentAddress: Address;
+  agentId: Address;
+  userAddress: Address;
+  payerAddress: Address;
+  userStateAddress: Address;
+  tickerAddress: Address;
+  userStateVaultAddress: Address;
+  userTokenAccountAddress: Address;
   transactionMessage: TransactionMessageWithBlockhashLifetime;
 };
 
@@ -200,7 +216,10 @@ export async function deriveUserStateAddress(
   return userStateAddress;
 }
 
-export async function deriveTickerAddress(agentId: Address, userAddress: Address) {
+export async function deriveTickerAddress(
+  agentId: Address,
+  userAddress: Address,
+) {
   const [tickerAddress] = await getProgramDerivedAddress({
     programAddress: PROGRAM_ADDRESS,
     seeds: [
@@ -278,8 +297,10 @@ function decodeTickerAccount(data: Uint8Array): TickerState {
     throw new Error("Invalid ticker discriminator");
   }
 
+  // Layout: discriminator(1) + amountToSpend(8) + isInPosition(1)
   return {
     amountToSpend: readU64(data, 1),
+    isInPosition: (data[9] ?? 0) === 1,
   };
 }
 
@@ -413,7 +434,6 @@ function createRegisterTickerForMeInstruction(input: {
   user: Address;
   agent: Address;
   userState: Address;
-  userStateVault: Address;
   ticker: Address;
   mint: Address;
   amountToSpend: bigint;
@@ -425,13 +445,36 @@ function createRegisterTickerForMeInstruction(input: {
       { address: input.user, role: AccountRole.WRITABLE_SIGNER },
       { address: input.agent, role: AccountRole.WRITABLE },
       { address: input.userState, role: AccountRole.READONLY },
-      { address: input.userStateVault, role: AccountRole.READONLY },
       { address: input.ticker, role: AccountRole.WRITABLE },
       { address: input.mint, role: AccountRole.READONLY },
-      { address: TOKEN_PROGRAM_ADDRESS, role: AccountRole.READONLY },
-      { address: SYSTEM_PROGRAM_ADDRESS, role: AccountRole.READONLY },
     ],
     data: Uint8Array.from([4, ...encodeU64(input.amountToSpend)]),
+  };
+}
+
+function createUserWithdrawalInstruction(input: {
+  user: Address;
+  agent: Address;
+  userState: Address;
+  userStateVault: Address;
+  mint: Address;
+  globalStateAccount: Address;
+  userTokenAccount: Address;
+  amount: bigint;
+}): Instruction {
+  return {
+    programAddress: PROGRAM_ADDRESS,
+    accounts: [
+      { address: input.user, role: AccountRole.WRITABLE_SIGNER },
+      { address: input.agent, role: AccountRole.READONLY },
+      { address: input.userState, role: AccountRole.WRITABLE },
+      { address: input.userStateVault, role: AccountRole.WRITABLE },
+      { address: input.mint, role: AccountRole.READONLY },
+      { address: input.globalStateAccount, role: AccountRole.WRITABLE },
+      { address: input.userTokenAccount, role: AccountRole.WRITABLE },
+      { address: TOKEN_PROGRAM_ADDRESS, role: AccountRole.READONLY },
+    ],
+    data: Uint8Array.from([6, ...encodeU64(input.amount)]),
   };
 }
 
@@ -655,33 +698,13 @@ export async function prepareRegisterTickerTransaction(input: {
     fundingToken.mint,
   );
 
-  const [userStateAccount, userStateVaultAccount] = await Promise.all([
-    fetchEncodedAccount(input.rpc, userStateAddress),
-    fetchEncodedAccount(input.rpc, userStateVaultAddress),
-  ]);
+  const userStateAccount = await fetchEncodedAccount(
+    input.rpc,
+    userStateAddress,
+  );
 
   if (!userStateAccount.exists) {
     throw new Error("Fund this agent first before configuring max spendable.");
-  }
-
-  if (!userStateVaultAccount.exists) {
-    throw new Error(
-      "Your agent vault token account is missing on this cluster. Fund this agent first before configuring max spendable.",
-    );
-  }
-
-  const vaultMint = decodeSplTokenAccountMint(userStateVaultAccount.data);
-  if (vaultMint !== fundingToken.mint) {
-    throw new Error(
-      `Agent vault token account mint mismatch. Expected ${fundingToken.mint}, got ${vaultMint}.`,
-    );
-  }
-
-  const vaultBalance = decodeSplTokenAccountAmount(userStateVaultAccount.data);
-  if (vaultBalance <= BigInt(0)) {
-    throw new Error(
-      "This vault has no spendable balance yet. Fund this agent before configuring max spendable.",
-    );
   }
 
   const latestBlockhash = await input.rpc.getLatestBlockhash().send();
@@ -700,7 +723,6 @@ export async function prepareRegisterTickerTransaction(input: {
           user: userAddress,
           agent: agentAddress,
           userState: userStateAddress,
-          userStateVault: userStateVaultAddress,
           ticker: tickerAddress,
           mint: fundingToken.mint,
           amountToSpend: amountBaseUnits,
@@ -720,6 +742,115 @@ export async function prepareRegisterTickerTransaction(input: {
     userStateAddress,
     tickerAddress,
     userStateVaultAddress,
+    transactionMessage,
+  };
+}
+
+export async function prepareWithdrawTransaction(input: {
+  rpc: SolanaRpc;
+  userAddressInput: string;
+  payerAddressInput: string;
+  agentName: string;
+  amountUi: string;
+}): Promise<PreparedWithdrawTransaction> {
+  const userAddress = address(input.userAddressInput);
+  const payerAddress = address(input.payerAddressInput);
+
+  const { address: globalStateAddress } = await fetchGlobalState(input.rpc);
+  const fundingToken = await fetchFundingTokenInfo(input.rpc);
+  const { agentAddress, agentId } = await deriveAgentAddress(input.agentName);
+
+  const agentAccount = await fetchEncodedAccount(input.rpc, agentAddress);
+  if (!agentAccount.exists) {
+    throw new Error(
+      `Vault agent account for "${input.agentName}" is not registered on this cluster.`,
+    );
+  }
+
+  const amountBaseUnits = parseUiAmountToBaseUnits(
+    input.amountUi,
+    fundingToken.decimals,
+  );
+  if (amountBaseUnits <= BigInt(0)) {
+    throw new Error("Enter a withdrawal amount greater than zero.");
+  }
+
+  const userStateAddress = await deriveUserStateAddress(
+    userAddress,
+    fundingToken.mint,
+    agentAddress,
+  );
+  const tickerAddress = await deriveTickerAddress(agentId, userAddress);
+  const userStateVaultAddress = await deriveAssociatedTokenAddress(
+    userStateAddress,
+    fundingToken.mint,
+  );
+  const userTokenAccountAddress = await deriveAssociatedTokenAddress(
+    userAddress,
+    fundingToken.mint,
+  );
+
+  const [userStateAccount, userStateVaultAccount] = await Promise.all([
+    fetchEncodedAccount(input.rpc, userStateAddress),
+    fetchEncodedAccount(input.rpc, userStateVaultAddress),
+  ]);
+
+  if (!userStateAccount.exists) {
+    throw new Error(
+      "No vault position found for this agent. Deposit first before withdrawing.",
+    );
+  }
+
+  if (!userStateVaultAccount.exists) {
+    throw new Error(
+      "Vault token account not found. Deposit first before withdrawing.",
+    );
+  }
+
+  const vaultBalance = decodeSplTokenAccountAmount(userStateVaultAccount.data);
+  if (vaultBalance < amountBaseUnits) {
+    throw new Error(
+      `Insufficient vault balance. Available: ${vaultBalance.toString()} base units, requested: ${amountBaseUnits.toString()}.`,
+    );
+  }
+
+  const latestBlockhash = await input.rpc.getLatestBlockhash().send();
+  const transactionMessage = pipe(
+    createTransactionMessage({ version: "legacy" }),
+    (message) => setTransactionMessageFeePayer(payerAddress, message),
+    (message) =>
+      setTransactionMessageLifetimeUsingBlockhash(
+        latestBlockhash.value,
+        message,
+      ),
+    (message) =>
+      appendTransactionMessageInstruction(
+        createUserWithdrawalInstruction({
+          user: userAddress,
+          agent: agentAddress,
+          userState: userStateAddress,
+          userStateVault: userStateVaultAddress,
+          mint: fundingToken.mint,
+          globalStateAccount: globalStateAddress,
+          userTokenAccount: userTokenAccountAddress,
+          amount: amountBaseUnits,
+        }),
+        message,
+      ),
+  );
+
+  return {
+    amountBaseUnits,
+    mint: fundingToken.mint,
+    decimals: fundingToken.decimals,
+    agentAddress,
+    agentId,
+    userAddress,
+    payerAddress,
+    userStateAddress,
+    tickerAddress,
+    userStateVaultAddress,
+    userTokenAccountAddress,
     transactionMessage,
   };
 }

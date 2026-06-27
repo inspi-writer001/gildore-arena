@@ -1,3 +1,6 @@
 [submodule "gildore-arena-vault"]
 	path = gildore-arena-vault
 	url = https://github.com/inspi-writer001/gildore-arena-vault.git
+[submodule "gildore-arena-vault-celo"]
+	path = gildore-arena-vault-celo
+	url = git@github.com:inspi-writer001/gildore-arena-vault-solidity.git

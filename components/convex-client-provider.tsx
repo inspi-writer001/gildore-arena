@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ConvexProvider, ConvexReactClient } from "convex/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createSolanaRpc,
   createSolanaRpcSubscriptions,
@@ -18,8 +19,7 @@ import {
   type ConnectedStandardSolanaWallet,
 } from "@privy-io/react-auth/solana";
 import { createPublicClient, createWalletClient, custom, http } from "viem";
-import { celo } from "viem/chains";
-import { isMiniPayEnvironment, type Ecosystem } from "@/lib/ecosystem";
+import { isMiniPayEnvironment, getCeloChain, type Ecosystem } from "@/lib/ecosystem";
 
 const solanaRpcUrl =
   process.env.NEXT_PUBLIC_SOLANA_RPC_URL ??
@@ -41,8 +41,9 @@ const solanaRpcSubscriptions = createSolanaRpcSubscriptions(
   solanaSubscriptionsUrl as Parameters<typeof createSolanaRpcSubscriptions>[0],
 );
 const celoRpcUrl = process.env.NEXT_PUBLIC_CELO_RPC_URL ?? "https://forno.celo.org";
+const celoChain = getCeloChain();
 const celoPublicClient = createPublicClient({
-  chain: celo,
+  chain: celoChain,
   transport: http(celoRpcUrl),
 });
 const ECOSYSTEM_STORAGE_KEY = "gildore-ecosystem";
@@ -143,7 +144,7 @@ export function useEcosystemWallet(): EcosystemWalletState {
 
   useEffect(() => {
     if (!isMiniPay || typeof window === "undefined" || !window.ethereum) return;
-    createWalletClient({ chain: celo, transport: custom(window.ethereum) })
+    createWalletClient({ chain: celoChain, transport: custom(window.ethereum) })
       .getAddresses()
       .then((addresses) => setMiniPayAddress(addresses[0] ?? null))
       .catch((error) => {
@@ -173,11 +174,11 @@ export function useEcosystemWallet(): EcosystemWalletState {
   > | null> => {
     if (isMiniPay) {
       if (typeof window === "undefined" || !window.ethereum) return null;
-      return createWalletClient({ chain: celo, transport: custom(window.ethereum) });
+      return createWalletClient({ chain: celoChain, transport: custom(window.ethereum) });
     }
     if (!privyEthereumWallet) return null;
     const provider = await privyEthereumWallet.getEthereumProvider();
-    return createWalletClient({ chain: celo, transport: custom(provider) });
+    return createWalletClient({ chain: celoChain, transport: custom(provider) });
   };
 
   const shared = {
@@ -215,6 +216,8 @@ export function useEcosystemWallet(): EcosystemWalletState {
   };
 }
 
+const queryClient = new QueryClient();
+
 export default function ConvexClientProvider({
   children,
 }: {
@@ -235,6 +238,7 @@ export default function ConvexClientProvider({
   }
 
   return (
+    <QueryClientProvider client={queryClient}>
     <PrivyProvider
       appId={privyAppId}
       clientId={privyClientId}
@@ -254,8 +258,8 @@ export default function ConvexClientProvider({
             createOnLogin: "users-without-wallets",
           },
         },
-        supportedChains: [celo],
-        defaultChain: celo,
+        supportedChains: [celoChain],
+        defaultChain: celoChain,
         solana: {
           rpcs: {
             [solanaChain]: {
@@ -268,5 +272,6 @@ export default function ConvexClientProvider({
     >
       <ConvexProvider client={client}>{children}</ConvexProvider>
     </PrivyProvider>
+    </QueryClientProvider>
   );
 }

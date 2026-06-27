@@ -27,6 +27,7 @@ export function MaxSpendConfigurator({
   isConnected,
   error,
   lastSignature,
+  compact = false,
 }: {
   marketSymbol: string;
   spendAmount: string;
@@ -36,6 +37,7 @@ export function MaxSpendConfigurator({
   isConnected: boolean;
   error: string | null;
   lastSignature: string | null;
+  compact?: boolean;
 }) {
   const sliderValue = useMemo(() => {
     const parsedAmount = Number.parseFloat(spendAmount);
@@ -47,7 +49,10 @@ export function MaxSpendConfigurator({
 
   return (
     <form
-      className="flex flex-col justify-evenly h-[120px] rounded-[16px] border border-[rgba(18,18,18,0.08)] bg-[rgba(250,250,247,0.92)] p-[14px] shadow-[0_18px_40px_rgba(0,0,0,0.05)]"
+      className={compact
+        ? "flex flex-col justify-evenly gap-3"
+        : "flex flex-col justify-evenly h-[120px] rounded-[16px] border border-[rgba(18,18,18,0.08)] bg-[rgba(250,250,247,0.92)] p-[14px] shadow-[0_18px_40px_rgba(0,0,0,0.05)]"
+      }
       onSubmit={onSubmit}
     >
       <div className="flex items-start justify-between">

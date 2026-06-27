@@ -1,6 +1,15 @@
 "use client";
 
-import { Activity, Eye, ExternalLink, Newspaper, Radar } from "lucide-react";
+import {
+  Activity,
+  Eye,
+  ExternalLink,
+  Newspaper,
+  Radar,
+  TrendingDown,
+  TrendingUp,
+  Minus,
+} from "lucide-react";
 import { ImageDithering, LiquidMetal } from "@paper-design/shaders-react";
 import { BrowserSessionViewport } from "@/components/arena/browser-session-viewport";
 import {
@@ -15,6 +24,15 @@ import {
   surfaceCard,
 } from "@/components/arena/arena-shared";
 import { MaxSpendConfigurator } from "@/components/arena/max-spend-configurator";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import type {
   ActiveStrategySetup,
@@ -89,9 +107,270 @@ type SelectedVisionDecision = {
   issues: string[];
 };
 
-
 const disclosureScrollViewportClass =
   "max-h-[360px] overflow-y-auto pr-2 [scrollbar-width:thin]";
+
+const newsToneDot: Record<ConfluenceState, string> = {
+  supportive: "bg-[#4caf7d]",
+  neutral: "bg-[rgba(18,18,18,0.28)]",
+  risk: "bg-[#e06060]",
+};
+
+function formatVaultAmount(raw: string | null, decimals: number): string {
+  if (raw == null) return "—";
+  const n = Number(BigInt(raw)) / 10 ** decimals;
+  return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+// ── Vault control surface ─────────────────────────────────────────────────────
+
+type VaultControlSurfaceProps = {
+  // vault stats
+  vaultBalance: string | null;
+  vaultAllowance: string | null;
+  isInPosition: boolean | null;
+  vaultDecimals: number;
+  isLoadingVault: boolean;
+  // market & max spend
+  marketSymbol: string;
+  spendAmount: string;
+  onSpendAmountChange: (value: string) => void;
+  onSubmitMaxSpend: React.FormEventHandler<HTMLFormElement>;
+  isConfiguringMaxSpend: boolean;
+  maxSpendError: string | null;
+  lastMaxSpendSignature: string | null;
+  isConnected: boolean;
+  // withdraw
+  withdrawAmount: string;
+  onWithdrawAmountChange: (value: string) => void;
+  onSubmitWithdraw: React.FormEventHandler<HTMLFormElement>;
+  isWithdrawing: boolean;
+  withdrawError: string | null;
+  lastWithdrawSignature: string | null;
+  // position actions
+  onClosePosition: () => void;
+  isClosingPosition: boolean;
+  onOpenPrediction: () => void;
+  // performance
+  pnlPercent: number;
+  winRate: number;
+  openPositions: number;
+};
+
+function VaultStatCell({
+  label,
+  value,
+  loading,
+  accent,
+}: {
+  label: string;
+  value: string;
+  loading: boolean;
+  accent?: "positive" | "negative" | "active" | null;
+}) {
+  return (
+    <div className="grid gap-[5px]">
+      <span className="font-barlow text-[10px] font-semibold uppercase tracking-[0.14em] text-[rgba(18,18,18,0.42)]">
+        {label}
+      </span>
+      {loading ? (
+        <div className="h-[28px] w-[64px] animate-pulse rounded-[6px] bg-[rgba(18,18,18,0.06)]" />
+      ) : (
+        <span
+          className={cn(
+            "font-instrument text-[22px] leading-none",
+            accent === "positive" && "text-[#2e7d52]",
+            accent === "negative" && "text-[#8a2d2d]",
+            accent === "active" && "text-[#5c3d8f]",
+            (!accent || accent === null) && "text-[#121212]",
+          )}
+        >
+          {value}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function VaultControlSurface({
+  vaultBalance,
+  vaultAllowance,
+  isInPosition,
+  vaultDecimals,
+  isLoadingVault,
+  marketSymbol,
+  spendAmount,
+  onSpendAmountChange,
+  onSubmitMaxSpend,
+  isConfiguringMaxSpend,
+  maxSpendError,
+  lastMaxSpendSignature,
+  isConnected,
+  withdrawAmount,
+  onWithdrawAmountChange,
+  onSubmitWithdraw,
+  isWithdrawing,
+  withdrawError,
+  lastWithdrawSignature,
+  onClosePosition,
+  isClosingPosition,
+  onOpenPrediction,
+  pnlPercent,
+  winRate,
+  openPositions,
+}: VaultControlSurfaceProps) {
+  const formattedBalance = formatVaultAmount(vaultBalance, vaultDecimals);
+  const formattedAllowance = formatVaultAmount(vaultAllowance, vaultDecimals);
+
+  const positionLabel =
+    isInPosition == null ? "—" : isInPosition ? "In trade" : "Available";
+  const positionAccent =
+    isInPosition == null
+      ? null
+      : isInPosition
+        ? ("active" as const)
+        : ("positive" as const);
+
+  return (
+    <div className="grid gap-0 rounded-[18px] border border-[rgba(18,18,18,0.08)] bg-[rgba(250,250,247,0.92)] shadow-[0_18px_40px_rgba(0,0,0,0.05)]">
+      {/* Vault stats strip */}
+      <div className="grid grid-cols-3 gap-3 p-[16px_18px]">
+        <VaultStatCell
+          label="Vault balance"
+          value={formattedBalance}
+          loading={isLoadingVault}
+        />
+        <VaultStatCell
+          label="Allowance"
+          value={formattedAllowance}
+          loading={isLoadingVault}
+        />
+        <VaultStatCell
+          label="Status"
+          value={positionLabel}
+          loading={isLoadingVault}
+          accent={positionAccent}
+        />
+      </div>
+
+      <Separator className="bg-[rgba(18,18,18,0.06)]" />
+
+      {/* Max spend + Withdraw — side by side */}
+      <div className="flex divide-x divide-[rgba(18,18,18,0.06)]">
+        {/* Max spend — expands to fill available width */}
+        <div className="min-w-0 flex-1 p-[14px_18px]">
+          <MaxSpendConfigurator
+            marketSymbol={marketSymbol}
+            spendAmount={spendAmount}
+            onSpendAmountChange={onSpendAmountChange}
+            onSubmit={onSubmitMaxSpend}
+            isConfiguring={isConfiguringMaxSpend}
+            isConnected={isConnected}
+            error={maxSpendError}
+            lastSignature={lastMaxSpendSignature}
+            compact
+          />
+        </div>
+
+        {/* Withdraw — fixed-width column */}
+        <form
+          onSubmit={onSubmitWithdraw}
+          className="flex w-[220px] shrink-0 flex-col justify-between gap-3 p-[14px_18px]"
+        >
+          <span className="font-barlow text-[10px] font-semibold uppercase tracking-[0.14em] text-[rgba(18,18,18,0.42)]">
+            Withdraw funds
+          </span>
+          <div className="flex flex-col gap-2">
+            <Input
+              type="text"
+              inputMode="decimal"
+              placeholder="0.00"
+              value={withdrawAmount}
+              onChange={(e) => onWithdrawAmountChange(e.target.value)}
+              disabled={isWithdrawing || !isConnected}
+              className="h-9 w-full rounded-[10px] border-[rgba(18,18,18,0.12)] bg-white/60 font-barlow text-[13px] placeholder:text-[rgba(18,18,18,0.32)] focus-visible:ring-[rgba(18,18,18,0.24)]"
+            />
+            <button
+              type="submit"
+              disabled={isWithdrawing || !isConnected || !withdrawAmount.trim()}
+              className="inline-flex h-9 w-full items-center justify-center rounded-[10px] border border-[rgba(18,18,18,0.14)] bg-[linear-gradient(180deg,rgba(20,18,16,0.96),rgba(8,8,8,0.98))] px-4 font-barlow text-[10px] font-semibold uppercase tracking-[0.14em] text-[#f7efe7] transition hover:bg-[linear-gradient(180deg,rgba(28,26,24,0.9),rgba(10,10,10,1))] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isWithdrawing ? "Sending…" : "Withdraw"}
+            </button>
+          </div>
+          {withdrawError && (
+            <p className="m-0 font-barlow text-[11px] font-semibold text-[#8a2d2d]">
+              {withdrawError}
+            </p>
+          )}
+          {lastWithdrawSignature && !withdrawError && (
+            <p className="m-0 font-barlow text-[11px] font-semibold text-[#2e7d52]">
+              Withdrawn · sig {lastWithdrawSignature.slice(0, 8)}…
+            </p>
+          )}
+        </form>
+      </div>
+
+      <Separator className="bg-[rgba(18,18,18,0.06)]" />
+
+      {/* Performance row + position action */}
+      <div className="flex items-center justify-between gap-4 p-[14px_18px]">
+        <div className="flex items-center gap-6">
+          <div className="grid gap-1">
+            <span className="font-barlow text-[10px] font-semibold uppercase tracking-[0.14em] text-[rgba(18,18,18,0.42)]">
+              PnL
+            </span>
+            <span
+              className={cn(
+                "inline-flex items-center gap-1 font-instrument text-[22px] leading-none",
+                pnlPercent >= 0 ? "text-[#2e7d52]" : "text-[#8a2d2d]",
+              )}
+            >
+              {pnlPercent >= 0 ? (
+                <TrendingUp size={14} aria-hidden="true" />
+              ) : (
+                <TrendingDown size={14} aria-hidden="true" />
+              )}
+              {pnlPercent >= 0 ? "+" : ""}
+              {pnlPercent.toFixed(1)}%
+            </span>
+          </div>
+          <div className="grid gap-1">
+            <span className="font-barlow text-[10px] font-semibold uppercase tracking-[0.14em] text-[rgba(18,18,18,0.42)]">
+              Win rate
+            </span>
+            <span className="font-instrument text-[22px] leading-none text-[#121212]">
+              {winRate}%
+            </span>
+          </div>
+          <div className="grid gap-1">
+            <span className="font-barlow text-[10px] font-semibold uppercase tracking-[0.14em] text-[rgba(18,18,18,0.42)]">
+              Open
+            </span>
+            <span className="inline-flex items-center gap-1 font-instrument text-[22px] leading-none text-[#121212]">
+              <Minus size={12} aria-hidden="true" className="text-[rgba(18,18,18,0.38)]" />
+              {openPositions}
+            </span>
+          </div>
+        </div>
+
+        {/* Close position — only shown when agent is in a trade */}
+        {isInPosition && (
+          <button
+            type="button"
+            onClick={onClosePosition}
+            disabled={isClosingPosition || !isConnected}
+            className="inline-flex h-9 shrink-0 items-center justify-center rounded-[10px] border border-[rgba(138,45,45,0.22)] bg-[rgba(251,238,236,0.96)] px-5 font-barlow text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8a2d2d] transition hover:bg-[rgba(251,238,236,1)] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isClosingPosition ? "Closing…" : "Close Position"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Main panel ────────────────────────────────────────────────────────────────
 
 export function SelectedAgentPanel({
   className,
@@ -129,6 +408,22 @@ export function SelectedAgentPanel({
   onForceRestartBrowserSession,
   onResetBrowserSessionPanel,
   onMarkAutoRestarted,
+  // vault
+  vaultBalance,
+  vaultAllowance,
+  isInPosition,
+  vaultDecimals,
+  isLoadingVault,
+  // withdraw
+  withdrawAmount,
+  onWithdrawAmountChange,
+  onSubmitWithdraw,
+  isWithdrawing,
+  withdrawError,
+  lastWithdrawSignature,
+  // position
+  onClosePosition,
+  isClosingPosition,
 }: {
   className?: string;
   agents: Array<{ id: string; score: number }>;
@@ -165,9 +460,29 @@ export function SelectedAgentPanel({
   onForceRestartBrowserSession: () => Promise<void>;
   onResetBrowserSessionPanel: () => void;
   onMarkAutoRestarted: () => void;
+  // vault
+  vaultBalance: string | null;
+  vaultAllowance: string | null;
+  isInPosition: boolean | null;
+  vaultDecimals: number;
+  isLoadingVault: boolean;
+  // withdraw
+  withdrawAmount: string;
+  onWithdrawAmountChange: (value: string) => void;
+  onSubmitWithdraw: React.FormEventHandler<HTMLFormElement>;
+  isWithdrawing: boolean;
+  withdrawError: string | null;
+  lastWithdrawSignature: string | null;
+  // position
+  onClosePosition: () => void;
+  isClosingPosition: boolean;
 }) {
   const isConjureActive = isConjureRevealed && !!selectedBrowserSession;
   const isConjureIdle = !isConjureRevealed;
+
+  const selectedMarket = trackedMarkets.find(
+    (m) => m.symbol === selectedMarketSymbol,
+  );
 
   return (
     <section
@@ -181,6 +496,7 @@ export function SelectedAgentPanel({
       aria-label="Selected agent detail"
     >
       <article className={cn(surfaceCard, "grid gap-[18px] p-5")}>
+        {/* Header */}
         <div className="flex items-start justify-between gap-5">
           <div>
             <h2 className="m-0 font-instrument text-[clamp(30px,4vw,48px)] font-normal leading-[0.96] tracking-[-0.5px]">
@@ -191,7 +507,7 @@ export function SelectedAgentPanel({
             </p>
           </div>
           <div className="flex flex-col items-end gap-[10px]">
-            <div className="flex flex-wrap gap-[10px] justify-end h-4"></div>
+            <div className="flex flex-wrap gap-[10px] justify-end h-4" />
             <div className="flex flex-wrap justify-end gap-3">
               <LiquidActionButton
                 label="Fund this agent"
@@ -209,69 +525,94 @@ export function SelectedAgentPanel({
           </div>
         </div>
 
-        <div
-          className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_180px]"
-          aria-label="Tracked markets"
-        >
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-            {trackedMarkets.map((market) => {
-              const isActive = market.symbol === selectedMarketSymbol;
-
-              return (
-                <button
-                  key={market.symbol}
-                  type="button"
-                  onClick={() => onSelectMarket(market.symbol)}
-                  className={cn(
-                    "grid h-[100px] gap-1 rounded-[16px] border border-transparent p-[14px] text-left text-inherit transition",
-                    market.newsState === "supportive" &&
-                      "bg-[rgba(231,248,237,0.84)]",
-                    market.newsState === "neutral" &&
-                      "bg-[rgba(250,250,247,0.92)]",
-                    market.newsState === "risk" &&
-                      "bg-[rgba(251,238,236,0.84)]",
-                    isActive &&
-                      "border-[rgba(18,18,18,0.82)] bg-[rgba(18,18,18,0.06)]",
-                  )}
-                  aria-pressed={isActive}
-                >
-                  <strong className="font-barlow text-[14px] font-semibold">
-                    {market.symbol}
-                  </strong>
-                  <div className="inline-flex items-center gap-2 self-end">
-                    {market.marketSyncStatus !== "no_data" && (
-                      <>
-                        <span
-                          className={cn(
-                            pillClass(market.newsState as ConfluenceState),
-                            "font-barlow",
-                          )}
-                        >
-                          {confluenceToneMap[market.newsState as ConfluenceState]}
-                        </span>
-                        <span className="font-barlow text-[10px] font-semibold uppercase tracking-[0.12em] text-[rgba(18,18,18,0.42)]">
+        {/* Pair selector + vault control surface */}
+        <div className="grid gap-3">
+          {/* Pair dropdown */}
+          <div className="flex items-center gap-3">
+            <Select
+              value={selectedMarketSymbol}
+              onValueChange={(v) => {
+                if (v) onSelectMarket(v);
+              }}
+            >
+              <SelectTrigger className="h-[42px] w-[200px] rounded-[12px] border-[rgba(18,18,18,0.12)] bg-[rgba(255,255,255,0.72)] font-barlow text-[13px] font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.06)] backdrop-blur-sm focus:ring-[rgba(18,18,18,0.18)]">
+                <SelectValue placeholder="Select pair" />
+              </SelectTrigger>
+              <SelectContent className="rounded-[14px] border-[rgba(18,18,18,0.1)] bg-white/96 shadow-[0_24px_60px_rgba(0,0,0,0.12)] backdrop-blur-sm">
+                {trackedMarkets.map((market) => (
+                  <SelectItem
+                    key={market.symbol}
+                    value={market.symbol}
+                    className="cursor-pointer rounded-[10px] font-barlow text-[13px] font-semibold focus:bg-[rgba(18,18,18,0.05)]"
+                  >
+                    <span className="flex items-center gap-2">
+                      <span
+                        className={cn(
+                          "size-[7px] shrink-0 rounded-full",
+                          newsToneDot[market.newsState],
+                        )}
+                      />
+                      {market.symbol}
+                      {market.marketSyncStatus !== "no_data" && (
+                        <span className="ml-1 font-barlow text-[10px] font-normal text-[rgba(18,18,18,0.42)]">
                           {formatSyncFreshness(market.newsUpdatedAt)}
                         </span>
-                      </>
-                    )}
-                  </div>
-                </button>
-              );
-            })}
+                      )}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {/* Active market news tone badge */}
+            {selectedMarket &&
+              selectedMarket.marketSyncStatus !== "no_data" && (
+                <span
+                  className={cn(
+                    pillClass(selectedMarket.newsState as ConfluenceState),
+                    "font-barlow",
+                  )}
+                >
+                  {
+                    confluenceToneMap[
+                      selectedMarket.newsState as ConfluenceState
+                    ]
+                  }
+                </span>
+              )}
           </div>
 
-          <MaxSpendConfigurator
+          {/* Vault control surface */}
+          <VaultControlSurface
+            vaultBalance={vaultBalance}
+            vaultAllowance={vaultAllowance}
+            isInPosition={isInPosition}
+            vaultDecimals={vaultDecimals}
+            isLoadingVault={isLoadingVault}
             marketSymbol={selectedMarketSymbol}
             spendAmount={spendAmount}
             onSpendAmountChange={onSpendAmountChange}
-            onSubmit={onSubmitMaxSpend}
-            isConfiguring={isConfiguringMaxSpend}
+            onSubmitMaxSpend={onSubmitMaxSpend}
+            isConfiguringMaxSpend={isConfiguringMaxSpend}
+            maxSpendError={maxSpendError}
+            lastMaxSpendSignature={lastMaxSpendSignature}
             isConnected={isConnected}
-            error={maxSpendError}
-            lastSignature={lastMaxSpendSignature}
+            withdrawAmount={withdrawAmount}
+            onWithdrawAmountChange={onWithdrawAmountChange}
+            onSubmitWithdraw={onSubmitWithdraw}
+            isWithdrawing={isWithdrawing}
+            withdrawError={withdrawError}
+            lastWithdrawSignature={lastWithdrawSignature}
+            onClosePosition={onClosePosition}
+            isClosingPosition={isClosingPosition}
+            onOpenPrediction={onOpenPrediction}
+            pnlPercent={selectedAgent.pnlPercent}
+            winRate={selectedAgent.winRate}
+            openPositions={selectedAgent.openPositions}
           />
         </div>
 
+        {/* Trade idea card */}
         {selectedTradeIdea ? (
           <div className="grid gap-[18px] rounded-[18px] border border-[rgba(18,18,18,0.08)] bg-[rgba(255,255,255,0.78)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.05)] backdrop-blur-[16px]">
             <div className="flex items-center justify-between gap-3">
@@ -333,6 +674,7 @@ export function SelectedAgentPanel({
           </div>
         ) : null}
 
+        {/* Conjure viewport */}
         <div
           className={cn(
             "h-[80px] overflow-hidden rounded-[10px] transition-[height] duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]",
@@ -398,7 +740,6 @@ export function SelectedAgentPanel({
                   void onForceRestartBrowserSession();
                   return;
                 }
-
                 onResetBrowserSessionPanel();
               }}
             />
@@ -426,6 +767,7 @@ export function SelectedAgentPanel({
         </div>
       </article>
 
+      {/* Aside — existing disclosure cards */}
       <aside
         className={cn(
           "grid gap-[18px]",
@@ -507,7 +849,7 @@ export function SelectedAgentPanel({
         ) : null}
 
         {selectedVisionDecision ? (
-          <article className={cn(surfaceCard, "p-5 ")}>
+          <article className={cn(surfaceCard, "p-5")}>
             <DisclosureSection
               title="Vision analysis"
               icon={<Eye aria-hidden="true" size={18} />}
@@ -644,7 +986,6 @@ export function SelectedAgentPanel({
                 selectedNewsContexts.map((item) => {
                   const isCalendarRow =
                     item.sourceLabel === "Economic Calendar";
-
                   return (
                     <div
                       key={item.id}

@@ -9,6 +9,7 @@
  */
 
 import type * as agentVault from "../agentVault.js";
+import type * as agentVaultCelo from "../agentVaultCelo.js";
 import type * as arena from "../arena.js";
 
 import type {
@@ -19,6 +20,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   agentVault: typeof agentVault;
+  agentVaultCelo: typeof agentVaultCelo;
   arena: typeof arena;
 }>;
 

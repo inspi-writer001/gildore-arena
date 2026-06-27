@@ -90,12 +90,12 @@ export default function Home() {
           </h1>
 
           <ArenaEnterButton />
-          <div className="faded-color text-xl mt-3 -mb-4 font-inter text-[rgba(0, 0, 0, 0.3)] text-3xl animate-fade-rise-delay-2">
+          {/* <div className="faded-color text-xl mt-3 -mb-4 font-inter text-[rgba(0, 0, 0, 0.3)] text-3xl animate-fade-rise-delay-2">
             HmDAoa5tN3CQJRGtPdfkPYyriTNUEBXJqAfGJvCVBAGS
-          </div>
+          </div> */}
 
           <p className="font-inter animate-fade-rise-delay self-center w-full">
-            Watch strategy agents trade, subscribe to or predict, which agent
+            Watch strategy agents trade. Subscribe to or predict which agent
             tops the chart.
           </p>
         </div>

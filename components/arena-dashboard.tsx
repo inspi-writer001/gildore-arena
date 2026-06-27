@@ -11,6 +11,7 @@ import {
 } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAction, useMutation, useQuery } from "convex/react";
+import { useQuery as useTanstackQuery } from "@tanstack/react-query";
 import { useSignTransaction } from "@privy-io/react-auth/solana";
 import { ArrowLeft, ChevronDown, Radar } from "lucide-react";
 import { api } from "@/convex/_generated/api";
@@ -24,13 +25,19 @@ import {
   useSolanaWallet,
 } from "@/components/convex-client-provider";
 import { encodeBase64 } from "@/lib/base64";
+import { vaultSnapshotKeys } from "@/lib/queries/solana-vault";
+import { celoVaultSnapshotKeys } from "@/lib/queries/celo-vault";
 import {
+  CELO_DEPOSIT_TOKEN_ADDRESS,
   CELO_USDC_FEE_CURRENCY_ADDRESS,
   GILDORE_VAULT_CELO_ABI,
   GILDORE_VAULT_CELO_ADDRESS,
+  MINIMAL_ERC20_ABI,
+  fetchCeloVaultSnapshot,
   parseCeloDepositAmount,
 } from "@/lib/celo/gildore-vault-celo";
-import { celo } from "viem/chains";
+import { getCeloChain } from "@/lib/ecosystem";
+const celoChain = getCeloChain();
 import {
   chipClass,
   confluenceToneMap,
@@ -434,6 +441,12 @@ export default function ArenaDashboard() {
   const submitFundAgentVault = useAction(api.agentVault.submitFundAgentVault);
   const prepareRegisterTicker = useAction(api.agentVault.prepareRegisterTicker);
   const submitRegisterTicker = useAction(api.agentVault.submitRegisterTicker);
+  const prepareWithdraw = useAction(api.agentVault.prepareWithdraw);
+  const submitWithdraw = useAction(api.agentVault.submitWithdraw);
+  const closePositionAction = useAction(api.agentVault.updateTickerCloseTrade);
+  const getVaultSnapshot = useAction(api.agentVault.getVaultSnapshot);
+  const closePositionActionCelo = useAction(api.agentVaultCelo.updateTickerCloseTradeCelo);
+  const getVaultSnapshotCelo = useAction(api.agentVaultCelo.getVaultSnapshotCelo);
   const [isStartingBrowserSession, setIsStartingBrowserSession] =
     useState(false);
   const [revealedConjureSelectionKey, setRevealedConjureSelectionKey] =
@@ -458,6 +471,13 @@ export default function ArenaDashboard() {
   const [lastMaxSpendSignature, setLastMaxSpendSignature] = useState<
     string | null
   >(null);
+  const [withdrawAmount, setWithdrawAmount] = useState("");
+  const [isWithdrawing, setIsWithdrawing] = useState(false);
+  const [withdrawError, setWithdrawError] = useState<string | null>(null);
+  const [lastWithdrawSignature, setLastWithdrawSignature] = useState<
+    string | null
+  >(null);
+  const [isClosingPosition, setIsClosingPosition] = useState(false);
 
   // One-time migration: rename agents to mythical names if they still have old names
   useEffect(() => {
@@ -501,24 +521,54 @@ export default function ArenaDashboard() {
       if (!walletClient) {
         throw new Error("No Celo wallet available.");
       }
+      if (!CELO_DEPOSIT_TOKEN_ADDRESS) {
+        throw new Error("CELO_DEPOSIT_TOKEN_ADDRESS is not configured.");
+      }
       const agentId = await eco.celoPublicClient.readContract({
         address: GILDORE_VAULT_CELO_ADDRESS,
         abi: GILDORE_VAULT_CELO_ABI,
         functionName: "deriveAgentId",
-        args: [selectedAgent.name],
+        args: [selectedAgent.name.toLowerCase()],
       });
       const amountBaseUnits = parseCeloDepositAmount(depositAmount.trim());
-      const txHash = await walletClient.writeContract({
+      const feeCurrencyArgs = eco.isMiniPay && CELO_USDC_FEE_CURRENCY_ADDRESS
+        ? { feeCurrency: CELO_USDC_FEE_CURRENCY_ADDRESS }
+        : {};
+
+      // Check ERC-20 allowance and approve if needed before deposit.
+      const allowance = await eco.celoPublicClient.readContract({
+        address: CELO_DEPOSIT_TOKEN_ADDRESS,
+        abi: MINIMAL_ERC20_ABI,
+        functionName: "allowance",
+        args: [celoAddress as `0x${string}`, GILDORE_VAULT_CELO_ADDRESS],
+      });
+      if ((allowance as bigint) < amountBaseUnits) {
+        const { request: approveRequest } = await eco.celoPublicClient.simulateContract({
+          address: CELO_DEPOSIT_TOKEN_ADDRESS,
+          abi: MINIMAL_ERC20_ABI,
+          functionName: "approve",
+          args: [GILDORE_VAULT_CELO_ADDRESS, amountBaseUnits],
+          account: celoAddress as `0x${string}`,
+        });
+        const approveHash = await walletClient.writeContract({
+          ...approveRequest,
+          ...feeCurrencyArgs,
+        } as Parameters<typeof walletClient.writeContract>[0]);
+        // Wait for approval to land before depositing.
+        await eco.celoPublicClient.waitForTransactionReceipt({ hash: approveHash });
+      }
+
+      const { request: depositRequest } = await eco.celoPublicClient.simulateContract({
         address: GILDORE_VAULT_CELO_ADDRESS,
         abi: GILDORE_VAULT_CELO_ABI,
         functionName: "depositForAgentUse",
         args: [agentId, amountBaseUnits],
         account: celoAddress as `0x${string}`,
-        chain: celo,
-        ...(eco.isMiniPay && CELO_USDC_FEE_CURRENCY_ADDRESS
-          ? { feeCurrency: CELO_USDC_FEE_CURRENCY_ADDRESS }
-          : {}),
       });
+      const txHash = await walletClient.writeContract({
+        ...depositRequest,
+        ...feeCurrencyArgs,
+      } as Parameters<typeof walletClient.writeContract>[0]);
 
       setLastFundingSignature(txHash);
       setDepositAmount("");
@@ -564,7 +614,7 @@ export default function ArenaDashboard() {
     try {
       const preparedFunding = await prepareFundAgentVault({
         walletAddress: selectedAccount.address,
-        agentName: selectedAgent.name,
+        agentName: selectedAgent.name.toLowerCase(),
         amountUi: depositAmount.trim(),
       });
       const signedFunding = await signTransaction({
@@ -640,20 +690,23 @@ export default function ArenaDashboard() {
         address: GILDORE_VAULT_CELO_ADDRESS,
         abi: GILDORE_VAULT_CELO_ABI,
         functionName: "deriveAgentId",
-        args: [selectedAgent.name],
+        args: [selectedAgent.name.toLowerCase()],
       });
       const amountBaseUnits = parseCeloDepositAmount(maxSpendAmount.trim());
-      const txHash = await walletClient.writeContract({
+      const feeCurrencyArgs = eco.isMiniPay && CELO_USDC_FEE_CURRENCY_ADDRESS
+        ? { feeCurrency: CELO_USDC_FEE_CURRENCY_ADDRESS }
+        : {};
+      const { request: tickerRequest } = await eco.celoPublicClient.simulateContract({
         address: GILDORE_VAULT_CELO_ADDRESS,
         abi: GILDORE_VAULT_CELO_ABI,
         functionName: "registerTickerForMe",
         args: [agentId, amountBaseUnits],
         account: celoAddress as `0x${string}`,
-        chain: celo,
-        ...(eco.isMiniPay && CELO_USDC_FEE_CURRENCY_ADDRESS
-          ? { feeCurrency: CELO_USDC_FEE_CURRENCY_ADDRESS }
-          : {}),
       });
+      const txHash = await walletClient.writeContract({
+        ...tickerRequest,
+        ...feeCurrencyArgs,
+      } as Parameters<typeof walletClient.writeContract>[0]);
 
       setLastMaxSpendSignature(txHash);
       setMaxSpendAmount("");
@@ -702,7 +755,7 @@ export default function ArenaDashboard() {
     try {
       const preparedTicker = await prepareRegisterTicker({
         walletAddress: selectedAccount.address,
-        agentName: selectedAgent.name,
+        agentName: selectedAgent.name.toLowerCase(),
         amountUi: maxSpendAmount.trim(),
       });
       const signedTicker = await signTransaction({
@@ -743,6 +796,207 @@ export default function ArenaDashboard() {
       );
     } finally {
       setIsConfiguringMaxSpend(false);
+    }
+  };
+
+  const handleWithdrawSubmitCelo = async (
+    event: FormEvent<HTMLFormElement>,
+  ) => {
+    event.preventDefault();
+    if (!selectedAgent || !withdrawAmount.trim()) return;
+    const celoAddress = eco.address;
+    if (!eco.isConnected || !celoAddress) {
+      setWithdrawError("Connect a Celo wallet before withdrawing.");
+      return;
+    }
+    if (!GILDORE_VAULT_CELO_ADDRESS) {
+      setWithdrawError("Celo vault is not configured for this environment.");
+      return;
+    }
+
+    setIsWithdrawing(true);
+    setWithdrawError(null);
+
+    try {
+      const walletClient = await eco.getCeloWalletClient();
+      if (!walletClient) throw new Error("No Celo wallet available.");
+
+      const agentId = await eco.celoPublicClient.readContract({
+        address: GILDORE_VAULT_CELO_ADDRESS,
+        abi: GILDORE_VAULT_CELO_ABI,
+        functionName: "deriveAgentId",
+        args: [selectedAgent.name.toLowerCase()],
+      });
+      const amountBaseUnits = parseCeloDepositAmount(withdrawAmount.trim());
+      const feeCurrencyArgs = eco.isMiniPay && CELO_USDC_FEE_CURRENCY_ADDRESS
+        ? { feeCurrency: CELO_USDC_FEE_CURRENCY_ADDRESS }
+        : {};
+      const { request: withdrawRequest } = await eco.celoPublicClient.simulateContract({
+        address: GILDORE_VAULT_CELO_ADDRESS,
+        abi: GILDORE_VAULT_CELO_ABI,
+        functionName: "withdraw",
+        args: [agentId, amountBaseUnits],
+        account: celoAddress as `0x${string}`,
+      });
+      const txHash = await walletClient.writeContract({
+        ...withdrawRequest,
+        ...feeCurrencyArgs,
+      } as Parameters<typeof walletClient.writeContract>[0]);
+
+      setLastWithdrawSignature(txHash);
+      setWithdrawAmount("");
+      console.log("[withdraw-celo] Withdrew from vault:", {
+        agentId: selectedAgent.id,
+        amountBaseUnits: amountBaseUnits.toString(),
+        txHash,
+      });
+    } catch (error) {
+      console.error("[withdraw-celo] failed", {
+        agentId: selectedAgent.id,
+        agentName: selectedAgent.name,
+        amountUi: withdrawAmount.trim(),
+        address: celoAddress,
+        error,
+      });
+      setWithdrawError(formatUnknownError(error) || "Failed to withdraw.");
+    } finally {
+      setIsWithdrawing(false);
+    }
+  };
+
+  const handleWithdrawSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    if (isCelo) return handleWithdrawSubmitCelo(event);
+
+    event.preventDefault();
+    if (!selectedAgent || !withdrawAmount.trim()) return;
+    if (!selectedWallet || !selectedAccount || !isConnected) {
+      setWithdrawError("Connect a Solana wallet before withdrawing.");
+      return;
+    }
+
+    setIsWithdrawing(true);
+    setWithdrawError(null);
+
+    try {
+      const preparedWithdraw = await prepareWithdraw({
+        walletAddress: selectedAccount.address,
+        agentName: selectedAgent.name.toLowerCase(),
+        amountUi: withdrawAmount.trim(),
+      });
+      const signedWithdraw = await signTransaction({
+        chain,
+        wallet: selectedWallet,
+        transaction: Uint8Array.from(
+          atob(preparedWithdraw.transactionBase64),
+          (character) => character.charCodeAt(0),
+        ),
+      });
+      const result = await submitWithdraw({
+        walletAddress: selectedAccount.address,
+        signedTransactionBase64: encodeBase64(signedWithdraw.signedTransaction),
+      });
+
+      setLastWithdrawSignature(result.signature);
+      setWithdrawAmount("");
+      console.log("[withdraw] Withdrew from vault:", {
+        agentId: selectedAgent.id,
+        mint: preparedWithdraw.mint,
+        amountBaseUnits: preparedWithdraw.amountBaseUnits,
+        signature: result.signature,
+      });
+    } catch (error) {
+      console.error("[withdraw] failed", {
+        agentId: selectedAgent.id,
+        agentName: selectedAgent.name,
+        amountUi: withdrawAmount.trim(),
+        chain,
+        walletName: selectedWallet.standardWallet.name,
+        accountAddress: selectedAccount.address,
+        error,
+      });
+      setWithdrawError(formatUnknownError(error) || "Failed to withdraw.");
+    } finally {
+      setIsWithdrawing(false);
+    }
+  };
+
+  // ── Vault snapshot ────────────────────────────────────────────────────────
+  const vaultSnapshotAgentSlug = selectedAgentSlug;
+  const resolvedAgentName =
+    snapshot?.agents.find((a) => a.slug === vaultSnapshotAgentSlug)?.name.toLowerCase() ??
+    vaultSnapshotAgentSlug ?? "";
+
+  const solanaSnapshotAddress = !isCelo ? (selectedAccount?.address ?? null) : null;
+  const { data: solanaVaultSnapshot, isLoading: isLoadingSolanaVault } = useTanstackQuery({
+    queryKey: vaultSnapshotKeys.snapshot(
+      solanaSnapshotAddress ?? "",
+      vaultSnapshotAgentSlug ?? "",
+    ),
+    queryFn: () =>
+      getVaultSnapshot({
+        walletAddress: solanaSnapshotAddress!,
+        agentName: resolvedAgentName,
+      }),
+    enabled:
+      !isCelo && isConnected && !!solanaSnapshotAddress && !!vaultSnapshotAgentSlug,
+    staleTime: 20_000,
+    refetchInterval: 30_000,
+  });
+
+  const celoSnapshotAddress = isCelo ? (eco.address ?? null) : null;
+  const { data: celoVaultSnapshot, isLoading: isLoadingCeloVault } = useTanstackQuery({
+    queryKey: celoVaultSnapshotKeys.snapshot(
+      celoSnapshotAddress ?? "",
+      vaultSnapshotAgentSlug ?? "",
+    ),
+    queryFn: () =>
+      fetchCeloVaultSnapshot(
+        eco.celoPublicClient,
+        GILDORE_VAULT_CELO_ADDRESS!,
+        celoSnapshotAddress! as `0x${string}`,
+        resolvedAgentName,
+      ),
+    enabled:
+      isCelo &&
+      eco.isConnected &&
+      !!celoSnapshotAddress &&
+      !!vaultSnapshotAgentSlug &&
+      !!GILDORE_VAULT_CELO_ADDRESS,
+    staleTime: 20_000,
+    refetchInterval: 30_000,
+  });
+
+  const vaultSnapshot = isCelo ? celoVaultSnapshot : solanaVaultSnapshot;
+  const isLoadingVault = isCelo ? isLoadingCeloVault : isLoadingSolanaVault;
+
+  // ── Close position ─────────────────────────────────────────────────────────
+  const handleClosePosition = async () => {
+    if (!selectedAgent) return;
+
+    setIsClosingPosition(true);
+    try {
+      if (isCelo) {
+        const celoAddress = eco.address;
+        if (!eco.isConnected || !celoAddress) return;
+        await closePositionActionCelo({
+          walletAddress: celoAddress,
+          agentName: selectedAgent.name.toLowerCase(),
+        });
+      } else {
+        if (!selectedWallet || !selectedAccount || !isConnected) return;
+        await closePositionAction({
+          walletAddress: selectedAccount.address,
+          agentName: selectedAgent.name.toLowerCase(),
+        });
+      }
+    } catch (error) {
+      console.error("[close-position] failed", {
+        agentId: selectedAgent.id,
+        agentName: selectedAgent.name,
+        error,
+      });
+    } finally {
+      setIsClosingPosition(false);
     }
   };
 
@@ -1621,6 +1875,19 @@ export default function ArenaDashboard() {
                                   selectedConjureKey,
                                 )
                               }
+                              vaultBalance={vaultSnapshot?.vaultBalance ?? null}
+                              vaultAllowance={vaultSnapshot?.vaultAllowance ?? null}
+                              isInPosition={vaultSnapshot?.isInPosition ?? null}
+                              vaultDecimals={vaultSnapshot?.decimals ?? 6}
+                              isLoadingVault={isLoadingVault}
+                              withdrawAmount={withdrawAmount}
+                              onWithdrawAmountChange={setWithdrawAmount}
+                              onSubmitWithdraw={handleWithdrawSubmit}
+                              isWithdrawing={isWithdrawing}
+                              withdrawError={withdrawError}
+                              lastWithdrawSignature={lastWithdrawSignature}
+                              onClosePosition={() => void handleClosePosition()}
+                              isClosingPosition={isClosingPosition}
                             />
                           </div>
                         </td>
