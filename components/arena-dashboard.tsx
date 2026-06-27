@@ -1951,7 +1951,7 @@ export default function ArenaDashboard() {
         <AgentFundingModal
           agentName={selectedAgent.name}
           isOpen={isSubscribeModalOpen}
-          isConnected={isConnected}
+          isConnected={isCelo ? eco.isConnected : isConnected}
           depositAmount={depositAmount}
           depositTokenBalance={isCelo ? celoUsdcBalance : null}
           fundingError={fundingError}
