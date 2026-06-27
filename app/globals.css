@@ -7,13 +7,9 @@
 /* ── Theme: fonts & custom animations ───────────────────────────────────── */
 
 @theme {
-  --font-grotesk: "Anton", sans-serif;
-  --font-condiment: "Condiment", cursive;
   --font-barlow: "Barlow", sans-serif;
   --font-instrument: "Instrument Serif", serif;
   --font-inter: "Inter", sans-serif;
-  --font-poppins: "Poppins", sans-serif;
-  --font-source-serif: "Source Serif 4", serif;
 
   --animate-skel-sweep: skel-sweep 1.4s ease-in-out infinite;
   --animate-arena-spin: arena-rotate 0.9s linear infinite;
