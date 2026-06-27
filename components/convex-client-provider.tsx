@@ -34,18 +34,46 @@ const solanaChain = solanaRpcUrl.includes("devnet")
     : "solana:mainnet";
 const privyAppId = process.env.NEXT_PUBLIC_PRIVY_APP_ID;
 const privyClientId = process.env.NEXT_PUBLIC_PRIVY_CLIENT_ID;
-const solanaRpc = createSolanaRpc(
-  solanaRpcUrl as Parameters<typeof createSolanaRpc>[0],
-);
-const solanaRpcSubscriptions = createSolanaRpcSubscriptions(
-  solanaSubscriptionsUrl as Parameters<typeof createSolanaRpcSubscriptions>[0],
-);
 const celoRpcUrl = process.env.NEXT_PUBLIC_CELO_RPC_URL ?? "https://forno.celo.org";
 const celoChain = getCeloChain();
-const celoPublicClient = createPublicClient({
-  chain: celoChain,
-  transport: http(celoRpcUrl),
-});
+
+// Lazy singletons — created on first use, not at module-parse time, so they
+// don't block the main thread before the first paint.
+type SolanaRpcInstance = ReturnType<typeof createSolanaRpc>;
+type SolanaRpcSubInstance = ReturnType<typeof createSolanaRpcSubscriptions>;
+type CeloPublicClientInstance = ReturnType<typeof createPublicClient>;
+
+let _solanaRpc: SolanaRpcInstance | null = null;
+let _solanaRpcSubscriptions: SolanaRpcSubInstance | null = null;
+let _celoPublicClient: CeloPublicClientInstance | null = null;
+
+function getSolanaRpc(): SolanaRpcInstance {
+  if (!_solanaRpc) {
+    _solanaRpc = createSolanaRpc(
+      solanaRpcUrl as Parameters<typeof createSolanaRpc>[0],
+    );
+  }
+  return _solanaRpc;
+}
+
+function getSolanaRpcSubscriptions(): SolanaRpcSubInstance {
+  if (!_solanaRpcSubscriptions) {
+    _solanaRpcSubscriptions = createSolanaRpcSubscriptions(
+      solanaSubscriptionsUrl as Parameters<typeof createSolanaRpcSubscriptions>[0],
+    );
+  }
+  return _solanaRpcSubscriptions;
+}
+
+function getCeloPublicClient(): CeloPublicClientInstance {
+  if (!_celoPublicClient) {
+    _celoPublicClient = createPublicClient({
+      chain: celoChain,
+      transport: http(celoRpcUrl),
+    }) as CeloPublicClientInstance;
+  }
+  return _celoPublicClient;
+}
 const ECOSYSTEM_STORAGE_KEY = "gildore-ecosystem";
 
 export type EcosystemWalletState = {
@@ -60,13 +88,13 @@ export type EcosystemWalletState = {
   chain: string;
   login: () => void;
   logout: () => Promise<void>;
-  celoPublicClient: typeof celoPublicClient;
+  celoPublicClient: CeloPublicClientInstance;
   getCeloWalletClient: () => Promise<ReturnType<typeof createWalletClient> | null>;
 };
 
 export type SolanaWalletState = {
-  rpc: typeof solanaRpc;
-  rpcSubscriptions: typeof solanaRpcSubscriptions;
+  rpc: SolanaRpcInstance;
+  rpcSubscriptions: SolanaRpcSubInstance;
   chain: typeof solanaChain;
   ready: boolean;
   isAuthenticated: boolean;
@@ -106,8 +134,8 @@ export function useSolanaWallet(): SolanaWalletState {
     null;
 
   return {
-    rpc: solanaRpc,
-    rpcSubscriptions: solanaRpcSubscriptions,
+    rpc: getSolanaRpc(),
+    rpcSubscriptions: getSolanaRpcSubscriptions(),
     chain: solanaChain,
     ready: ready && walletsReady,
     isAuthenticated: authenticated,
@@ -187,7 +215,7 @@ export function useEcosystemWallet(): EcosystemWalletState {
     userEmail,
     login: isMiniPay ? () => {} : () => login(),
     logout: isMiniPay ? async () => {} : logout,
-    celoPublicClient,
+    celoPublicClient: getCeloPublicClient(),
     getCeloWalletClient,
   };
 
@@ -263,8 +291,8 @@ export default function ConvexClientProvider({
         solana: {
           rpcs: {
             [solanaChain]: {
-              rpc: solanaRpc as never,
-              rpcSubscriptions: solanaRpcSubscriptions as never,
+              rpc: getSolanaRpc() as never,
+              rpcSubscriptions: getSolanaRpcSubscriptions() as never,
             },
           },
         },
