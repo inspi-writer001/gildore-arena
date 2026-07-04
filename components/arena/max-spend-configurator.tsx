@@ -51,13 +51,13 @@ export function MaxSpendConfigurator({
     <form
       className={compact
         ? "flex flex-col justify-evenly gap-3"
-        : "flex flex-col justify-evenly h-[120px] rounded-[16px] border border-[rgba(18,18,18,0.08)] bg-[rgba(250,250,247,0.92)] p-[14px] shadow-[0_18px_40px_rgba(0,0,0,0.05)]"
+        : "flex h-[120px] flex-col justify-evenly rounded-[16px] border border-white/10 bg-white/[0.04] p-[14px] shadow-[0_18px_40px_rgba(0,0,0,0.18)]"
       }
       onSubmit={onSubmit}
     >
       <div className="flex items-start justify-between">
         <div className="grid gap-1">
-          <span className="font-barlow text-[10px] font-semibold uppercase tracking-[0.14em] text-[rgba(18,18,18,0.42)]">
+          <span className="font-barlow text-[10px] font-semibold uppercase tracking-[0.14em] text-[rgba(245,245,245,0.42)]">
             Max spend for {marketSymbol}
           </span>
         </div>
@@ -77,21 +77,21 @@ export function MaxSpendConfigurator({
           }}
           aria-label={`Max spendable amount for ${marketSymbol}`}
         />
-        <div className="flex items-center justify-between font-barlow text-[10px] font-semibold uppercase tracking-[0.12em] text-[rgba(18,18,18,0.42)]">
+        <div className="flex items-center justify-between font-barlow text-[10px] font-semibold uppercase tracking-[0.12em] text-[rgba(245,245,245,0.42)]">
           <span>{formatSpendable(MIN_SPENDABLE)}</span>
           <span>{formatSpendable(MAX_SPENDABLE)}</span>
         </div>
       </div>
 
       <div className="__full_width flex flex-row items-center w-full justify-between">
-        <div className="font-instrument text-[26px] leading-none text-[#121212]">
+        <div className="font-instrument text-[26px] leading-none text-[#f5f5f5]">
           ${formatSpendable(sliderValue)}
         </div>
 
         <button
           type="submit"
           disabled={isConfiguring || !isConnected}
-          className=" inline-flex min-h-[38px] items-center justify-center rounded-[12px] border border-[rgba(18,18,18,0.14)] bg-[linear-gradient(180deg,rgba(20,18,16,0.96),rgba(8,8,8,0.98))] px-4 font-barlow text-[10px] font-semibold uppercase tracking-[0.14em] text-[#f7efe7] hover:cursor-pointer transition hover:bg-[linear-gradient(180deg,rgba(28,26,24,0.9),rgba(10,10,10,1))] disabled:cursor-not-allowed disabled:opacity-60"
+          className="inline-flex min-h-[38px] items-center justify-center rounded-[12px] border border-white/10 bg-[linear-gradient(180deg,rgba(245,245,245,0.12),rgba(245,245,245,0.07))] px-4 font-barlow text-[10px] font-semibold uppercase tracking-[0.14em] text-[#f5f5f5] transition hover:cursor-pointer hover:bg-[linear-gradient(180deg,rgba(245,245,245,0.18),rgba(245,245,245,0.1))] disabled:cursor-not-allowed disabled:opacity-60"
         >
           {isConfiguring ? "Applying..." : "Apply"}
         </button>

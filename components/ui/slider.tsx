@@ -37,18 +37,18 @@ function Slider({
     >
       <SliderPrimitive.Track
         data-slot="slider-track"
-        className="relative h-2.5 w-full grow overflow-hidden rounded-full bg-[rgba(18,18,18,0.08)]"
+        className="relative h-2.5 w-full grow overflow-hidden rounded-full bg-white/[0.06]"
       >
         <SliderPrimitive.Range
           data-slot="slider-range"
-          className="absolute h-full rounded-full bg-[linear-gradient(90deg,rgba(24,22,19,0.94),rgba(82,76,68,0.9))]"
+          className="absolute h-full rounded-full bg-[linear-gradient(90deg,rgba(168,168,173,0.42),rgba(232,232,236,0.7))]"
         />
       </SliderPrimitive.Track>
       {values.map((_, index) => (
         <SliderPrimitive.Thumb
           key={index}
           data-slot="slider-thumb"
-          className="block size-5 shrink-0 rounded-full border border-[rgba(18,18,18,0.14)] bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(235,232,227,0.96))] shadow-[0_8px_18px_rgba(0,0,0,0.12)] ring-offset-white transition hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(18,18,18,0.24)] focus-visible:ring-offset-2 disabled:pointer-events-none"
+          className="block size-5 shrink-0 rounded-full border border-white/20 bg-[linear-gradient(180deg,rgba(238,238,241,0.96),rgba(188,188,194,0.92))] shadow-[0_8px_18px_rgba(0,0,0,0.3)] ring-offset-[#151518] transition hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/35 focus-visible:ring-offset-2 disabled:pointer-events-none"
         />
       ))}
     </SliderPrimitive.Root>

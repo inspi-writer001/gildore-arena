@@ -43,7 +43,8 @@ export function formatRelativeMinutes(timestamp: number | null) {
 function formatFreshness(timestamp: number | null, staleLabel: string) {
   if (!timestamp) return staleLabel;
   const deltaSeconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
-  if (deltaSeconds < 3600) return `${Math.max(1, Math.floor(deltaSeconds / 60))}m`;
+  if (deltaSeconds < 3600)
+    return `${Math.max(1, Math.floor(deltaSeconds / 60))}m`;
   if (deltaSeconds < 86400) return `${Math.floor(deltaSeconds / 3600)}h`;
   return `${Math.floor(deltaSeconds / 86400)}d`;
 }
@@ -66,10 +67,13 @@ export function formatEventTimeLabel(timestampSec?: number) {
 }
 
 export const surfaceCard =
-  "border border-[rgba(18,18,18,0.08)] rounded-[18px] bg-[rgba(255,255,255,0.78)] shadow-[0_18px_40px_rgba(0,0,0,0.05)] backdrop-blur-[16px]";
+  "rounded-[18px] border border-white/10 bg-[linear-gradient(180deg,rgba(26,26,29,0.94),rgba(16,16,18,0.98))] shadow-[0_24px_60px_rgba(0,0,0,0.38)] backdrop-blur-[16px]";
+
+export const mainsurfaceCard =
+  "";
 
 export const chipClass =
-  "inline-flex items-center min-h-[32px] px-3 rounded-full border border-[rgba(18,18,18,0.08)] bg-[rgba(255,255,255,0.88)] text-[rgba(18,18,18,0.48)] text-[11px] font-semibold tracking-[0.14em] uppercase";
+  "inline-flex min-h-[32px] items-center rounded-full border border-white/10 bg-white/[0.05] px-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-[rgba(245,245,245,0.72)]";
 
 export const liquidActionShellClass =
   "relative h-[52px] min-w-[210px] p-0 border-0 rounded-[14px] overflow-hidden cursor-pointer shadow-[inset_0_1px_0_rgba(255,255,255,0.88),inset_0_-1px_0_rgba(0,0,0,0.08)] transition-transform duration-[120ms] hover:-translate-y-px active:scale-[0.985]";
@@ -78,14 +82,13 @@ export const liquidActionLabelClass =
   "absolute inset-[6px] z-[2] inline-flex items-center justify-center rounded-[9px] border border-[rgba(255,255,255,0.42)] bg-[rgba(255,255,255,0.16)] px-4 text-[17px] font-medium tracking-[0.02em] !text-[#121212] [text-shadow:0_1px_0_rgba(255,255,255,0.34)] shadow-[inset_0_1px_0_rgba(255,255,255,0.34),inset_0_-1px_0_rgba(255,255,255,0.08)] backdrop-blur-[14px] pointer-events-none font-instrument whitespace-nowrap";
 
 export const skelBase =
-  "rounded-[6px] bg-gradient-to-r from-[rgba(18,18,18,0.07)] via-[rgba(18,18,18,0.13)] to-[rgba(18,18,18,0.07)] bg-[length:200%_100%] animate-skel-sweep";
+  "animate-skel-sweep rounded-[6px] bg-gradient-to-r from-[rgba(255,255,255,0.06)] via-[rgba(255,255,255,0.13)] to-[rgba(255,255,255,0.06)] bg-[length:200%_100%]";
 
 export function pillClass(state: ConfluenceState) {
   return cn(
     "inline-flex items-center justify-center w-fit min-h-[28px] px-[10px] rounded-full text-[11px] font-semibold tracking-[0.14em] uppercase",
     state === "supportive" && "bg-[rgba(26,127,70,0.12)] text-[#1a7f46]",
-    state === "neutral" &&
-      "bg-[rgba(18,18,18,0.06)] text-[rgba(18,18,18,0.64)]",
+    state === "neutral" && "bg-white/[0.08] text-[rgba(245,245,245,0.72)]",
     state === "risk" && "bg-[rgba(163,48,48,0.12)] text-[#a33030]",
   );
 }
@@ -153,9 +156,11 @@ export function EmptyState({
   description: string;
 }) {
   return (
-    <div className="grid gap-[6px] rounded-[16px] border border-dashed border-[rgba(18,18,18,0.12)] bg-[rgba(250,250,247,0.72)] p-[16px]">
-      <strong className="font-barlow text-[14px] font-semibold">{title}</strong>
-      <span className="font-inter text-[14px] leading-[1.6] text-[rgba(18,18,18,0.58)]">
+    <div className="grid gap-[6px] rounded-[16px] border border-dashed border-white/12 bg-white/[0.04] p-[16px]">
+      <strong className="font-barlow text-[14px] font-semibold text-[#f5f5f5]">
+        {title}
+      </strong>
+      <span className="font-inter text-[14px] leading-[1.6] text-[rgba(245,245,245,0.62)]">
         {description}
       </span>
     </div>
@@ -189,12 +194,33 @@ export function DisclosureSection({
           <ChevronDown
             aria-hidden="true"
             size={16}
-            className="text-[rgba(18,18,18,0.48)] transition-transform duration-[160ms] group-open:rotate-180"
+            className="text-[rgba(245,245,245,0.48)] transition-transform duration-[160ms] group-open:rotate-180"
           />
         </div>
       </summary>
       <div className="grid gap-[14px]">{children}</div>
     </details>
+  );
+}
+
+export function SolidActionButton({
+  label,
+  onClick,
+  disabled = false,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className="inline-flex min-h-[52px] min-w-[210px] items-center justify-center rounded-[14px] border border-white/10 bg-[#f5f5f5] px-5 font-instrument text-[17px] font-medium tracking-[0.02em] text-[#121212] shadow-[0_16px_36px_rgba(0,0,0,0.24)] transition-[transform,background-color] duration-[120ms] hover:-translate-y-px hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0b0b0d] active:scale-[0.985] disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {label}
+    </button>
   );
 }
 

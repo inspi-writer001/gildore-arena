@@ -1393,119 +1393,11 @@ export default function ArenaDashboard() {
     setIsStartingBrowserSession(false);
   }, [selectedConjureKey]);
 
-  if (!snapshot || !derived) {
-    return (
-      <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(0,0,0,0.05),transparent_28%),linear-gradient(180deg,#f4f4f1_0%,#ecece8_100%)] text-[#121212]">
-        <section className="w-full max-w-[1280px] mx-auto px-3 sm:px-6 pt-8 pb-16">
-          {/* ── Header skeleton ── */}
-          <header className="grid grid-cols-1 gap-6 items-start md:grid-cols-[minmax(0,1.8fr)_minmax(280px,0.9fr)]">
-            <div
-              className={cn(
-                skelBase,
-                "w-[220px] h-[32px] rounded-[8px] mb-[10px]",
-              )}
-            />
-            <div
-              className={cn(skelBase, "w-[340px] h-[14px] rounded-[4px] mb-5")}
-            />
-            <div className="flex flex-wrap gap-[10px]">
-              {[1, 2, 3, 4].map((i) => (
-                <div
-                  key={i}
-                  className={cn(
-                    skelBase,
-                    "inline-block w-[72px] h-[24px] rounded-[20px]",
-                  )}
-                />
-              ))}
-            </div>
-          </header>
+  const isInitialLoading = !snapshot || !derived;
 
-          {/* ── Leaderboard table skeleton ── */}
-          <section className="mt-6 overflow-x-auto">
-            <table className="w-full border-collapse text-[13px]">
-              <thead>
-                <tr className="border-b border-[rgba(18,18,18,0.1)]">
-                  {[
-                    "#",
-                    "Agent",
-                    "Strategy",
-                    "Status",
-                    "Win rate",
-                    "PnL",
-                    "Positions",
-                    "Markets",
-                    "Score",
-                  ].map((h, i) => (
-                    <th
-                      key={h}
-                      className={cn(
-                        "font-barlow px-2 md:px-3.5 py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap",
-                        [2, 6, 7].includes(i) && "hidden md:table-cell",
-                        i === 8 && "hidden sm:table-cell",
-                      )}
-                    >
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {[1, 2, 3].map((row) => (
-                  <tr
-                    key={row}
-                    className="border-b border-[rgba(18,18,18,0.055)] cursor-pointer transition-colors hover:bg-[rgba(18,18,18,0.03)]"
-                  >
-                    <td className="px-2 md:px-3.5 py-[13px] align-middle">
-                      <div className={cn(skelBase, "w-[24px] h-[14px]")} />
-                    </td>
-                    <td className="px-2 md:px-3.5 py-[13px] align-middle">
-                      <div className={cn(skelBase, "w-[90px] h-[15px]")} />
-                    </td>
-                    <td className="hidden px-2 md:px-3.5 py-[13px] align-middle md:table-cell">
-                      <div className={cn(skelBase, "w-[160px] h-[14px]")} />
-                    </td>
-                    <td className="px-2 md:px-3.5 py-[13px] align-middle">
-                      <div
-                        className={cn(
-                          skelBase,
-                          "inline-block w-[72px] h-[24px] rounded-[20px]",
-                        )}
-                      />
-                    </td>
-                    <td className="px-2 md:px-3.5 py-[13px] align-middle">
-                      <div className={cn(skelBase, "w-[44px] h-[14px]")} />
-                    </td>
-                    <td className="px-2 md:px-3.5 py-[13px] align-middle">
-                      <div className={cn(skelBase, "w-[44px] h-[14px]")} />
-                    </td>
-                    <td className="hidden px-2 md:px-3.5 py-[13px] align-middle md:table-cell">
-                      <div className={cn(skelBase, "w-[44px] h-[14px]")} />
-                    </td>
-                    <td className="hidden px-2 md:px-3.5 py-[13px] align-middle md:table-cell">
-                      <div className={cn(skelBase, "w-[44px] h-[14px]")} />
-                    </td>
-                    <td className="hidden px-2 md:px-3.5 py-[13px] align-middle sm:table-cell">
-                      <div
-                        className={cn(
-                          skelBase,
-                          "w-[48px] h-[20px] rounded-[4px]",
-                        )}
-                      />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </section>
-        </section>
-      </main>
-    );
-  }
-
-  if (!derived.selectedAgent && !derived.agents?.length) {
+  if (!isInitialLoading && !derived.selectedAgent && !derived.agents?.length) {
     return (
-      <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(0,0,0,0.05),transparent_28%),linear-gradient(180deg,#f4f4f1_0%,#ecece8_100%)] text-[#121212]">
+      <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.07),transparent_24%),radial-gradient(circle_at_top,rgba(255,255,255,0.03),transparent_32%),linear-gradient(180deg,#050506_0%,#0b0b0d_46%,#111215_100%)] text-[#f5f5f5]">
         <section className="w-full max-w-[1280px] mx-auto px-3 sm:px-6 pt-8 pb-16">
           <div className={cn(surfaceCard, "p-5")}>
             <div className="flex items-center justify-between gap-3">
@@ -1526,28 +1418,23 @@ export default function ArenaDashboard() {
     );
   }
 
-  const {
-    agents,
-    positions,
-    tradeEvents,
-    trackedMarkets = [],
-    selectedAgent,
-    selectedMarketSymbol,
-    selectedTradeIdea,
-    selectedTrace,
-    selectedEvents = [],
-    selectedWatchlist = [],
-    selectedPosition,
-    selectedNewsContexts = [],
-    selectedNewsRationale,
-    selectedBrowserSession,
-    selectedBrowserSessionEvents = [],
-    selectedVisionDecision,
-    selectedActiveSetup,
-    selectedAnalysisSchedule,
-    selectedAnalysisRenderCache,
-    lastScanAt,
-  } = derived;
+  const agents = derived?.agents ?? [];
+  const positions = derived?.positions ?? [];
+  const trackedMarkets = derived?.trackedMarkets ?? [];
+  const selectedAgent = derived?.selectedAgent ?? null;
+  const selectedMarketSymbol = derived?.selectedMarketSymbol;
+  const selectedTradeIdea = derived?.selectedTradeIdea;
+  const selectedTrace = derived?.selectedTrace;
+  const selectedEvents = derived?.selectedEvents ?? [];
+  const selectedWatchlist = derived?.selectedWatchlist ?? [];
+  const selectedPosition = derived?.selectedPosition;
+  const selectedNewsContexts = derived?.selectedNewsContexts ?? [];
+  const selectedNewsRationale = derived?.selectedNewsRationale;
+  const selectedBrowserSession = derived?.selectedBrowserSession;
+  const selectedVisionDecision = derived?.selectedVisionDecision;
+  const selectedActiveSetup = derived?.selectedActiveSetup;
+  const selectedAnalysisSchedule = derived?.selectedAnalysisSchedule;
+  const selectedAnalysisRenderCache = derived?.selectedAnalysisRenderCache;
 
   const handleToggleAgent = (agentId: string) => {
     if (selectedAgent?.id === agentId) {
@@ -1702,13 +1589,13 @@ export default function ArenaDashboard() {
   }
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(0,0,0,0.05),transparent_28%),linear-gradient(180deg,#f4f4f1_0%,#ecece8_100%)] text-[#121212]">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.07),transparent_24%),radial-gradient(circle_at_top,rgba(255,255,255,0.03),transparent_32%),linear-gradient(180deg,#050506_0%,#0b0b0d_46%,#111215_100%)] text-[#f5f5f5]">
       <section className="w-full max-w-[1280px] mx-auto px-3 sm:px-6 pt-8 pb-16">
         <header className="grid grid-cols-1 gap-6 items-start md:grid-cols-[minmax(0,1.8fr)_minmax(280px,0.9fr)]">
           <div>
             <Link
               href="/"
-              className="inline-flex items-center gap-2 min-h-[40px] mb-[18px] text-[rgba(18,18,18,0.72)] text-[12px] font-semibold tracking-[0.14em] uppercase no-underline font-barlow"
+              className="inline-flex min-h-[40px] items-center gap-2 mb-[18px] font-barlow text-[12px] font-semibold uppercase tracking-[0.14em] text-[rgba(245,245,245,0.62)] no-underline transition-colors hover:text-[#f5f5f5]"
             >
               <ArrowLeft aria-hidden="true" size={16} />
               Back to landing
@@ -1721,7 +1608,7 @@ export default function ArenaDashboard() {
             <h1 className="max-w-[14ch] whitespace-nowrap m-0 text-[clamp(32px,8vw,48px)] font-normal leading-[0.96] tracking-[-0.5px] font-instrument">
               Fire your Fund Manager
             </h1>
-            <p className="max-w-[60ch] mt-5 mb-0 text-[rgba(18,18,18,0.64)] text-[16px] leading-[1.7] font-inter">
+            <p className="mt-5 mb-0 max-w-[60ch] font-inter text-[16px] leading-[1.7] text-[rgba(245,245,245,0.62)]">
               replace blind trust with visible, competitive, machine-disciplined
               trading performance.
             </p>
@@ -1735,38 +1622,83 @@ export default function ArenaDashboard() {
         <section className="mt-6 overflow-x-auto" aria-label="Arena leaderboard">
           <table className="w-full border-collapse text-[13px]">
             <thead>
-              <tr className="border-b border-[rgba(18,18,18,0.1)]">
-                <th className="font-barlow px-2 md:px-3.5 py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap">
+              <tr className="border-b border-white/10">
+                <th className="whitespace-nowrap px-2 py-2 text-left font-barlow text-[11px] font-semibold uppercase tracking-[0.12em] text-[rgba(245,245,245,0.42)] md:px-3.5">
                   #
                 </th>
-                <th className="font-barlow px-2 md:px-3.5 py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap">
+                <th className="whitespace-nowrap px-2 py-2 text-left font-barlow text-[11px] font-semibold uppercase tracking-[0.12em] text-[rgba(245,245,245,0.42)] md:px-3.5">
                   Agent
                 </th>
-                <th className="hidden font-barlow px-2 md:px-3.5 py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap md:table-cell">
+                <th className="hidden whitespace-nowrap px-2 py-2 text-left font-barlow text-[11px] font-semibold uppercase tracking-[0.12em] text-[rgba(245,245,245,0.42)] md:table-cell md:px-3.5">
                   Strategy
                 </th>
-                <th className="font-barlow px-2 md:px-3.5 py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap">
+                <th className="whitespace-nowrap px-2 py-2 text-left font-barlow text-[11px] font-semibold uppercase tracking-[0.12em] text-[rgba(245,245,245,0.42)] md:px-3.5">
                   Status
                 </th>
-                <th className="font-barlow px-2 md:px-3.5 py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap">
+                <th className="whitespace-nowrap px-2 py-2 text-left font-barlow text-[11px] font-semibold uppercase tracking-[0.12em] text-[rgba(245,245,245,0.42)] md:px-3.5">
                   Win rate
                 </th>
-                <th className="font-barlow px-2 md:px-3.5 py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap">
+                <th className="whitespace-nowrap px-2 py-2 text-left font-barlow text-[11px] font-semibold uppercase tracking-[0.12em] text-[rgba(245,245,245,0.42)] md:px-3.5">
                   PnL
                 </th>
-                <th className="hidden font-barlow px-2 md:px-3.5 py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap md:table-cell">
+                <th className="hidden whitespace-nowrap px-2 py-2 text-left font-barlow text-[11px] font-semibold uppercase tracking-[0.12em] text-[rgba(245,245,245,0.42)] md:table-cell md:px-3.5">
                   Positions
                 </th>
-                <th className="hidden font-barlow px-2 md:px-3.5 py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap md:table-cell">
+                <th className="hidden whitespace-nowrap px-2 py-2 text-left font-barlow text-[11px] font-semibold uppercase tracking-[0.12em] text-[rgba(245,245,245,0.42)] md:table-cell md:px-3.5">
                   Markets
                 </th>
-                <th className="hidden font-barlow px-2 md:px-3.5 py-2 text-left text-[11px] font-semibold tracking-[0.12em] uppercase text-[rgba(18,18,18,0.42)] whitespace-nowrap sm:table-cell">
+                <th className="hidden whitespace-nowrap px-2 py-2 text-left font-barlow text-[11px] font-semibold uppercase tracking-[0.12em] text-[rgba(245,245,245,0.42)] sm:table-cell md:px-3.5">
                   Score
                 </th>
               </tr>
             </thead>
             <tbody>
-              {agents.map((agent, index) => {
+              {isInitialLoading
+                ? [1, 2, 3].map((row) => (
+                    <tr
+                      key={row}
+                      className="border-b border-white/8"
+                    >
+                      <td className="px-2 md:px-3.5 py-[13px] align-middle">
+                        <div className={cn(skelBase, "w-[24px] h-[14px]")} />
+                      </td>
+                      <td className="px-2 md:px-3.5 py-[13px] align-middle">
+                        <div className={cn(skelBase, "w-[90px] h-[15px]")} />
+                      </td>
+                      <td className="hidden px-2 md:px-3.5 py-[13px] align-middle md:table-cell">
+                        <div className={cn(skelBase, "w-[160px] h-[14px]")} />
+                      </td>
+                      <td className="px-2 md:px-3.5 py-[13px] align-middle">
+                        <div
+                          className={cn(
+                            skelBase,
+                            "inline-block w-[72px] h-[24px] rounded-[20px]",
+                          )}
+                        />
+                      </td>
+                      <td className="px-2 md:px-3.5 py-[13px] align-middle">
+                        <div className={cn(skelBase, "w-[44px] h-[14px]")} />
+                      </td>
+                      <td className="px-2 md:px-3.5 py-[13px] align-middle">
+                        <div className={cn(skelBase, "w-[44px] h-[14px]")} />
+                      </td>
+                      <td className="hidden px-2 md:px-3.5 py-[13px] align-middle md:table-cell">
+                        <div className={cn(skelBase, "w-[44px] h-[14px]")} />
+                      </td>
+                      <td className="hidden px-2 md:px-3.5 py-[13px] align-middle md:table-cell">
+                        <div className={cn(skelBase, "w-[44px] h-[14px]")} />
+                      </td>
+                      <td className="hidden px-2 md:px-3.5 py-[13px] align-middle sm:table-cell">
+                        <div
+                          className={cn(
+                            skelBase,
+                            "w-[48px] h-[20px] rounded-[4px]",
+                          )}
+                        />
+                      </td>
+                    </tr>
+                  ))
+                : agents.map((agent, index) => {
                 const isSelected = agent.id === selectedAgent?.id;
                 const expandedAgent = isSelected ? selectedAgent : null;
                 const expandedMarketSymbol = isSelected
@@ -1780,8 +1712,8 @@ export default function ArenaDashboard() {
                     <tr
                       key={agent.id}
                       className={cn(
-                        "border-b border-[rgba(18,18,18,0.055)] cursor-pointer transition-colors hover:bg-[rgba(18,18,18,0.03)]",
-                        isSelected && "bg-[rgba(18,18,18,0.055)]",
+                        "cursor-pointer border-b border-white/8 transition-colors hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 focus-visible:ring-inset",
+                        isSelected && "bg-white/[0.06]",
                       )}
                       onClick={() => handleToggleAgent(agent.id)}
                       onKeyDown={(event) => {
@@ -1795,7 +1727,7 @@ export default function ArenaDashboard() {
                       aria-expanded={isSelected}
                       aria-controls={`agent-detail-${agent.id}`}
                     >
-                      <td className="px-2 md:px-3.5 py-[13px] align-middle text-[rgba(18,18,18,0.35)] text-[12px] w-9 font-barlow">
+                      <td className="w-9 px-2 py-[13px] align-middle font-barlow text-[12px] text-[rgba(245,245,245,0.35)] md:px-3.5">
                         {String(index + 1).padStart(2, "0")}
                       </td>
                       <td className="px-2 md:px-3.5 py-[13px] align-middle">
@@ -1804,7 +1736,7 @@ export default function ArenaDashboard() {
                             aria-hidden="true"
                             size={16}
                             className={cn(
-                              "text-[rgba(18,18,18,0.42)] transition-transform duration-200",
+                              "text-[rgba(245,245,245,0.42)] transition-transform duration-200",
                               isSelected && "rotate-180",
                             )}
                           />
@@ -1813,7 +1745,7 @@ export default function ArenaDashboard() {
                           </strong>
                         </div>
                       </td>
-                      <td className="hidden px-2 md:px-3.5 py-[13px] align-middle text-[rgba(18,18,18,0.55)] text-[13px] font-inter md:table-cell">
+                      <td className="hidden px-2 py-[13px] align-middle font-inter text-[13px] text-[rgba(245,245,245,0.55)] md:table-cell md:px-3.5">
                         {agent.strategyLabel}
                       </td>
                       <td className="px-2 md:px-3.5 py-[13px] align-middle">
@@ -1849,10 +1781,10 @@ export default function ArenaDashboard() {
                       <tr
                         id={`agent-detail-${agent.id}`}
                         key={`${agent.id}-detail`}
-                        className="border-b border-[rgba(18,18,18,0.055)]"
+                        className="border-b border-white/8"
                       >
                         <td colSpan={9} className="px-0 pb-5 pt-0">
-                          <div className="rounded-b-[28px] border-x border-b border-[rgba(18,18,18,0.08)] bg-[rgba(255,255,255,0.44)] px-2 py-2 shadow-[0_24px_70px_rgba(15,15,15,0.06)] backdrop-blur-sm">
+                          <div className="shadow-[0_24px_70px_rgba(0,0,0,0.24)]">
                             <SelectedAgentPanel
                               className="mt-0"
                               agents={agents.map((agent) => ({

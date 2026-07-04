@@ -21,7 +21,7 @@ import {
   formatSyncFreshness,
   LiquidActionButton,
   pillClass,
-  surfaceCard,
+  mainsurfaceCard,
 } from "@/components/arena/arena-shared";
 import { MaxSpendConfigurator } from "@/components/arena/max-spend-configurator";
 import {
@@ -110,9 +110,12 @@ type SelectedVisionDecision = {
 const disclosureScrollViewportClass =
   "max-h-[360px] overflow-y-auto pr-2 [scrollbar-width:thin]";
 
+const flatDisclosureCardClass =
+  "rounded-[18px] border border-white/10 bg-transparent shadow-none backdrop-blur-0";
+
 const newsToneDot: Record<ConfluenceState, string> = {
   supportive: "bg-[#4caf7d]",
-  neutral: "bg-[rgba(18,18,18,0.28)]",
+  neutral: "bg-white/25",
   risk: "bg-[#e06060]",
 };
 
@@ -170,19 +173,19 @@ function VaultStatCell({
 }) {
   return (
     <div className="grid gap-[5px]">
-      <span className="font-barlow text-[10px] font-semibold uppercase tracking-[0.14em] text-[rgba(18,18,18,0.42)]">
+      <span className="font-barlow text-[10px] font-semibold uppercase tracking-[0.14em] text-[rgba(245,245,245,0.42)]">
         {label}
       </span>
       {loading ? (
-        <div className="h-[28px] w-[64px] animate-pulse rounded-[6px] bg-[rgba(18,18,18,0.06)]" />
+        <div className="h-[28px] w-[64px] animate-pulse rounded-[6px] bg-white/[0.08]" />
       ) : (
         <span
           className={cn(
             "font-instrument text-[22px] leading-none",
             accent === "positive" && "text-[#2e7d52]",
             accent === "negative" && "text-[#8a2d2d]",
-            accent === "active" && "text-[#5c3d8f]",
-            (!accent || accent === null) && "text-[#121212]",
+            accent === "active" && "text-[#c4b5fd]",
+            (!accent || accent === null) && "text-[#f5f5f5]",
           )}
         >
           {value}
@@ -232,7 +235,7 @@ function VaultControlSurface({
         : ("positive" as const);
 
   return (
-    <div className="grid gap-0 rounded-[18px] border border-[rgba(18,18,18,0.08)] bg-[rgba(250,250,247,0.92)] shadow-[0_18px_40px_rgba(0,0,0,0.05)]">
+    <div className="grid gap-0 rounded-[18px] border border-white/10 bg-[rgba(255,255,255,0.04)] shadow-[0_18px_40px_rgba(0,0,0,0.24)]">
       {/* Vault stats strip */}
       <div className="grid grid-cols-3 gap-3 p-[16px_18px]">
         <VaultStatCell
@@ -253,10 +256,10 @@ function VaultControlSurface({
         />
       </div>
 
-      <Separator className="bg-[rgba(18,18,18,0.06)]" />
+      <Separator className="bg-white/[0.08]" />
 
       {/* Max spend + Withdraw — side by side on sm+, stacked on mobile */}
-      <div className="flex flex-col divide-y divide-[rgba(18,18,18,0.06)] sm:flex-row sm:divide-x sm:divide-y-0">
+      <div className="flex flex-col divide-y divide-white/[0.08] sm:flex-row sm:divide-x sm:divide-y-0">
         {/* Max spend — expands to fill available width */}
         <div className="min-w-0 flex-1 p-[14px_18px]">
           <MaxSpendConfigurator
@@ -277,7 +280,7 @@ function VaultControlSurface({
           onSubmit={onSubmitWithdraw}
           className="flex flex-col justify-between gap-3 p-[14px_18px] sm:w-[220px] sm:shrink-0"
         >
-          <span className="font-barlow text-[10px] font-semibold uppercase tracking-[0.14em] text-[rgba(18,18,18,0.42)]">
+          <span className="font-barlow text-[10px] font-semibold uppercase tracking-[0.14em] text-[rgba(245,245,245,0.42)]">
             Withdraw funds
           </span>
           <div className="flex flex-col gap-2">
@@ -288,12 +291,12 @@ function VaultControlSurface({
               value={withdrawAmount}
               onChange={(e) => onWithdrawAmountChange(e.target.value)}
               disabled={isWithdrawing || !isConnected}
-              className="h-9 w-full rounded-[10px] border-[rgba(18,18,18,0.12)] bg-white/60 font-barlow text-[13px] placeholder:text-[rgba(18,18,18,0.32)] focus-visible:ring-[rgba(18,18,18,0.24)]"
+              className="h-9 w-full rounded-[10px] border-white/10 bg-white/[0.06] font-barlow text-[13px] text-[#f5f5f5] placeholder:text-[rgba(245,245,245,0.28)] focus-visible:ring-white/25"
             />
             <button
               type="submit"
               disabled={isWithdrawing || !isConnected || !withdrawAmount.trim()}
-              className="inline-flex h-9 w-full items-center justify-center rounded-[10px] border border-[rgba(18,18,18,0.14)] bg-[linear-gradient(180deg,rgba(20,18,16,0.96),rgba(8,8,8,0.98))] px-4 font-barlow text-[10px] font-semibold uppercase tracking-[0.14em] text-[#f7efe7] transition hover:bg-[linear-gradient(180deg,rgba(28,26,24,0.9),rgba(10,10,10,1))] disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex h-9 w-full items-center justify-center rounded-[10px] border border-white/10 bg-[linear-gradient(180deg,rgba(245,245,245,0.14),rgba(245,245,245,0.08))] px-4 font-barlow text-[10px] font-semibold uppercase tracking-[0.14em] text-[#f5f5f5] transition hover:bg-[linear-gradient(180deg,rgba(245,245,245,0.18),rgba(245,245,245,0.1))] disabled:cursor-not-allowed disabled:opacity-50"
             >
               {isWithdrawing ? "Sending…" : "Withdraw"}
             </button>
@@ -311,13 +314,13 @@ function VaultControlSurface({
         </form>
       </div>
 
-      <Separator className="bg-[rgba(18,18,18,0.06)]" />
+      <Separator className="bg-white/[0.08]" />
 
       {/* Performance row + position action */}
       <div className="flex items-center justify-between gap-4 p-[14px_18px]">
         <div className="flex items-center gap-6">
           <div className="grid gap-1">
-            <span className="font-barlow text-[10px] font-semibold uppercase tracking-[0.14em] text-[rgba(18,18,18,0.42)]">
+            <span className="font-barlow text-[10px] font-semibold uppercase tracking-[0.14em] text-[rgba(245,245,245,0.42)]">
               PnL
             </span>
             <span
@@ -336,19 +339,23 @@ function VaultControlSurface({
             </span>
           </div>
           <div className="grid gap-1">
-            <span className="font-barlow text-[10px] font-semibold uppercase tracking-[0.14em] text-[rgba(18,18,18,0.42)]">
+            <span className="font-barlow text-[10px] font-semibold uppercase tracking-[0.14em] text-[rgba(245,245,245,0.42)]">
               Win rate
             </span>
-            <span className="font-instrument text-[22px] leading-none text-[#121212]">
+            <span className="font-instrument text-[22px] leading-none text-[#f5f5f5]">
               {winRate}%
             </span>
           </div>
           <div className="grid gap-1">
-            <span className="font-barlow text-[10px] font-semibold uppercase tracking-[0.14em] text-[rgba(18,18,18,0.42)]">
+            <span className="font-barlow text-[10px] font-semibold uppercase tracking-[0.14em] text-[rgba(245,245,245,0.42)]">
               Open
             </span>
-            <span className="inline-flex items-center gap-1 font-instrument text-[22px] leading-none text-[#121212]">
-              <Minus size={12} aria-hidden="true" className="text-[rgba(18,18,18,0.38)]" />
+            <span className="inline-flex items-center gap-1 font-instrument text-[22px] leading-none text-[#f5f5f5]">
+              <Minus
+                size={12}
+                aria-hidden="true"
+                className="text-[rgba(245,245,245,0.38)]"
+              />
               {openPositions}
             </span>
           </div>
@@ -489,30 +496,30 @@ export function SelectedAgentPanel({
       className={cn("grid grid-cols-1 gap-[18px]", className)}
       aria-label="Selected agent detail"
     >
-      <article className={cn(surfaceCard, "grid gap-[18px] p-5")}>
+      <article className={cn(mainsurfaceCard, "grid gap-[18px] p-5")}>
         {/* Header */}
         <div className="flex flex-col gap-4">
           <div>
             <h2 className="m-0 font-instrument text-[clamp(30px,4vw,48px)] font-normal leading-[0.96] tracking-[-0.5px]">
               {selectedAgent.name}
             </h2>
-            <p className="mt-[14px] mb-0 max-w-[58ch] font-inter text-[14px] leading-[1.6] text-[rgba(18,18,18,0.62)]">
+            <p className="mt-[14px] mb-0 max-w-[58ch] font-inter text-[14px] leading-[1.6] text-[rgba(245,245,245,0.62)]">
               {selectedAgent.lastAction}
             </p>
           </div>
           <div className="flex flex-wrap justify-end gap-3">
-              <LiquidActionButton
-                label="Fund this agent"
-                colorBack="#9a6f26"
-                colorTint="#ffe9a8"
-                onClick={onOpenFundingModal}
-              />
-              <LiquidActionButton
-                label="Enter Prediction"
-                colorBack="#a9a9ab"
-                colorTint="#ffffff"
-                onClick={onOpenPrediction}
-              />
+            <LiquidActionButton
+              label="Fund this agent"
+              colorBack="#9a6f26"
+              colorTint="#ffe9a8"
+              onClick={onOpenFundingModal}
+            />
+            <LiquidActionButton
+              label="Enter Prediction"
+              colorBack="#a9a9ab"
+              colorTint="#ffffff"
+              onClick={onOpenPrediction}
+            />
           </div>
         </div>
 
@@ -526,15 +533,15 @@ export function SelectedAgentPanel({
                 if (v) onSelectMarket(v);
               }}
             >
-              <SelectTrigger className="h-[42px] w-[200px] rounded-[12px] border-[rgba(18,18,18,0.12)] bg-[rgba(255,255,255,0.72)] font-barlow text-[13px] font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.06)] backdrop-blur-sm focus:ring-[rgba(18,18,18,0.18)]">
+              <SelectTrigger className="h-[42px] w-[200px] rounded-[12px] border-white/10 bg-white/[0.06] font-barlow text-[13px] font-semibold text-[#f5f5f5] shadow-[0_1px_3px_rgba(0,0,0,0.2)] backdrop-blur-sm focus:ring-white/20">
                 <SelectValue placeholder="Select pair" />
               </SelectTrigger>
-              <SelectContent className="rounded-[14px] border-[rgba(18,18,18,0.1)] bg-white/96 shadow-[0_24px_60px_rgba(0,0,0,0.12)] backdrop-blur-sm">
+              <SelectContent className="rounded-[14px] border-white/10 bg-[#141416]/96 text-[#f5f5f5] shadow-[0_24px_60px_rgba(0,0,0,0.38)] backdrop-blur-sm">
                 {trackedMarkets.map((market) => (
                   <SelectItem
                     key={market.symbol}
                     value={market.symbol}
-                    className="cursor-pointer rounded-[10px] font-barlow text-[13px] font-semibold focus:bg-[rgba(18,18,18,0.05)]"
+                    className="cursor-pointer rounded-[10px] font-barlow text-[13px] font-semibold focus:bg-white/[0.08]"
                   >
                     <span className="flex items-center gap-2">
                       <span
@@ -545,7 +552,7 @@ export function SelectedAgentPanel({
                       />
                       {market.symbol}
                       {market.marketSyncStatus !== "no_data" && (
-                        <span className="ml-1 font-barlow text-[10px] font-normal text-[rgba(18,18,18,0.42)]">
+                        <span className="ml-1 font-barlow text-[10px] font-normal text-[rgba(245,245,245,0.42)]">
                           {formatSyncFreshness(market.newsUpdatedAt)}
                         </span>
                       )}
@@ -605,7 +612,7 @@ export function SelectedAgentPanel({
 
         {/* Trade idea card */}
         {selectedTradeIdea ? (
-          <div className="grid gap-[18px] rounded-[18px] border border-[rgba(18,18,18,0.08)] bg-[rgba(255,255,255,0.78)] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.05)] backdrop-blur-[16px]">
+          <div className="grid gap-[18px] rounded-[18px] border border-white/10 bg-white/[0.04] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.24)] backdrop-blur-[16px]">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-[10px]">
                 <Eye aria-hidden="true" size={18} />
@@ -627,10 +634,12 @@ export function SelectedAgentPanel({
                 </span>
               </div>
             </div>
-            <p className="font-inter">{selectedTradeIdea.thesis}</p>
+            <p className="font-inter text-[rgba(245,245,245,0.72)]">
+              {selectedTradeIdea.thesis}
+            </p>
             <div className="mt-[18px] grid grid-cols-2 gap-3 sm:grid-cols-4">
               <div>
-                <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.14em] text-[rgba(18,18,18,0.48)]">
+                <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.14em] text-[rgba(245,245,245,0.48)]">
                   Entry
                 </span>
                 <strong className="font-instrument text-[clamp(24px,3vw,38px)] font-normal leading-[0.95]">
@@ -638,7 +647,7 @@ export function SelectedAgentPanel({
                 </strong>
               </div>
               <div>
-                <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.14em] text-[rgba(18,18,18,0.48)]">
+                <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.14em] text-[rgba(245,245,245,0.48)]">
                   Stop loss
                 </span>
                 <strong className="font-instrument text-[clamp(24px,3vw,38px)] font-normal leading-[0.95]">
@@ -646,7 +655,7 @@ export function SelectedAgentPanel({
                 </strong>
               </div>
               <div>
-                <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.14em] text-[rgba(18,18,18,0.48)]">
+                <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.14em] text-[rgba(245,245,245,0.48)]">
                   Take profit
                 </span>
                 <strong className="font-instrument text-[clamp(24px,3vw,38px)] font-normal leading-[0.95]">
@@ -654,7 +663,7 @@ export function SelectedAgentPanel({
                 </strong>
               </div>
               <div>
-                <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.14em] text-[rgba(18,18,18,0.48)]">
+                <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.14em] text-[rgba(245,245,245,0.48)]">
                   Confidence
                 </span>
                 <strong className="font-instrument text-[clamp(24px,3vw,38px)] font-normal leading-[0.95]">
@@ -675,28 +684,10 @@ export function SelectedAgentPanel({
           {isConjureIdle ? (
             <button
               type="button"
-              className="relative block h-full w-full cursor-pointer overflow-hidden rounded-[10px] border-0 bg-[#f5f5f2] p-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.88),inset_0_-1px_0_rgba(0,0,0,0.08)] transition-transform duration-[120ms] hover:-translate-y-px active:scale-[0.985]"
+              className="relative block h-full w-full cursor-pointer overflow-hidden rounded-[10px] border border-white/10 bg-[linear-gradient(180deg,rgba(42,42,46,0.98),rgba(26,26,29,0.98))] p-0 shadow-[0_18px_40px_rgba(0,0,0,0.24)] transition-transform duration-[120ms] hover:-translate-y-px hover:border-white/16 hover:bg-[linear-gradient(180deg,rgba(52,52,57,0.98),rgba(31,31,35,0.98))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/35 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0b0b0d] active:scale-[0.985]"
               onClick={() => void onRevealBrowserSession()}
             >
-              <LiquidMetal
-                className="!absolute inset-0 !h-full !w-full pointer-events-none"
-                colorBack="#a9a9ab"
-                colorTint="#ffffff"
-                shape="none"
-                repetition={2.6}
-                softness={0.12}
-                shiftRed={0.18}
-                shiftBlue={0.22}
-                distortion={0.08}
-                contour={0.52}
-                angle={70}
-                speed={1}
-                scale={1}
-                fit="cover"
-                width="100%"
-                height="100%"
-              />
-              <span className="pointer-events-none absolute inset-[8px] z-[2] inline-flex min-h-[44px] items-center justify-center rounded-md border border-[rgba(255,255,255,0.42)] bg-[rgba(255,255,255,0.16)] px-6 font-instrument text-[clamp(22px,2vw,30px)] font-medium tracking-[0.02em] !text-[#121212] [text-shadow:0_1px_0_rgba(255,255,255,0.34)] shadow-[inset_0_1px_0_rgba(255,255,255,0.34),inset_0_-1px_0_rgba(255,255,255,0.08),0_18px_40px_rgba(0,0,0,0.08)] backdrop-blur-[14px]">
+              <span className="pointer-events-none absolute inset-[8px] z-[2] inline-flex min-h-[44px] items-center justify-center rounded-md border border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))] px-6 font-instrument text-[clamp(22px,2vw,30px)] font-medium tracking-[0.01em] text-[rgba(245,245,245,0.92)] shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
                 Conjure {selectedAgent.name}
               </span>
             </button>
@@ -762,11 +753,11 @@ export function SelectedAgentPanel({
       <aside
         className={cn(
           "grid gap-[18px]",
-          isWideWorkspace && "md:grid-cols-[repeat(3,minmax(0,1fr))]",
+          isWideWorkspace && "px-4 md:grid-cols-[repeat(3,minmax(0,1fr))]",
         )}
       >
         {selectedActiveSetup ? (
-          <article className={cn(surfaceCard, "p-5")}>
+          <article className={cn(flatDisclosureCardClass, "p-5")}>
             <DisclosureSection
               title="Setup lifecycle"
               icon={<Activity aria-hidden="true" size={18} />}
@@ -798,12 +789,12 @@ export function SelectedAgentPanel({
                 </div>
                 {selectedActiveSetup.zoneLow != null &&
                 selectedActiveSetup.zoneHigh != null ? (
-                  <div className="grid gap-1 rounded-[12px] bg-[rgba(250,250,247,0.94)] p-3">
-                    <span className="font-barlow text-[12px] font-semibold text-[rgba(18,18,18,0.7)]">
+                  <div className="grid gap-1 rounded-[12px] bg-white/[0.05] p-3">
+                    <span className="font-barlow text-[12px] font-semibold text-[rgba(245,245,245,0.78)]">
                       Active zone — {selectedActiveSetup.zoneLow} to{" "}
                       {selectedActiveSetup.zoneHigh}
                     </span>
-                    <span className="font-inter text-[13px] leading-[1.5] text-[rgba(18,18,18,0.6)]">
+                    <span className="font-inter text-[13px] leading-[1.5] text-[rgba(245,245,245,0.6)]">
                       Projected price{" "}
                       {selectedActiveSetup.projectedPrice ?? "—"}
                     </span>
@@ -811,25 +802,25 @@ export function SelectedAgentPanel({
                 ) : null}
                 {selectedActiveSetup.invalidationLow != null &&
                 selectedActiveSetup.invalidationHigh != null ? (
-                  <div className="grid gap-1 rounded-[12px] bg-[rgba(251,238,236,0.84)] p-3">
+                  <div className="grid gap-1 rounded-[12px] bg-[rgba(138,45,45,0.16)] p-3">
                     <span className="font-barlow text-[12px] font-semibold text-[#8a2d2d]">
                       Invalidation — {selectedActiveSetup.invalidationLow} to{" "}
                       {selectedActiveSetup.invalidationHigh}
                     </span>
-                    <span className="font-inter text-[13px] leading-[1.5] text-[rgba(18,18,18,0.6)]">
+                    <span className="font-inter text-[13px] leading-[1.5] text-[rgba(245,245,245,0.62)]">
                       {selectedActiveSetup.invalidationNote ??
                         "Awaiting explicit invalidation threshold."}
                     </span>
                   </div>
                 ) : null}
-                <div className="grid gap-[6px] rounded-[12px] bg-[rgba(246,244,239,0.96)] p-3">
-                  <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.12em] text-[rgba(18,18,18,0.45)]">
+                <div className="grid gap-[6px] rounded-[12px] bg-white/[0.04] p-3">
+                  <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.12em] text-[rgba(245,245,245,0.45)]">
                     Stateful thesis
                   </span>
-                  <p className="m-0 font-inter text-[13px] leading-[1.55] text-[rgba(18,18,18,0.68)]">
+                  <p className="m-0 font-inter text-[13px] leading-[1.55] text-[rgba(245,245,245,0.68)]">
                     {selectedActiveSetup.rationaleSummary}
                   </p>
-                  <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.12em] text-[rgba(18,18,18,0.38)]">
+                  <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.12em] text-[rgba(245,245,245,0.38)]">
                     Last reviewed{" "}
                     {formatReviewFreshness(selectedActiveSetup.lastReviewedAt)}
                   </span>
@@ -840,7 +831,7 @@ export function SelectedAgentPanel({
         ) : null}
 
         {selectedVisionDecision ? (
-          <article className={cn(surfaceCard, "p-5")}>
+          <article className={cn(flatDisclosureCardClass, "p-5")}>
             <DisclosureSection
               title="Vision analysis"
               icon={<Eye aria-hidden="true" size={18} />}
@@ -881,61 +872,61 @@ export function SelectedAgentPanel({
                     confidence
                   </span>
                 </div>
-                <p className="m-0 font-inter text-[13.5px] leading-[1.65] text-[rgba(18,18,18,0.72)]">
+                <p className="m-0 font-inter text-[13.5px] leading-[1.65] text-[rgba(245,245,245,0.72)]">
                   {selectedVisionDecision.rationale}
                 </p>
                 {selectedVisionDecision.correctedT1 ? (
-                  <div className="grid gap-1 rounded-[12px] bg-[rgba(250,250,247,0.94)] p-3">
-                    <span className="font-barlow text-[12px] font-semibold text-[rgba(18,18,18,0.7)]">
+                  <div className="grid gap-1 rounded-[12px] bg-white/[0.05] p-3">
+                    <span className="font-barlow text-[12px] font-semibold text-[rgba(245,245,245,0.78)]">
                       T1 — {selectedVisionDecision.correctedT1.price}
                     </span>
-                    <span className="font-inter text-[13px] leading-[1.5] text-[rgba(18,18,18,0.6)]">
+                    <span className="font-inter text-[13px] leading-[1.5] text-[rgba(245,245,245,0.6)]">
                       {selectedVisionDecision.correctedT1.note}
                     </span>
                   </div>
                 ) : null}
                 {selectedVisionDecision.correctedT2 ? (
-                  <div className="grid gap-1 rounded-[12px] bg-[rgba(250,250,247,0.94)] p-3">
-                    <span className="font-barlow text-[12px] font-semibold text-[rgba(18,18,18,0.7)]">
+                  <div className="grid gap-1 rounded-[12px] bg-white/[0.05] p-3">
+                    <span className="font-barlow text-[12px] font-semibold text-[rgba(245,245,245,0.78)]">
                       T2 — {selectedVisionDecision.correctedT2.price}
                     </span>
-                    <span className="font-inter text-[13px] leading-[1.5] text-[rgba(18,18,18,0.6)]">
+                    <span className="font-inter text-[13px] leading-[1.5] text-[rgba(245,245,245,0.6)]">
                       {selectedVisionDecision.correctedT2.note}
                     </span>
                   </div>
                 ) : null}
                 {selectedVisionDecision.invalidationZone ? (
-                  <div className="grid gap-1 rounded-[12px] bg-[rgba(251,238,236,0.84)] p-3">
+                  <div className="grid gap-1 rounded-[12px] bg-[rgba(138,45,45,0.16)] p-3">
                     <span className="font-barlow text-[12px] font-semibold text-[#8a2d2d]">
                       Invalidation zone —{" "}
                       {selectedVisionDecision.invalidationZone.low} to{" "}
                       {selectedVisionDecision.invalidationZone.high}
                     </span>
-                    <span className="font-inter text-[13px] leading-[1.5] text-[rgba(18,18,18,0.6)]">
+                    <span className="font-inter text-[13px] leading-[1.5] text-[rgba(245,245,245,0.62)]">
                       {selectedVisionDecision.invalidationZone.note}
                     </span>
                   </div>
                 ) : null}
                 {selectedVisionDecision.invalidationNote ? (
-                  <div className="grid gap-1 rounded-[12px] bg-[rgba(247,240,231,0.96)] p-3">
-                    <span className="font-barlow text-[12px] font-semibold text-[rgba(18,18,18,0.7)]">
+                  <div className="grid gap-1 rounded-[12px] bg-white/[0.04] p-3">
+                    <span className="font-barlow text-[12px] font-semibold text-[rgba(245,245,245,0.78)]">
                       Why it failed
                     </span>
-                    <span className="font-inter text-[13px] leading-[1.5] text-[rgba(18,18,18,0.6)]">
+                    <span className="font-inter text-[13px] leading-[1.5] text-[rgba(245,245,245,0.6)]">
                       {selectedVisionDecision.invalidationNote}
                     </span>
                   </div>
                 ) : null}
                 {selectedVisionDecision.issues.length > 0 ? (
                   <div className="grid gap-2">
-                    <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.12em] text-[rgba(18,18,18,0.45)]">
+                    <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.12em] text-[rgba(245,245,245,0.45)]">
                       Open issues
                     </span>
                     <ul className="m-0 grid gap-[6px] pl-[18px]">
                       {selectedVisionDecision.issues.map((issue, index) => (
                         <li
                           key={index}
-                          className="font-inter text-[13px] leading-[1.5] text-[rgba(18,18,18,0.62)]"
+                          className="font-inter text-[13px] leading-[1.5] text-[rgba(245,245,245,0.62)]"
                         >
                           {issue}
                         </li>
@@ -948,7 +939,7 @@ export function SelectedAgentPanel({
           </article>
         ) : null}
 
-        <article className={cn(surfaceCard, "p-5")}>
+        <article className={cn(flatDisclosureCardClass, "p-5")}>
           <DisclosureSection
             title="News confluence"
             icon={<Newspaper aria-hidden="true" size={18} />}
@@ -964,11 +955,11 @@ export function SelectedAgentPanel({
               className={cn("grid gap-[10px]", disclosureScrollViewportClass)}
             >
               {selectedNewsRationale ? (
-                <div className="mb-[4px] grid gap-2 rounded-[16px] bg-[rgba(250,250,247,0.96)] p-[16px_18px]">
-                  <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.14em] text-[rgba(18,18,18,0.48)]">
+                <div className="mb-[4px] grid gap-2 rounded-[16px] bg-white/[0.04] p-[16px_18px]">
+                  <span className="font-barlow text-[11px] font-semibold uppercase tracking-[0.14em] text-[rgba(245,245,245,0.48)]">
                     Why this confluence
                   </span>
-                  <p className="m-0 font-inter text-[14px] leading-[1.6] text-[rgba(18,18,18,0.72)]">
+                  <p className="m-0 font-inter text-[14px] leading-[1.6] text-[rgba(245,245,245,0.72)]">
                     {selectedNewsRationale}
                   </p>
                 </div>
@@ -983,8 +974,8 @@ export function SelectedAgentPanel({
                       className={cn(
                         "grid gap-[6px] rounded-[16px] p-[14px] text-inherit no-underline",
                         isCalendarRow
-                          ? "bg-[rgba(247,240,231,0.96)]"
-                          : "bg-[rgba(250,250,247,0.92)]",
+                          ? "bg-[rgba(255,255,255,0.06)]"
+                          : "bg-white/[0.04]",
                       )}
                     >
                       <div className="flex items-center justify-between gap-3">
@@ -1005,7 +996,7 @@ export function SelectedAgentPanel({
                             href={item.url}
                             target="_blank"
                             rel="noreferrer"
-                            className="inline-flex items-center gap-[6px] font-barlow text-[11px] font-semibold uppercase tracking-[0.14em] text-[rgba(18,18,18,0.58)] no-underline hover:text-[rgba(18,18,18,0.86)]"
+                            className="inline-flex items-center gap-[6px] font-barlow text-[11px] font-semibold uppercase tracking-[0.14em] text-[rgba(245,245,245,0.58)] no-underline hover:text-[#f5f5f5]"
                           >
                             Source
                             <ExternalLink aria-hidden="true" size={12} />
@@ -1015,11 +1006,11 @@ export function SelectedAgentPanel({
                       <strong className="font-barlow text-[15px] font-semibold">
                         {item.headline}
                       </strong>
-                      <span className="font-inter text-[14px] leading-[1.6] text-[rgba(18,18,18,0.62)]">
+                      <span className="font-inter text-[14px] leading-[1.6] text-[rgba(245,245,245,0.62)]">
                         {item.marketSymbol} · {item.sourceLabel} ·{" "}
                         {item.publishedAt}
                       </span>
-                      <p className="mt-[2px] mb-0 font-inter text-[14px] leading-[1.6] text-[rgba(18,18,18,0.62)]">
+                      <p className="mt-[2px] mb-0 font-inter text-[14px] leading-[1.6] text-[rgba(245,245,245,0.62)]">
                         {item.note}
                       </p>
                     </div>
@@ -1035,7 +1026,7 @@ export function SelectedAgentPanel({
           </DisclosureSection>
         </article>
 
-        <article className={cn(surfaceCard, "p-5")}>
+        <article className={cn(flatDisclosureCardClass, "p-5")}>
           <DisclosureSection
             title="Watchlist state"
             icon={<Radar aria-hidden="true" size={18} />}
@@ -1054,15 +1045,15 @@ export function SelectedAgentPanel({
                 selectedWatchlist.map((item) => (
                   <div
                     key={item.id}
-                    className="grid gap-[6px] rounded-[16px] bg-[rgba(250,250,247,0.92)] p-[14px]"
+                    className="grid gap-[6px] rounded-[16px] bg-white/[0.04] p-[14px]"
                   >
                     <strong className="font-barlow text-[15px] font-semibold">
                       {item.setupLabel}
                     </strong>
-                    <span className="font-inter text-[14px] leading-[1.6] text-[rgba(18,18,18,0.62)]">
+                    <span className="font-inter text-[14px] leading-[1.6] text-[rgba(245,245,245,0.62)]">
                       {item.marketSymbol} · {item.timeframe} · {item.status}
                     </span>
-                    <p className="mt-[2px] mb-0 font-inter text-[14px] leading-[1.6] text-[rgba(18,18,18,0.62)]">
+                    <p className="mt-[2px] mb-0 font-inter text-[14px] leading-[1.6] text-[rgba(245,245,245,0.62)]">
                       {item.triggerNote}
                     </p>
                   </div>
@@ -1077,7 +1068,7 @@ export function SelectedAgentPanel({
           </DisclosureSection>
         </article>
 
-        <article className={cn(surfaceCard, "p-5")}>
+        <article className={cn(flatDisclosureCardClass, "p-5")}>
           <DisclosureSection
             title="Agent event log"
             icon={<Activity aria-hidden="true" size={18} />}
@@ -1096,16 +1087,16 @@ export function SelectedAgentPanel({
                 selectedEvents.map((event) => (
                   <div
                     key={event.id}
-                    className="grid grid-cols-[auto_1fr] gap-3 rounded-[16px] bg-[rgba(250,250,247,0.92)] p-[14px]"
+                    className="grid grid-cols-[auto_1fr] gap-3 rounded-[16px] bg-white/[0.04] p-[14px]"
                   >
-                    <span className="font-barlow text-[11px] font-bold uppercase tracking-[0.12em] text-[rgba(18,18,18,0.4)]">
+                    <span className="font-barlow text-[11px] font-bold uppercase tracking-[0.12em] text-[rgba(245,245,245,0.4)]">
                       {event.timestamp}
                     </span>
                     <div>
                       <strong className="font-barlow text-[15px] font-semibold">
                         {event.title}
                       </strong>
-                      <span className="font-inter text-[14px] leading-[1.6] text-[rgba(18,18,18,0.62)]">
+                      <span className="font-inter text-[14px] leading-[1.6] text-[rgba(245,245,245,0.62)]">
                         {event.detail}
                       </span>
                     </div>
