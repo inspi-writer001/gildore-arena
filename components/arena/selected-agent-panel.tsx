@@ -518,6 +518,7 @@ export function SelectedAgentPanel({
               label="Enter Prediction"
               colorBack="#a9a9ab"
               colorTint="#ffffff"
+              disabled
               onClick={onOpenPrediction}
             />
           </div>
