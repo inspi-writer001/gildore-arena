@@ -1288,6 +1288,7 @@ export const purgeEngineDerivedState = internalMutation({
     for (const agent of agents) {
       await ctx.db.patch(agent._id, {
         status: "scanning",
+        winRate: 0,
         pnlPercent: 0,
         openPositions: 0,
         score: 1000,

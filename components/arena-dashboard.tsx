@@ -41,6 +41,20 @@ import { formatUnits } from "viem";
 import { getCeloChain } from "@/lib/ecosystem";
 import { useIsMobile } from "@/hooks/use-media-query";
 const celoChain = getCeloChain();
+const FLASHTRADE_SUPPORTED_MARKETS = new Set([
+  "XAU/USD",
+  "XAG/USD",
+  "EUR/USD",
+  "GBP/USD",
+]);
+const FLASH_TRADE_TEST_FALLBACKS: Partial<
+  Record<string, { entryPrice: number; stopLoss: number }>
+> = {
+  "XAU/USD": {
+    entryPrice: 4104.05,
+    stopLoss: 4070,
+  },
+};
 import {
   chipClass,
   confluenceToneMap,
@@ -313,6 +327,24 @@ function formatRelativeMinutes(timestamp: number | null) {
   return `${Math.floor(deltaSeconds / 3600)}h ago`;
 }
 
+function parseUiAmountToBaseUnits(value: string, decimals: number) {
+  const normalized = value.trim();
+  if (!/^\d+(\.\d+)?$/.test(normalized)) {
+    throw new Error("Enter a valid deposit amount.");
+  }
+
+  const [wholePart, fractionalPart = ""] = normalized.split(".");
+  if (fractionalPart.length > decimals) {
+    throw new Error(`Amount supports up to ${decimals} decimal places.`);
+  }
+
+  const paddedFractional = fractionalPart.padEnd(decimals, "0");
+  const whole = BigInt(wholePart || "0");
+  const fraction = BigInt(paddedFractional || "0");
+  const scale = BigInt(10) ** BigInt(decimals);
+  return whole * scale + fraction;
+}
+
 const CANDLE_SECONDS: Record<string, number> = {
   "15m": 900,
   "1h": 3600,
@@ -425,7 +457,13 @@ function extractFibonacciLegs(trace: VisualTrace | undefined): {
 export default function ArenaDashboard() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { rpc, chain, selectedWallet, selectedAccount, isConnected } =
+  const {
+    chain,
+    selectedWallet,
+    selectedAccount,
+    isConnected,
+    privyUserId,
+  } =
     useSolanaWallet();
   const { signTransaction } = useSignTransaction();
   const eco = useEcosystemWallet();
@@ -446,10 +484,18 @@ export default function ArenaDashboard() {
   const submitRegisterTicker = useAction(api.agentVault.submitRegisterTicker);
   const prepareWithdraw = useAction(api.agentVault.prepareWithdraw);
   const submitWithdraw = useAction(api.agentVault.submitWithdraw);
-  const closePositionAction = useAction(api.agentVault.updateTickerCloseTrade);
   const getVaultSnapshot = useAction(api.agentVault.getVaultSnapshot);
+  const getFundingTokenBalance = useAction(
+    api.agentVault.getFundingTokenBalance,
+  );
   const ensureExecutionWallet = useAction(
     api.flashtrade.ensureExecutionWallet,
+  );
+  const runFlashTradeDevnetTest = useAction(
+    api.flashtrade.runFlashTradeDevnetTest,
+  );
+  const closeFlashTradePosition = useAction(
+    api.flashtrade.closeFlashTradePosition,
   );
   const closePositionActionCelo = useAction(api.agentVaultCelo.updateTickerCloseTradeCelo);
   const getVaultSnapshotCelo = useAction(api.agentVaultCelo.getVaultSnapshotCelo);
@@ -490,6 +536,19 @@ export default function ArenaDashboard() {
     string | null
   >(null);
   const [isClosingPosition, setIsClosingPosition] = useState(false);
+  const [isRunningFlashTradeTest, setIsRunningFlashTradeTest] = useState(false);
+  const [flashTradeTestError, setFlashTradeTestError] = useState<string | null>(
+    null,
+  );
+  const [lastFlashTradeTestResult, setLastFlashTradeTestResult] = useState<{
+    principalAmountUi: string;
+    vaultConsumeSignature: string | null;
+    venueOpenSignature: string | null;
+    venuePositionKey: string | null;
+    executionWalletAddress: string;
+  } | null>(null);
+  const selectedAgentSlug = searchParams.get("agent");
+  const selectedMarketParam = searchParams.get("market");
 
   // One-time migration: rename agents to mythical names if they still have old names
   useEffect(() => {
@@ -506,33 +565,50 @@ export default function ArenaDashboard() {
   }, [snapshot, updateAgentDisplayNames]);
 
   useEffect(() => {
-    if (isCelo || !isConnected || !selectedAccount?.address) {
+    if (!privyUserId) {
       return;
     }
 
-    if (ensuredExecutionWalletAddressRef.current === selectedAccount.address) {
+    const solanaAddress = selectedAccount?.address ?? null;
+    const celoAddress = eco.ecosystem === "celo" ? eco.address : null;
+    const ensureKey = [privyUserId, solanaAddress, celoAddress].join(":");
+
+    if (ensuredExecutionWalletAddressRef.current === ensureKey) {
       return;
     }
 
-    ensuredExecutionWalletAddressRef.current = selectedAccount.address;
+    if (!solanaAddress && !celoAddress) {
+      return;
+    }
+
+    ensuredExecutionWalletAddressRef.current = ensureKey;
     void ensureExecutionWallet({
-      walletAddress: selectedAccount.address,
+      privyUserId,
+      ecosystem: celoAddress ? "celo" : "solana",
+      solanaWalletAddress: solanaAddress ?? undefined,
+      evmWalletAddress: celoAddress ?? undefined,
+      celoWalletAddress: celoAddress ?? undefined,
     }).catch((error) => {
       ensuredExecutionWalletAddressRef.current = null;
       console.error("[execution-wallet] failed to ensure wallet on auth", {
-        walletAddress: selectedAccount.address,
+        privyUserId,
+        solanaAddress,
+        celoAddress,
         error,
       });
     });
   }, [
+    eco.address,
+    eco.ecosystem,
     ensureExecutionWallet,
-    isCelo,
-    isConnected,
+    privyUserId,
     selectedAccount?.address,
   ]);
 
-  const selectedAgentSlug = searchParams.get("agent");
-  const selectedMarketParam = searchParams.get("market");
+  useEffect(() => {
+    setFlashTradeTestError(null);
+    setLastFlashTradeTestResult(null);
+  }, [selectedAgentSlug, selectedMarketParam]);
 
   const handleSubscribeSubmitCelo = async (
     event: FormEvent<HTMLFormElement>,
@@ -661,6 +737,20 @@ export default function ArenaDashboard() {
     setFundingError(null);
 
     try {
+      if (solanaFundingTokenBalance) {
+        const requestedAmount = parseUiAmountToBaseUnits(
+          depositAmount.trim(),
+          solanaFundingTokenBalance.decimals,
+        );
+        const availableAmount = BigInt(
+          solanaFundingTokenBalance.balanceBaseUnits,
+        );
+
+        if (requestedAmount > availableAmount) {
+          throw new Error("Insufficient funding token balance for this deposit.");
+        }
+      }
+
       const preparedFunding = await prepareFundAgentVault({
         walletAddress: selectedAccount.address,
         agentName: selectedAgent.name.toLowerCase(),
@@ -997,6 +1087,20 @@ export default function ArenaDashboard() {
     staleTime: 20_000,
     refetchInterval: 30_000,
   });
+  const { data: solanaFundingTokenBalance } = useTanstackQuery({
+    queryKey: vaultSnapshotKeys.fundingBalance(solanaSnapshotAddress ?? ""),
+    queryFn: () =>
+      getFundingTokenBalance({
+        walletAddress: solanaSnapshotAddress!,
+      }),
+    enabled:
+      !isCelo &&
+      isConnected &&
+      isSubscribeModalOpen &&
+      !!solanaSnapshotAddress,
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+  });
 
   const celoSnapshotAddress = isCelo ? (eco.address ?? null) : null;
   const { data: celoVaultSnapshot, isLoading: isLoadingCeloVault } = useTanstackQuery({
@@ -1044,6 +1148,15 @@ export default function ArenaDashboard() {
     rawUsdcBalance != null
       ? parseFloat(formatUnits(rawUsdcBalance, CELO_DEPOSIT_TOKEN_DECIMALS)).toFixed(2)
       : null;
+  const solanaDepositTokenBalance =
+    solanaFundingTokenBalance != null
+      ? parseFloat(
+          formatUnits(
+            BigInt(solanaFundingTokenBalance.balanceBaseUnits),
+            solanaFundingTokenBalance.decimals,
+          ),
+        ).toFixed(2)
+      : null;
 
   // ── Close position ─────────────────────────────────────────────────────────
   const handleClosePosition = async () => {
@@ -1059,8 +1172,9 @@ export default function ArenaDashboard() {
           agentName: selectedAgent.name.toLowerCase(),
         });
       } else {
-        if (!selectedWallet || !selectedAccount || !isConnected) return;
-        await closePositionAction({
+        if (!privyUserId || !selectedAccount?.address || !isConnected) return;
+        await closeFlashTradePosition({
+          privyUserId,
           walletAddress: selectedAccount.address,
           agentName: selectedAgent.name.toLowerCase(),
         });
@@ -1073,6 +1187,63 @@ export default function ArenaDashboard() {
       });
     } finally {
       setIsClosingPosition(false);
+    }
+  };
+
+  const handleRunFlashTradeDevnetTest = async () => {
+    if (
+      !selectedAgent ||
+      !selectedActiveSetup ||
+      !privyUserId ||
+      !selectedAccount?.address ||
+      !isConnected
+    ) {
+      return;
+    }
+
+    setIsRunningFlashTradeTest(true);
+    setFlashTradeTestError(null);
+
+    try {
+      const fallbackExecutionValues = selectedMarketSymbol
+        ? FLASH_TRADE_TEST_FALLBACKS[selectedMarketSymbol]
+        : undefined;
+      const result = (await runFlashTradeDevnetTest({
+        privyUserId,
+        walletAddress: selectedAccount.address,
+        agentName: selectedAgent.name.toLowerCase(),
+        marketSymbol: selectedMarketSymbol,
+        direction:
+          selectedActiveSetup.direction === "long" ||
+          selectedActiveSetup.direction === "short"
+            ? selectedActiveSetup.direction
+            : undefined,
+        entryPrice:
+          selectedActiveSetup.entryPrice ??
+          fallbackExecutionValues?.entryPrice,
+        stopLoss:
+          selectedActiveSetup.stopPrice ??
+          fallbackExecutionValues?.stopLoss,
+      })) as {
+        principalAmountUi: string;
+        vaultConsumeSignature: string | null;
+        venueOpenSignature: string | null;
+        venuePositionKey: string | null;
+        executionWalletAddress: string;
+      };
+
+      setLastFlashTradeTestResult(result);
+    } catch (error) {
+      console.error("[flashtrade-devnet-test] failed", {
+        agentName: selectedAgent.name,
+        marketSymbol: selectedMarketSymbol,
+        error,
+      });
+      setFlashTradeTestError(
+        formatUnknownError(error) || "FlashTrade devnet test failed.",
+      );
+    } finally {
+      setIsRunningFlashTradeTest(false);
     }
   };
 
@@ -1897,6 +2068,24 @@ export default function ArenaDashboard() {
                               lastWithdrawSignature={lastWithdrawSignature}
                               onClosePosition={() => void handleClosePosition()}
                               isClosingPosition={isClosingPosition}
+                              showFlashTradeDevnetTest={
+                                !isCelo &&
+                                Boolean(privyUserId) &&
+                                FLASHTRADE_SUPPORTED_MARKETS.has(
+                                  expandedMarketSymbol,
+                                ) &&
+                                Boolean(selectedActiveSetup)
+                              }
+                              onRunFlashTradeDevnetTest={() =>
+                                void handleRunFlashTradeDevnetTest()
+                              }
+                              isRunningFlashTradeTest={
+                                isRunningFlashTradeTest
+                              }
+                              flashTradeTestError={flashTradeTestError}
+                              lastFlashTradeTestResult={
+                                lastFlashTradeTestResult
+                              }
                             />
                           </div>
                         </td>
@@ -1915,7 +2104,9 @@ export default function ArenaDashboard() {
           isOpen={isSubscribeModalOpen}
           isConnected={isCelo ? eco.isConnected : isConnected}
           depositAmount={depositAmount}
-          depositTokenBalance={isCelo ? celoUsdcBalance : null}
+          depositTokenBalance={
+            isCelo ? celoUsdcBalance : solanaDepositTokenBalance
+          }
           fundingError={fundingError}
           lastFundingSignature={lastFundingSignature}
           isFundingAgent={isFundingAgent}

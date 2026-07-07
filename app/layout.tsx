@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import ConvexClientProvider from "@/components/convex-client-provider";
+import { WalletBalanceCursor } from "@/components/wallet-balance-cursor";
 import { Geist, Barlow, Instrument_Serif, Inter } from "next/font/google";
 import { cn } from "@/lib/utils";
 
@@ -121,7 +122,10 @@ export default function RootLayout({
         <link rel="preconnect" href="https://explorer-api.walletconnect.com" />
       </head>
       <body className="overflow-x-hidden">
-        <ConvexClientProvider>{children}</ConvexClientProvider>
+        <ConvexClientProvider>
+          <WalletBalanceCursor />
+          {children}
+        </ConvexClientProvider>
       </body>
     </html>
   );

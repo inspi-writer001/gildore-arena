@@ -55,6 +55,7 @@ export type EcosystemWalletState = {
   ready: boolean;
   isAuthenticated: boolean;
   isConnected: boolean;
+  privyUserId: string | null;
   userEmail: string | null;
   address: string | null;
   chain: string;
@@ -71,6 +72,7 @@ export type SolanaWalletState = {
   ready: boolean;
   isAuthenticated: boolean;
   isConnected: boolean;
+  privyUserId: string | null;
   userEmail: string | null;
   selectedWallet: ConnectedStandardSolanaWallet | null;
   selectedAccount: { address: string } | null;
@@ -112,6 +114,7 @@ export function useSolanaWallet(): SolanaWalletState {
     ready: ready && walletsReady,
     isAuthenticated: authenticated,
     isConnected: authenticated && Boolean(selectedWallet),
+    privyUserId: user?.id ?? null,
     userEmail,
     selectedWallet,
     selectedAccount: selectedWallet
@@ -184,6 +187,7 @@ export function useEcosystemWallet(): EcosystemWalletState {
   const shared = {
     setEcosystem,
     isMiniPay,
+    privyUserId: user?.id ?? null,
     userEmail,
     login: isMiniPay ? () => {} : () => login(),
     logout: isMiniPay ? async () => {} : logout,

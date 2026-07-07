@@ -11,6 +11,7 @@ import {
   submitServerWithdrawTransaction,
   executeServerConsumeTicker,
   executeServerUpdateTickerCloseTrade,
+  getFundingTokenBalanceData,
   getVaultSnapshotData,
 } from "../lib/solana/server-gildore-vault";
 
@@ -109,6 +110,15 @@ export const getVaultSnapshot = action({
   },
   handler: async (_ctx, args) => {
     return await getVaultSnapshotData(args.walletAddress, args.agentName);
+  },
+});
+
+export const getFundingTokenBalance = action({
+  args: {
+    walletAddress: v.string(),
+  },
+  handler: async (_ctx, args) => {
+    return await getFundingTokenBalanceData(args.walletAddress);
   },
 });
 

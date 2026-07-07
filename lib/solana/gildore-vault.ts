@@ -64,6 +64,14 @@ type FundingTokenInfo = {
   decimals: number;
 };
 
+export type FundingTokenWalletBalance = {
+  mint: Address;
+  decimals: number;
+  ataAddress: Address;
+  hasTokenAccount: boolean;
+  balance: bigint;
+};
+
 export type UserVaultSnapshot = {
   mint: Address;
   decimals: number;
@@ -390,6 +398,51 @@ export async function fetchFundingTokenInfo(
     feeDestinationTokenAccount: feeDestination,
     mint,
     decimals,
+  };
+}
+
+export async function fetchFundingTokenWalletBalance(
+  rpc: SolanaRpc,
+  userAddressInput: string,
+): Promise<FundingTokenWalletBalance> {
+  const userAddress = address(userAddressInput);
+  const fundingToken = await fetchFundingTokenInfo(rpc);
+  const ataAddress = await deriveAssociatedTokenAddress(
+    userAddress,
+    fundingToken.mint,
+  );
+  const tokenAccount = await fetchEncodedAccount(rpc, ataAddress);
+
+  if (!tokenAccount.exists) {
+    return {
+      mint: fundingToken.mint,
+      decimals: fundingToken.decimals,
+      ataAddress,
+      hasTokenAccount: false,
+      balance: BigInt(0),
+    };
+  }
+
+  const tokenAccountMint = decodeSplTokenAccountMint(tokenAccount.data);
+  const tokenAccountOwner = decodeSplTokenAccountOwner(tokenAccount.data);
+
+  if (tokenAccountMint !== fundingToken.mint) {
+    throw new Error(
+      `Connected wallet token account mint mismatch. Expected ${fundingToken.mint}, got ${tokenAccountMint}.`,
+    );
+  }
+  if (tokenAccountOwner !== userAddress) {
+    throw new Error(
+      `Connected wallet token account owner mismatch. Expected ${userAddress}, got ${tokenAccountOwner}.`,
+    );
+  }
+
+  return {
+    mint: fundingToken.mint,
+    decimals: fundingToken.decimals,
+    ataAddress,
+    hasTokenAccount: true,
+    balance: decodeSplTokenAccountAmount(tokenAccount.data),
   };
 }
 

@@ -153,7 +153,17 @@ type VaultControlSurfaceProps = {
   // position actions
   onClosePosition: () => void;
   isClosingPosition: boolean;
-  onOpenPrediction: () => void;
+  showFlashTradeDevnetTest: boolean;
+  onRunFlashTradeDevnetTest: () => void;
+  isRunningFlashTradeTest: boolean;
+  flashTradeTestError: string | null;
+  lastFlashTradeTestResult: {
+    principalAmountUi: string;
+    vaultConsumeSignature: string | null;
+    venueOpenSignature: string | null;
+    venuePositionKey: string | null;
+    executionWalletAddress: string;
+  } | null;
   // performance
   pnlPercent: number;
   winRate: number;
@@ -217,7 +227,11 @@ function VaultControlSurface({
   lastWithdrawSignature,
   onClosePosition,
   isClosingPosition,
-  onOpenPrediction,
+  showFlashTradeDevnetTest,
+  onRunFlashTradeDevnetTest,
+  isRunningFlashTradeTest,
+  flashTradeTestError,
+  lastFlashTradeTestResult,
   pnlPercent,
   winRate,
   openPositions,
@@ -317,7 +331,56 @@ function VaultControlSurface({
       <Separator className="bg-white/[0.08]" />
 
       {/* Performance row + position action */}
-      <div className="flex items-center justify-between gap-4 p-[14px_18px]">
+      <div className="flex flex-col gap-4 p-[14px_18px]">
+        {showFlashTradeDevnetTest ? (
+          <div className="grid gap-2 rounded-[12px] border border-white/8 bg-white/[0.03] p-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="grid gap-1">
+                <span className="font-barlow text-[10px] font-semibold uppercase tracking-[0.14em] text-[rgba(245,245,245,0.42)]">
+                  FlashTrade devnet test
+                </span>
+                <p className="m-0 font-inter text-[12px] leading-[1.5] text-[rgba(245,245,245,0.58)]">
+                  Runs `consume_ticker` and the FlashTrade open-position path.
+                  Devnet pricing may be stale because Pyth support is limited.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={onRunFlashTradeDevnetTest}
+                disabled={isRunningFlashTradeTest || !isConnected || Boolean(isInPosition)}
+                className="inline-flex h-9 shrink-0 items-center justify-center rounded-[10px] border border-white/10 bg-white/[0.08] px-4 font-barlow text-[10px] font-semibold uppercase tracking-[0.14em] text-[#f5f5f5] transition hover:bg-white/[0.12] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isRunningFlashTradeTest ? "Testing…" : "Test FlashTrade"}
+              </button>
+            </div>
+            {flashTradeTestError ? (
+              <p className="m-0 font-barlow text-[11px] font-semibold text-[#c96b6b]">
+                {flashTradeTestError}
+              </p>
+            ) : null}
+            {lastFlashTradeTestResult ? (
+              <div className="grid gap-1 font-barlow text-[11px] text-[rgba(245,245,245,0.68)]">
+                <span>
+                  Spend ${lastFlashTradeTestResult.principalAmountUi} via{" "}
+                  {lastFlashTradeTestResult.executionWalletAddress.slice(0, 8)}…
+                </span>
+                <span>
+                  Consume sig{" "}
+                  {lastFlashTradeTestResult.vaultConsumeSignature?.slice(0, 8) ?? "—"}…
+                </span>
+                <span>
+                  Venue sig{" "}
+                  {lastFlashTradeTestResult.venueOpenSignature?.slice(0, 8) ?? "—"}…
+                </span>
+                <span>
+                  Position {lastFlashTradeTestResult.venuePositionKey ?? "pending discovery"}
+                </span>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-6">
           <div className="grid gap-1">
             <span className="font-barlow text-[10px] font-semibold uppercase tracking-[0.14em] text-[rgba(245,245,245,0.42)]">
@@ -372,6 +435,7 @@ function VaultControlSurface({
             {isClosingPosition ? "Closing…" : "Close Position"}
           </button>
         )}
+        </div>
       </div>
     </div>
   );
@@ -431,6 +495,11 @@ export function SelectedAgentPanel({
   // position
   onClosePosition,
   isClosingPosition,
+  showFlashTradeDevnetTest,
+  onRunFlashTradeDevnetTest,
+  isRunningFlashTradeTest,
+  flashTradeTestError,
+  lastFlashTradeTestResult,
 }: {
   className?: string;
   agents: Array<{ id: string; score: number }>;
@@ -483,6 +552,17 @@ export function SelectedAgentPanel({
   // position
   onClosePosition: () => void;
   isClosingPosition: boolean;
+  showFlashTradeDevnetTest: boolean;
+  onRunFlashTradeDevnetTest: () => void;
+  isRunningFlashTradeTest: boolean;
+  flashTradeTestError: string | null;
+  lastFlashTradeTestResult: {
+    principalAmountUi: string;
+    vaultConsumeSignature: string | null;
+    venueOpenSignature: string | null;
+    venuePositionKey: string | null;
+    executionWalletAddress: string;
+  } | null;
 }) {
   const isConjureActive = isConjureRevealed && !!selectedBrowserSession;
   const isConjureIdle = !isConjureRevealed;
@@ -604,7 +684,11 @@ export function SelectedAgentPanel({
             lastWithdrawSignature={lastWithdrawSignature}
             onClosePosition={onClosePosition}
             isClosingPosition={isClosingPosition}
-            onOpenPrediction={onOpenPrediction}
+            showFlashTradeDevnetTest={showFlashTradeDevnetTest}
+            onRunFlashTradeDevnetTest={onRunFlashTradeDevnetTest}
+            isRunningFlashTradeTest={isRunningFlashTradeTest}
+            flashTradeTestError={flashTradeTestError}
+            lastFlashTradeTestResult={lastFlashTradeTestResult}
             pnlPercent={selectedAgent.pnlPercent}
             winRate={selectedAgent.winRate}
             openPositions={selectedAgent.openPositions}

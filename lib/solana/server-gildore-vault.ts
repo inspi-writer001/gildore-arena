@@ -26,6 +26,7 @@ import {
 import {
   fetchGlobalState,
   fetchFundingTokenInfo,
+  fetchFundingTokenWalletBalance,
   fetchUserVaultSnapshot,
   deriveAgentAddress,
   deriveUserStateAddress,
@@ -646,5 +647,18 @@ export async function getVaultSnapshotData(
     vaultBalance: snapshot.userState?.amount.toString() ?? null,
     vaultAllowance: snapshot.ticker?.amountToSpend.toString() ?? null,
     isInPosition: snapshot.ticker?.isInPosition ?? null,
+  };
+}
+
+export async function getFundingTokenBalanceData(userWalletAddress: string) {
+  const rpc = createRpc();
+  const balance = await fetchFundingTokenWalletBalance(rpc, userWalletAddress);
+
+  return {
+    mint: balance.mint,
+    decimals: balance.decimals,
+    ataAddress: balance.ataAddress,
+    hasTokenAccount: balance.hasTokenAccount,
+    balanceBaseUnits: balance.balance.toString(),
   };
 }

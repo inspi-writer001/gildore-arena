@@ -37,13 +37,13 @@ function normalizeAgentLookupValue(value: string) {
 
 export const getExecutionWalletState = query({
   args: {
-    walletAddress: v.string(),
+    privyUserId: v.string(),
   },
   handler: async (ctx, args) => {
     const wallet = await ctx.db
       .query("executionWallets")
-      .withIndex("by_userWalletAddress", (queryBuilder) =>
-        queryBuilder.eq("userWalletAddress", args.walletAddress),
+      .withIndex("by_privyUserId", (queryBuilder) =>
+        queryBuilder.eq("privyUserId", args.privyUserId),
       )
       .first();
 
@@ -63,13 +63,13 @@ export const getExecutionWalletState = query({
 
 export const listExecutions = query({
   args: {
-    walletAddress: v.string(),
+    privyUserId: v.string(),
   },
   handler: async (ctx, args) => {
     return await ctx.db
       .query("flashtradeExecutions")
-      .withIndex("by_userWalletAddress", (queryBuilder) =>
-        queryBuilder.eq("userWalletAddress", args.walletAddress),
+      .withIndex("by_privyUserId", (queryBuilder) =>
+        queryBuilder.eq("privyUserId", args.privyUserId),
       )
       .collect();
   },
@@ -77,7 +77,7 @@ export const listExecutions = query({
 
 export const resolveExecutionContext = internalQuery({
   args: {
-    walletAddress: v.string(),
+    privyUserId: v.string(),
     agentName: v.string(),
     marketSymbol: v.optional(v.string()),
   },
@@ -100,15 +100,15 @@ export const resolveExecutionContext = internalQuery({
     const agentSlug = agent?.slug ?? normalizedAgentName;
     const wallet = await ctx.db
       .query("executionWallets")
-      .withIndex("by_userWalletAddress", (queryBuilder) =>
-        queryBuilder.eq("userWalletAddress", args.walletAddress),
+      .withIndex("by_privyUserId", (queryBuilder) =>
+        queryBuilder.eq("privyUserId", args.privyUserId),
       )
       .first();
     const executions = await ctx.db
       .query("flashtradeExecutions")
-      .withIndex("by_userWalletAddress_agentSlug", (queryBuilder) =>
+      .withIndex("by_privyUserId_agentSlug", (queryBuilder) =>
         queryBuilder
-          .eq("userWalletAddress", args.walletAddress)
+          .eq("privyUserId", args.privyUserId)
           .eq("agentSlug", agentSlug),
       )
       .collect();
@@ -147,7 +147,11 @@ export const resolveExecutionContext = internalQuery({
 
 export const createExecutionWalletRecord = internalMutation({
   args: {
-    walletAddress: v.string(),
+    privyUserId: v.string(),
+    userWalletAddress: v.optional(v.string()),
+    solanaWalletAddress: v.optional(v.string()),
+    evmWalletAddress: v.optional(v.string()),
+    celoWalletAddress: v.optional(v.string()),
     executionWalletAddress: v.string(),
     encryptedPrivateKey: v.string(),
     encryptionSalt: v.string(),
@@ -156,18 +160,32 @@ export const createExecutionWalletRecord = internalMutation({
   handler: async (ctx, args) => {
     const existing = await ctx.db
       .query("executionWallets")
-      .withIndex("by_userWalletAddress", (queryBuilder) =>
-        queryBuilder.eq("userWalletAddress", args.walletAddress),
+      .withIndex("by_privyUserId", (queryBuilder) =>
+        queryBuilder.eq("privyUserId", args.privyUserId),
       )
       .first();
 
     if (existing) {
+      await ctx.db.patch(existing._id, {
+        userWalletAddress:
+          args.userWalletAddress ?? existing.userWalletAddress,
+        solanaWalletAddress:
+          args.solanaWalletAddress ?? existing.solanaWalletAddress,
+        evmWalletAddress: args.evmWalletAddress ?? existing.evmWalletAddress,
+        celoWalletAddress:
+          args.celoWalletAddress ?? existing.celoWalletAddress,
+        updatedAt: args.createdAt,
+      });
       return existing;
     }
 
     const identifier = await ctx.db.insert("executionWallets", {
       chain: "solana",
-      userWalletAddress: args.walletAddress,
+      privyUserId: args.privyUserId,
+      userWalletAddress: args.userWalletAddress,
+      solanaWalletAddress: args.solanaWalletAddress,
+      evmWalletAddress: args.evmWalletAddress,
+      celoWalletAddress: args.celoWalletAddress,
       executionWalletAddress: args.executionWalletAddress,
       encryptedPrivateKey: args.encryptedPrivateKey,
       encryptionSalt: args.encryptionSalt,
@@ -182,14 +200,14 @@ export const createExecutionWalletRecord = internalMutation({
 
 export const touchExecutionWalletRecord = internalMutation({
   args: {
-    walletAddress: v.string(),
+    privyUserId: v.string(),
     lastUsedAt: v.number(),
   },
   handler: async (ctx, args) => {
     const existing = await ctx.db
       .query("executionWallets")
-      .withIndex("by_userWalletAddress", (queryBuilder) =>
-        queryBuilder.eq("userWalletAddress", args.walletAddress),
+      .withIndex("by_privyUserId", (queryBuilder) =>
+        queryBuilder.eq("privyUserId", args.privyUserId),
       )
       .first();
 
@@ -207,7 +225,10 @@ export const touchExecutionWalletRecord = internalMutation({
 
 export const createExecutionRecord = internalMutation({
   args: {
-    walletAddress: v.string(),
+    privyUserId: v.string(),
+    walletAddress: v.optional(v.string()),
+    originWalletAddress: v.optional(v.string()),
+    originEcosystem: v.union(v.literal("solana"), v.literal("celo")),
     agentSlug: v.string(),
     agentName: v.string(),
     marketSymbol: v.string(),
@@ -221,11 +242,16 @@ export const createExecutionRecord = internalMutation({
     stopLoss: v.number(),
     takeProfit: v.number(),
     slippagePercentage: v.string(),
+    isManualTest: v.optional(v.boolean()),
+    testEnvironment: v.optional(v.literal("devnet")),
     createdAt: v.number(),
   },
   handler: async (ctx, args) => {
     const identifier = await ctx.db.insert("flashtradeExecutions", {
+      privyUserId: args.privyUserId,
       userWalletAddress: args.walletAddress,
+      originWalletAddress: args.originWalletAddress,
+      originEcosystem: args.originEcosystem,
       agentSlug: args.agentSlug,
       agentName: args.agentName,
       marketSymbol: args.marketSymbol,
@@ -242,6 +268,8 @@ export const createExecutionRecord = internalMutation({
       takeProfit: args.takeProfit,
       slippagePercentage: args.slippagePercentage,
       retryCount: 0,
+      isManualTest: args.isManualTest,
+      testEnvironment: args.testEnvironment,
       settlementStatus: "not_started",
       status: "pending_funding",
       createdAt: args.createdAt,

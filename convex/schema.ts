@@ -509,7 +509,11 @@ export default defineSchema({
 
   executionWallets: defineTable({
     chain: v.literal("solana"),
-    userWalletAddress: v.string(),
+    privyUserId: v.optional(v.string()),
+    userWalletAddress: v.optional(v.string()),
+    solanaWalletAddress: v.optional(v.string()),
+    evmWalletAddress: v.optional(v.string()),
+    celoWalletAddress: v.optional(v.string()),
     executionWalletAddress: v.string(),
     encryptedPrivateKey: v.string(),
     encryptionSalt: v.string(),
@@ -517,11 +521,17 @@ export default defineSchema({
     updatedAt: v.number(),
     lastUsedAt: v.optional(v.number()),
   })
+    .index("by_privyUserId", ["privyUserId"])
     .index("by_userWalletAddress", ["userWalletAddress"])
     .index("by_executionWalletAddress", ["executionWalletAddress"]),
 
   flashtradeExecutions: defineTable({
-    userWalletAddress: v.string(),
+    privyUserId: v.optional(v.string()),
+    userWalletAddress: v.optional(v.string()),
+    originWalletAddress: v.optional(v.string()),
+    originEcosystem: v.optional(
+      v.union(v.literal("solana"), v.literal("celo")),
+    ),
     agentSlug: v.string(),
     agentName: v.string(),
     marketSymbol: v.string(),
@@ -568,6 +578,8 @@ export default defineSchema({
     realizedPnlUi: v.optional(v.string()),
     retryCount: v.number(),
     failureReason: v.optional(v.string()),
+    isManualTest: v.optional(v.boolean()),
+    testEnvironment: v.optional(v.literal("devnet")),
     settlementStatus: v.union(
       v.literal("not_started"),
       v.literal("pending"),
@@ -589,6 +601,8 @@ export default defineSchema({
     openedAt: v.optional(v.number()),
     closedAt: v.optional(v.number()),
   })
+    .index("by_privyUserId", ["privyUserId"])
+    .index("by_privyUserId_agentSlug", ["privyUserId", "agentSlug"])
     .index("by_userWalletAddress", ["userWalletAddress"])
     .index("by_userWalletAddress_agentSlug", ["userWalletAddress", "agentSlug"])
     .index("by_executionWalletAddress", ["executionWalletAddress"])
