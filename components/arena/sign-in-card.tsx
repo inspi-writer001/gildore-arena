@@ -26,18 +26,18 @@ const ECOSYSTEM_OPTIONS: {
   logoHeight: number;
 }[] = [
   {
-    id: "solana",
-    label: "Solana",
-    logoSrc: "/solanaLogo.svg",
-    logoWidth: 646,
-    logoHeight: 96,
-  },
-  {
     id: "celo",
     label: "Celo",
     logoSrc: "/Celo_Wordmark_RGB_ProsperityYellow.svg",
     logoWidth: 968,
     logoHeight: 219,
+  },
+  {
+    id: "solana",
+    label: "Solana",
+    logoSrc: "/solanaLogo.svg",
+    logoWidth: 646,
+    logoHeight: 96,
   },
 ];
 

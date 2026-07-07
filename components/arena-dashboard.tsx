@@ -448,6 +448,9 @@ export default function ArenaDashboard() {
   const submitWithdraw = useAction(api.agentVault.submitWithdraw);
   const closePositionAction = useAction(api.agentVault.updateTickerCloseTrade);
   const getVaultSnapshot = useAction(api.agentVault.getVaultSnapshot);
+  const ensureExecutionWallet = useAction(
+    api.flashtrade.ensureExecutionWallet,
+  );
   const closePositionActionCelo = useAction(api.agentVaultCelo.updateTickerCloseTradeCelo);
   const getVaultSnapshotCelo = useAction(api.agentVaultCelo.getVaultSnapshotCelo);
   const [isStartingBrowserSession, setIsStartingBrowserSession] =
@@ -466,6 +469,7 @@ export default function ArenaDashboard() {
     `https://link.minipay.xyz/receipt?tx=${txHash}&celebrate`;
   const MINIPAY_ADD_FUNDS_URL = "https://link.minipay.xyz/add_cash?tokens=USDC";
   const didRenameRef = useRef(false);
+  const ensuredExecutionWalletAddressRef = useRef<string | null>(null);
   const [isSubscribeModalOpen, setIsSubscribeModalOpen] = useState(false);
   const [depositAmount, setDepositAmount] = useState("");
   const [isFundingAgent, setIsFundingAgent] = useState(false);
@@ -500,6 +504,32 @@ export default function ArenaDashboard() {
     didRenameRef.current = true;
     void updateAgentDisplayNames({});
   }, [snapshot, updateAgentDisplayNames]);
+
+  useEffect(() => {
+    if (isCelo || !isConnected || !selectedAccount?.address) {
+      return;
+    }
+
+    if (ensuredExecutionWalletAddressRef.current === selectedAccount.address) {
+      return;
+    }
+
+    ensuredExecutionWalletAddressRef.current = selectedAccount.address;
+    void ensureExecutionWallet({
+      walletAddress: selectedAccount.address,
+    }).catch((error) => {
+      ensuredExecutionWalletAddressRef.current = null;
+      console.error("[execution-wallet] failed to ensure wallet on auth", {
+        walletAddress: selectedAccount.address,
+        error,
+      });
+    });
+  }, [
+    ensureExecutionWallet,
+    isCelo,
+    isConnected,
+    selectedAccount?.address,
+  ]);
 
   const selectedAgentSlug = searchParams.get("agent");
   const selectedMarketParam = searchParams.get("market");

@@ -506,4 +506,91 @@ export default defineSchema({
   })
     .index("by_sessionId", ["sessionId"])
     .index("by_sessionId_and_sequence", ["sessionId", "sequence"]),
+
+  executionWallets: defineTable({
+    chain: v.literal("solana"),
+    userWalletAddress: v.string(),
+    executionWalletAddress: v.string(),
+    encryptedPrivateKey: v.string(),
+    encryptionSalt: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    lastUsedAt: v.optional(v.number()),
+  })
+    .index("by_userWalletAddress", ["userWalletAddress"])
+    .index("by_executionWalletAddress", ["executionWalletAddress"]),
+
+  flashtradeExecutions: defineTable({
+    userWalletAddress: v.string(),
+    agentSlug: v.string(),
+    agentName: v.string(),
+    marketSymbol: v.string(),
+    venueMarketSymbol: v.string(),
+    venue: v.literal("flashtrade"),
+    executionWalletAddress: v.string(),
+    direction: v.union(v.literal("long"), v.literal("short")),
+    principalAmountUi: v.string(),
+    principalAmountBaseUnits: v.string(),
+    leverage: v.number(),
+    riskRewardRatio: v.number(),
+    entryPrice: v.number(),
+    stopLoss: v.number(),
+    takeProfit: v.number(),
+    slippagePercentage: v.string(),
+    venuePositionKey: v.optional(v.string()),
+    venueOpenSignature: v.optional(v.string()),
+    venueCloseSignature: v.optional(v.string()),
+    vaultConsumeSignature: v.optional(v.string()),
+    vaultCloseSignature: v.optional(v.string()),
+    preview: v.optional(
+      v.object({
+        newEntryPrice: v.optional(v.string()),
+        newLeverage: v.optional(v.string()),
+        newLiquidationPrice: v.optional(v.string()),
+        availableLiquidity: v.optional(v.string()),
+        youPayUsdUi: v.optional(v.string()),
+        youRecieveUsdUi: v.optional(v.string()),
+        entryFee: v.optional(v.string()),
+        marginFeePercentage: v.optional(v.string()),
+      }),
+    ),
+    positionSnapshot: v.optional(
+      v.object({
+        sizeUsdUi: v.optional(v.string()),
+        collateralUsdUi: v.optional(v.string()),
+        pnlWithFeeUsdUi: v.optional(v.string()),
+        pnlPercentageWithFee: v.optional(v.string()),
+        leverageUi: v.optional(v.string()),
+        liquidationPriceUi: v.optional(v.string()),
+      }),
+    ),
+    returnedAmountUi: v.optional(v.string()),
+    realizedPnlUi: v.optional(v.string()),
+    retryCount: v.number(),
+    failureReason: v.optional(v.string()),
+    settlementStatus: v.union(
+      v.literal("not_started"),
+      v.literal("pending"),
+      v.literal("blocked_program_constraint"),
+      v.literal("settled"),
+    ),
+    status: v.union(
+      v.literal("pending_funding"),
+      v.literal("funding_confirmed"),
+      v.literal("open_submitted"),
+      v.literal("open"),
+      v.literal("close_submitted"),
+      v.literal("closed_pending_settlement"),
+      v.literal("closed"),
+      v.literal("failed"),
+    ),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    openedAt: v.optional(v.number()),
+    closedAt: v.optional(v.number()),
+  })
+    .index("by_userWalletAddress", ["userWalletAddress"])
+    .index("by_userWalletAddress_agentSlug", ["userWalletAddress", "agentSlug"])
+    .index("by_executionWalletAddress", ["executionWalletAddress"])
+    .index("by_status", ["status"]),
 });
