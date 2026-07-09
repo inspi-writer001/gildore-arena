@@ -3180,7 +3180,11 @@ export async function startControlledBrowserSession(args: {
       const snapshot = await convex.query(api.arena.getArenaSnapshot, {});
       const activeSetup =
         snapshot.strategySetups?.find(
-          (setup) =>
+          (setup: {
+            agentSlug: string;
+            marketSymbol: string;
+            isActive: boolean;
+          }) =>
             setup.agentSlug === args.agentSlug &&
             setup.marketSymbol === args.agentMarketSymbol &&
             setup.isActive,

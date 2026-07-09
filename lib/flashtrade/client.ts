@@ -47,6 +47,16 @@ export type FlashTradePosition = {
   leverageUi?: string;
 };
 
+type FlashTradePositionsEnvelope =
+  | FlashTradePosition[]
+  | {
+      data?: FlashTradePosition[];
+      positions?: FlashTradePosition[];
+      type?: string;
+      error?: string;
+      message?: string;
+    };
+
 export type FlashTradeClosePositionResponse = {
   receiveTokenSymbol?: string | null;
   receiveTokenAmountUi?: string | null;
@@ -130,8 +140,22 @@ export async function listFlashTradePositions(owner: string) {
   const query = new URLSearchParams({
     includePnlInLeverageDisplay: "true",
   });
-  return await fetchFlashTrade<FlashTradePosition[]>(
+  const response = await fetchFlashTrade<FlashTradePositionsEnvelope>(
     `/positions/owner/${owner}?${query.toString()}`,
     { method: "GET" },
+  );
+
+  if (Array.isArray(response)) {
+    return response;
+  }
+  if (Array.isArray(response.positions)) {
+    return response.positions;
+  }
+  if (Array.isArray(response.data)) {
+    return response.data;
+  }
+
+  throw new Error(
+    `FlashTrade positions response was not an array: ${JSON.stringify(response).slice(0, 400)}`,
   );
 }

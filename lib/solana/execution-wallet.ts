@@ -9,6 +9,7 @@ import {
   createSolanaRpc,
   createTransactionMessage,
   fetchEncodedAccount,
+  getAddressDecoder,
   getBase58Encoder,
   getSignatureFromTransaction,
   getTransactionDecoder,
@@ -20,6 +21,7 @@ import {
   setTransactionMessageLifetimeUsingBlockhash,
   type Address,
 } from "@solana/kit";
+import { Connection } from "@solana/web3.js";
 import { decodeBase64, encodeBase64 } from "../base64";
 import {
   deriveAssociatedTokenAddress,
@@ -98,6 +100,113 @@ export function createExecutionWalletSeed() {
   return crypto.getRandomValues(new Uint8Array(32));
 }
 
+function decodeAddressSlice(data: Uint8Array, start: number, end: number) {
+  return getAddressDecoder().decode(data.slice(start, end));
+}
+
+function decodeSplTokenAccountMint(data: Uint8Array): Address {
+  if (data.length < 32) {
+    throw new Error(
+      `Execution wallet ATA is not a valid SPL token account (expected at least 32 bytes, got ${data.length}).`,
+    );
+  }
+
+  return decodeAddressSlice(data, 0, 32);
+}
+
+function decodeSplTokenAccountOwner(data: Uint8Array): Address {
+  if (data.length < 64) {
+    throw new Error(
+      `Execution wallet ATA owner layout is invalid (expected at least 64 bytes, got ${data.length}).`,
+    );
+  }
+
+  return decodeAddressSlice(data, 32, 64);
+}
+
+async function sleep(ms: number) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function confirmAtaCreation(args: {
+  signature: string;
+  blockhash: string;
+  lastValidBlockHeight: number;
+}) {
+  const connection = new Connection(solanaRpcUrl, "confirmed");
+  const result = await connection.confirmTransaction(
+    {
+      signature: args.signature,
+      blockhash: args.blockhash,
+      lastValidBlockHeight: args.lastValidBlockHeight,
+    },
+    "confirmed",
+  );
+
+  if (result.value.err) {
+    throw new Error(
+      `Execution wallet ATA creation failed: ${JSON.stringify(result.value.err)}`,
+    );
+  }
+}
+
+async function verifyExecutionWalletFundingAta(args: {
+  rpc: ReturnType<typeof createRpc>;
+  ataAddress: Address;
+  executionWalletAddress: Address;
+  fundingMint: Address;
+  logScope: string;
+}) {
+  const maxAttempts = 5;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const ataAccount = await fetchEncodedAccount(args.rpc, args.ataAddress);
+
+    if (!ataAccount.exists) {
+      if (attempt < maxAttempts) {
+        await sleep(400);
+        continue;
+      }
+
+      throw new Error(
+        `Execution wallet funding ATA ${args.ataAddress} is still not visible after confirmation.`,
+      );
+    }
+
+    if ("programAddress" in ataAccount) {
+      const accountProgramAddress = ataAccount.programAddress as Address;
+      if (accountProgramAddress !== TOKEN_PROGRAM_ADDRESS) {
+        throw new Error(
+          `Execution wallet funding ATA ${args.ataAddress} is owned by ${accountProgramAddress}, expected ${TOKEN_PROGRAM_ADDRESS}.`,
+        );
+      }
+    }
+
+    const accountMint = decodeSplTokenAccountMint(ataAccount.data);
+    if (accountMint !== args.fundingMint) {
+      throw new Error(
+        `Execution wallet funding ATA ${args.ataAddress} mint mismatch. Expected ${args.fundingMint}, got ${accountMint}.`,
+      );
+    }
+
+    const tokenAccountOwner = decodeSplTokenAccountOwner(ataAccount.data);
+    if (tokenAccountOwner !== args.executionWalletAddress) {
+      throw new Error(
+        `Execution wallet funding ATA ${args.ataAddress} token owner mismatch. Expected ${args.executionWalletAddress}, got ${tokenAccountOwner}.`,
+      );
+    }
+
+    console.log(`[${args.logScope}] verified funding ATA`, {
+      ataAddress: args.ataAddress,
+      executionWalletAddress: args.executionWalletAddress,
+      mint: args.fundingMint,
+      attempt,
+    });
+
+    return;
+  }
+}
+
 function createAssociatedTokenIdempotentInstruction(input: {
   payer: Address;
   ata: Address;
@@ -133,6 +242,14 @@ export async function ensureExecutionWalletFundingAta(
   const ataAccount = await fetchEncodedAccount(rpc, ataAddress);
 
   if (ataAccount.exists) {
+    await verifyExecutionWalletFundingAta({
+      rpc,
+      ataAddress,
+      executionWalletAddress,
+      fundingMint: fundingToken.mint,
+      logScope,
+    });
+
     return {
       ataAddress,
       mint: fundingToken.mint,
@@ -181,6 +298,18 @@ export async function ensureExecutionWalletFundingAta(
     commitment: "confirmed",
   });
   const signature = getSignatureFromTransaction(signedTransaction);
+  await confirmAtaCreation({
+    signature,
+    blockhash: latestBlockhash.value.blockhash,
+    lastValidBlockHeight: Number(latestBlockhash.value.lastValidBlockHeight),
+  });
+  await verifyExecutionWalletFundingAta({
+    rpc,
+    ataAddress,
+    executionWalletAddress,
+    fundingMint: fundingToken.mint,
+    logScope,
+  });
 
   console.log(`[${logScope}] created funding ATA`, {
     executionWalletAddress,

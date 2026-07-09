@@ -11,7 +11,10 @@ import {
 } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAction, useMutation, useQuery } from "convex/react";
-import { useQuery as useTanstackQuery } from "@tanstack/react-query";
+import {
+  useQuery as useTanstackQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useSignTransaction } from "@privy-io/react-auth/solana";
 import { ArrowLeft, ChevronDown, Radar } from "lucide-react";
 import { api } from "@/convex/_generated/api";
@@ -41,18 +44,43 @@ import { formatUnits } from "viem";
 import { getCeloChain } from "@/lib/ecosystem";
 import { useIsMobile } from "@/hooks/use-media-query";
 const celoChain = getCeloChain();
-const FLASHTRADE_SUPPORTED_MARKETS = new Set([
-  "XAU/USD",
-  "XAG/USD",
-  "EUR/USD",
-  "GBP/USD",
-]);
+
+function formatTruncatedUnits(value: bigint, decimals: number) {
+  const scale = BigInt(10) ** BigInt(decimals);
+  const whole = value / scale;
+  const fraction = value % scale;
+  const cents =
+    decimals >= 2
+      ? fraction / (BigInt(10) ** BigInt(decimals - 2))
+      : fraction * (BigInt(10) ** BigInt(2 - decimals));
+  return `${whole.toString()}.${cents.toString().padStart(2, "0")}`;
+}
+
 const FLASH_TRADE_TEST_FALLBACKS: Partial<
-  Record<string, { entryPrice: number; stopLoss: number }>
+  Record<
+    string,
+    { direction: "long" | "short"; entryPrice: number; stopLoss: number }
+  >
 > = {
   "XAU/USD": {
+    direction: "short",
     entryPrice: 4104.05,
-    stopLoss: 4070,
+    stopLoss: 4924.86,
+  },
+  "XAG/USD": {
+    direction: "short",
+    entryPrice: 45.2,
+    stopLoss: 54.24,
+  },
+  "EUR/USD": {
+    direction: "long",
+    entryPrice: 1.17,
+    stopLoss: 0.936,
+  },
+  "GBP/USD": {
+    direction: "long",
+    entryPrice: 1.37,
+    stopLoss: 1.096,
   },
 };
 import {
@@ -494,6 +522,10 @@ export default function ArenaDashboard() {
   const runFlashTradeDevnetTest = useAction(
     api.flashtrade.runFlashTradeDevnetTest,
   );
+  const flashTradeCapabilities = useQuery(
+    api.flashtrade_capabilities.getFlashTradeCapabilities,
+    {},
+  );
   const closeFlashTradePosition = useAction(
     api.flashtrade.closeFlashTradePosition,
   );
@@ -535,6 +567,9 @@ export default function ArenaDashboard() {
   const [lastWithdrawSignature, setLastWithdrawSignature] = useState<
     string | null
   >(null);
+  const [lastWithdrawSummary, setLastWithdrawSummary] = useState<string | null>(
+    null,
+  );
   const [isClosingPosition, setIsClosingPosition] = useState(false);
   const [isRunningFlashTradeTest, setIsRunningFlashTradeTest] = useState(false);
   const [flashTradeTestError, setFlashTradeTestError] = useState<string | null>(
@@ -545,10 +580,13 @@ export default function ArenaDashboard() {
     vaultConsumeSignature: string | null;
     venueOpenSignature: string | null;
     venuePositionKey: string | null;
+    venueMarketSymbol?: string | null;
+    flashDepositSignature?: string | null;
     executionWalletAddress: string;
   } | null>(null);
   const selectedAgentSlug = searchParams.get("agent");
   const selectedMarketParam = searchParams.get("market");
+  const queryClient = useQueryClient();
 
   // One-time migration: rename agents to mythical names if they still have old names
   useEffect(() => {
@@ -1021,33 +1059,72 @@ export default function ArenaDashboard() {
 
     setIsWithdrawing(true);
     setWithdrawError(null);
+    setLastWithdrawSummary(null);
 
     try {
       const preparedWithdraw = await prepareWithdraw({
         walletAddress: selectedAccount.address,
         agentName: selectedAgent.name.toLowerCase(),
         amountUi: withdrawAmount.trim(),
+        privyUserId: privyUserId ?? undefined,
       });
-      const signedWithdraw = await signTransaction({
-        chain,
-        wallet: selectedWallet,
-        transaction: Uint8Array.from(
-          atob(preparedWithdraw.transactionBase64),
-          (character) => character.charCodeAt(0),
-        ),
-      });
+      const signedWithdraw = preparedWithdraw.transactionBase64
+        ? await signTransaction({
+            chain,
+            wallet: selectedWallet,
+            transaction: Uint8Array.from(
+              atob(preparedWithdraw.transactionBase64),
+              (character) => character.charCodeAt(0),
+            ),
+          })
+        : null;
       const result = await submitWithdraw({
         walletAddress: selectedAccount.address,
-        signedTransactionBase64: encodeBase64(signedWithdraw.signedTransaction),
+        agentName: selectedAgent.name.toLowerCase(),
+        amountUi: withdrawAmount.trim(),
+        privyUserId: privyUserId ?? undefined,
+        signedTransactionBase64: signedWithdraw
+          ? encodeBase64(signedWithdraw.signedTransaction)
+          : undefined,
       });
 
       setLastWithdrawSignature(result.signature);
+      const vaultAmount = parseFloat(
+        formatUnits(
+          BigInt(result.vaultWithdrawnBaseUnits),
+          preparedWithdraw.decimals,
+        ),
+      ).toFixed(2);
+      const executionWalletAmount = parseFloat(
+        formatUnits(
+          BigInt(result.executionWalletWithdrawnBaseUnits),
+          preparedWithdraw.decimals,
+        ),
+      ).toFixed(2);
+      setLastWithdrawSummary(
+        `$${vaultAmount} from vault · $${executionWalletAmount} recovered`,
+      );
       setWithdrawAmount("");
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: vaultSnapshotKeys.snapshot(
+            selectedAccount.address,
+            vaultSnapshotAgentSlug ?? "",
+            privyUserId ?? "",
+          ),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: vaultSnapshotKeys.fundingBalance(selectedAccount.address),
+        }),
+      ]);
       console.log("[withdraw] Withdrew from vault:", {
         agentId: selectedAgent.id,
         mint: preparedWithdraw.mint,
         amountBaseUnits: preparedWithdraw.amountBaseUnits,
         signature: result.signature,
+        vaultWithdrawnBaseUnits: result.vaultWithdrawnBaseUnits,
+        executionWalletWithdrawnBaseUnits:
+          result.executionWalletWithdrawnBaseUnits,
       });
     } catch (error) {
       console.error("[withdraw] failed", {
@@ -1076,11 +1153,13 @@ export default function ArenaDashboard() {
     queryKey: vaultSnapshotKeys.snapshot(
       solanaSnapshotAddress ?? "",
       vaultSnapshotAgentSlug ?? "",
+      privyUserId ?? "",
     ),
     queryFn: () =>
       getVaultSnapshot({
         walletAddress: solanaSnapshotAddress!,
         agentName: resolvedAgentName,
+        privyUserId: privyUserId ?? undefined,
       }),
     enabled:
       !isCelo && isConnected && !!solanaSnapshotAddress && !!vaultSnapshotAgentSlug,
@@ -1146,16 +1225,14 @@ export default function ArenaDashboard() {
   });
   const celoUsdcBalance =
     rawUsdcBalance != null
-      ? parseFloat(formatUnits(rawUsdcBalance, CELO_DEPOSIT_TOKEN_DECIMALS)).toFixed(2)
+      ? formatTruncatedUnits(rawUsdcBalance, CELO_DEPOSIT_TOKEN_DECIMALS)
       : null;
   const solanaDepositTokenBalance =
     solanaFundingTokenBalance != null
-      ? parseFloat(
-          formatUnits(
-            BigInt(solanaFundingTokenBalance.balanceBaseUnits),
-            solanaFundingTokenBalance.decimals,
-          ),
-        ).toFixed(2)
+      ? formatTruncatedUnits(
+          BigInt(solanaFundingTokenBalance.balanceBaseUnits),
+          solanaFundingTokenBalance.decimals,
+        )
       : null;
 
   // ── Close position ─────────────────────────────────────────────────────────
@@ -1214,10 +1291,11 @@ export default function ArenaDashboard() {
         agentName: selectedAgent.name.toLowerCase(),
         marketSymbol: selectedMarketSymbol,
         direction:
-          selectedActiveSetup.direction === "long" ||
+          fallbackExecutionValues?.direction ??
+          (selectedActiveSetup.direction === "long" ||
           selectedActiveSetup.direction === "short"
             ? selectedActiveSetup.direction
-            : undefined,
+            : undefined),
         entryPrice:
           selectedActiveSetup.entryPrice ??
           fallbackExecutionValues?.entryPrice,
@@ -1229,6 +1307,8 @@ export default function ArenaDashboard() {
         vaultConsumeSignature: string | null;
         venueOpenSignature: string | null;
         venuePositionKey: string | null;
+        venueMarketSymbol?: string | null;
+        flashDepositSignature?: string | null;
         executionWalletAddress: string;
       };
 
@@ -2056,6 +2136,12 @@ export default function ArenaDashboard() {
                                 )
                               }
                               vaultBalance={vaultSnapshot?.vaultBalance ?? null}
+                              executionWalletBalance={
+                                vaultSnapshot?.executionWalletBalance ?? null
+                              }
+                              totalWithdrawableBalance={
+                                vaultSnapshot?.totalWithdrawableBalance ?? null
+                              }
                               vaultAllowance={vaultSnapshot?.vaultAllowance ?? null}
                               isInPosition={vaultSnapshot?.isInPosition ?? null}
                               vaultDecimals={vaultSnapshot?.decimals ?? 6}
@@ -2066,15 +2152,26 @@ export default function ArenaDashboard() {
                               isWithdrawing={isWithdrawing}
                               withdrawError={withdrawError}
                               lastWithdrawSignature={lastWithdrawSignature}
+                              lastWithdrawSummary={lastWithdrawSummary}
                               onClosePosition={() => void handleClosePosition()}
                               isClosingPosition={isClosingPosition}
                               showFlashTradeDevnetTest={
                                 !isCelo &&
                                 Boolean(privyUserId) &&
-                                FLASHTRADE_SUPPORTED_MARKETS.has(
-                                  expandedMarketSymbol,
+                                Boolean(
+                                  flashTradeCapabilities?.supportedAppMarkets.some(
+                                    (symbol: string) =>
+                                      symbol === expandedMarketSymbol,
+                                  ),
                                 ) &&
-                                Boolean(selectedActiveSetup)
+                                Boolean(
+                                  (selectedActiveSetup &&
+                                    (selectedActiveSetup.direction === "long" ||
+                                      selectedActiveSetup.direction === "short") &&
+                                    typeof selectedActiveSetup.entryPrice === "number" &&
+                                    typeof selectedActiveSetup.stopPrice === "number") ||
+                                    FLASH_TRADE_TEST_FALLBACKS[expandedMarketSymbol],
+                                )
                               }
                               onRunFlashTradeDevnetTest={() =>
                                 void handleRunFlashTradeDevnetTest()

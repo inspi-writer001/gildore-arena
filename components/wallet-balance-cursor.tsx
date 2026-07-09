@@ -26,7 +26,15 @@ type PointerState = {
 };
 
 function formatBalanceUi(rawValue: string, decimals: number) {
-  return parseFloat(formatUnits(BigInt(rawValue), decimals)).toFixed(2);
+  const scale = BigInt(10) ** BigInt(decimals);
+  const value = BigInt(rawValue);
+  const whole = value / scale;
+  const fraction = value % scale;
+  const cents =
+    decimals >= 2
+      ? fraction / (BigInt(10) ** BigInt(decimals - 2))
+      : fraction * (BigInt(10) ** BigInt(2 - decimals));
+  return `${whole.toString()}.${cents.toString().padStart(2, "0")}`;
 }
 
 export function WalletBalanceCursor() {
@@ -93,9 +101,10 @@ export function WalletBalanceCursor() {
     if (rawCeloUsdcBalance == null) {
       return "Loading USDC...";
     }
-    return `${parseFloat(
-      formatUnits(rawCeloUsdcBalance, CELO_DEPOSIT_TOKEN_DECIMALS),
-    ).toFixed(2)} USDC`;
+    return `${formatBalanceUi(
+      rawCeloUsdcBalance.toString(),
+      CELO_DEPOSIT_TOKEN_DECIMALS,
+    )} USDC`;
   }, [
     eco.ecosystem,
     rawCeloUsdcBalance,

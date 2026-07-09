@@ -5,51 +5,38 @@ import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { action, type ActionCtx } from "./_generated/server";
 import {
-  buildFlashTradeClosePosition,
-  buildFlashTradeOpenPosition,
-  listFlashTradePositions,
-  type FlashTradePosition,
-} from "../lib/flashtrade/client";
-import {
   decryptExecutionWalletSecret,
   encryptExecutionWalletSecret,
 } from "../lib/server/execution-wallet-crypto";
 import {
   assertExecutionWalletHasGas,
+  createRpc,
   createExecutionWalletSeed,
   createExecutionWalletSignerFromSeed,
-  createRpc,
   ensureExecutionWalletFundingAta,
-  signAndBroadcastVenueTransaction,
 } from "../lib/solana/execution-wallet";
 import { fetchUserVaultSnapshot } from "../lib/solana/gildore-vault";
 import {
   executeServerConsumeTicker,
   executeServerUpdateTickerCloseTrade,
 } from "../lib/solana/server-gildore-vault";
-
-const SUPPORTED_FLASHTRADE_MARKETS = {
-  "XAU/USD": "XAU",
-  "XAG/USD": "XAG",
-  "EUR/USD": "EUR",
-  "GBP/USD": "GBP",
-} as const;
+import {
+  closeFlashTradePositionV2,
+  createFlashTradeExecutionClient,
+  depositToFlashTradeLedger,
+  ensureFlashTradeSetup,
+  openFlashTradePosition as openFlashTradePositionV2,
+  readFlashTradePositionSnapshot,
+  resolveFlashTradeMarket,
+  waitForFlashTradePositionSnapshot,
+} from "../lib/flashtrade/v2";
+import { BN } from "@coral-xyz/anchor";
 
 const CLOSED_EXECUTION_STATUSES = new Set([
   "closed",
   "closed_pending_settlement",
   "failed",
 ]);
-
-function getVenueMarketSymbol(marketSymbol: string) {
-  return SUPPORTED_FLASHTRADE_MARKETS[
-    marketSymbol as keyof typeof SUPPORTED_FLASHTRADE_MARKETS
-  ] ?? null;
-}
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 function isDevnetRpc() {
   const rpcUrl =
@@ -84,7 +71,9 @@ function computeExpectedPrincipal(args: {
   }
 
   if (args.amountToSpend > BigInt(0)) {
-    return args.amountToSpend;
+    return args.amountToSpend > args.vaultBalance
+      ? args.vaultBalance
+      : args.amountToSpend;
   }
 
   return args.vaultBalance >= hardCapSpendable
@@ -122,7 +111,11 @@ function computeRiskModel(args: {
   };
 }
 
-function toPositionSnapshot(position: FlashTradePosition | null) {
+function toPositionSnapshot(
+  position:
+    | Awaited<ReturnType<typeof readFlashTradePositionSnapshot>>
+    | null,
+) {
   if (!position) {
     return undefined;
   }
@@ -152,6 +145,7 @@ type ResolvedExecutionContext = {
     venuePositionKey?: string;
     venueMarketSymbol: string;
     direction: "long" | "short";
+    marketSymbol: string;
   } | null;
   agent: { name: string } | null;
   agentSlug: string;
@@ -183,39 +177,6 @@ type OpenFlashTradeExecutionArgs = {
   isManualTest?: boolean;
   testEnvironment?: "devnet";
 };
-
-async function findOpenedPosition(args: {
-  owner: string;
-  venueMarketSymbol: string;
-  direction: "long" | "short";
-  beforePositionKeys: Set<string>;
-}) {
-  const desiredSide = args.direction === "long" ? "long" : "short";
-
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    const positions = await listFlashTradePositions(args.owner);
-    const match =
-      positions.find(
-        (position) =>
-          position.marketSymbol === args.venueMarketSymbol &&
-          position.sideUi?.toLowerCase() === desiredSide &&
-          !args.beforePositionKeys.has(position.key),
-      ) ??
-      positions.find(
-        (position) =>
-          position.marketSymbol === args.venueMarketSymbol &&
-          position.sideUi?.toLowerCase() === desiredSide,
-      );
-
-    if (match) {
-      return match;
-    }
-
-    await sleep(1_000);
-  }
-
-  return null;
-}
 
 async function ensureExecutionWalletRecord(
   ctx: ActionCtx,
@@ -287,13 +248,6 @@ async function openFlashTradeExecution(
   ctx: ActionCtx,
   args: OpenFlashTradeExecutionArgs,
 ) {
-  const venueMarketSymbol = getVenueMarketSymbol(args.marketSymbol);
-  if (!venueMarketSymbol) {
-    throw new Error(
-      `${args.marketSymbol} is not supported on FlashTrade v1. VIX and unsupported pairs stay on the deferred execution path.`,
-    );
-  }
-
   const ensuredWallet = await ensureExecutionWalletRecord(ctx, {
     privyUserId: args.privyUserId,
     ecosystem: args.originEcosystem,
@@ -333,6 +287,18 @@ async function openFlashTradeExecution(
     throw new Error("Entry and stop loss must be present before execution.");
   }
 
+  const resolvedMarket = resolveFlashTradeMarket({
+    appMarketSymbol: args.marketSymbol,
+    direction,
+    allowManualFallback: Boolean(args.isManualTest),
+  });
+
+  if (resolvedMarket.collateralSymbol !== "USDC") {
+    throw new Error(
+      `FlashTrade ${resolvedMarket.targetSymbol} ${direction} on ${resolvedMarket.poolName} requires ${resolvedMarket.collateralSymbol} collateral, but the current vault execution path only funds USDC.`,
+    );
+  }
+
   const { leverage, takeProfit } = computeRiskModel({
     direction,
     entryPrice,
@@ -355,7 +321,7 @@ async function openFlashTradeExecution(
   }
 
   const principalBaseUnits = computeExpectedPrincipal({
-    vaultBalance: vaultSnapshot.userState.amount,
+    vaultBalance: vaultSnapshot.vaultBalance,
     amountToSpend: vaultSnapshot.ticker.amountToSpend,
     decimals: vaultSnapshot.decimals,
   });
@@ -374,7 +340,7 @@ async function openFlashTradeExecution(
       agentSlug: context.agentSlug,
       agentName: context.agent?.name ?? args.agentName.trim(),
       marketSymbol: args.marketSymbol,
-      venueMarketSymbol,
+      venueMarketSymbol: resolvedMarket.targetSymbol,
       executionWalletAddress: context.wallet.executionWalletAddress,
       direction,
       principalAmountUi,
@@ -400,6 +366,7 @@ async function openFlashTradeExecution(
       encryptionSalt: context.wallet.encryptionSalt,
     });
     const signer = await createExecutionWalletSignerFromSeed(decryptedSeed);
+    const flashExecutionClient = createFlashTradeExecutionClient(decryptedSeed);
     const ata = await ensureExecutionWalletFundingAta(signer.address);
 
     await ctx.runMutation(internal.flashtradeStore.patchExecutionRecord, {
@@ -408,44 +375,10 @@ async function openFlashTradeExecution(
       updatedAt: Date.now(),
     });
 
-    const preview = await buildFlashTradeOpenPosition({
-      inputTokenSymbol: "USDC",
-      outputTokenSymbol: venueMarketSymbol,
-      inputAmountUi: principalAmountUi,
-      leverage,
-      tradeType: direction === "long" ? "LONG" : "SHORT",
-      owner: signer.address,
-      orderType: "MARKET",
-      slippagePercentage,
-      takeProfit: takeProfit.toString(),
-      stopLoss: stopLoss.toString(),
-    });
-
-    if (preview.err) {
-      throw new Error(preview.err);
-    }
-    if (!preview.transactionBase64) {
-      throw new Error("FlashTrade did not return a transaction to sign.");
-    }
-
-    await ctx.runMutation(internal.flashtradeStore.patchExecutionRecord, {
-      executionId: executionRecord._id,
-      preview: {
-        newEntryPrice: preview.newEntryPrice ?? undefined,
-        newLeverage: preview.newLeverage ?? undefined,
-        newLiquidationPrice: preview.newLiquidationPrice ?? undefined,
-        availableLiquidity: preview.availableLiquidity ?? undefined,
-        youPayUsdUi: preview.youPayUsdUi ?? undefined,
-        youRecieveUsdUi: preview.youRecieveUsdUi ?? undefined,
-        entryFee: preview.entryFee ?? undefined,
-        marginFeePercentage: preview.marginFeePercentage ?? undefined,
-      },
-      updatedAt: Date.now(),
-    });
-
-    const existingPositions = await listFlashTradePositions(signer.address);
-    const beforePositionKeys = new Set(
-      existingPositions.map((position) => position.key),
+    await assertExecutionWalletHasGas(signer.address);
+    const setupResult = await ensureFlashTradeSetup(
+      flashExecutionClient,
+      resolvedMarket,
     );
     const consume = await executeServerConsumeTicker(
       args.walletAddress,
@@ -459,25 +392,45 @@ async function openFlashTradeExecution(
       vaultConsumeSignature: consume.signature,
       updatedAt: Date.now(),
     });
-
-    await assertExecutionWalletHasGas(signer.address);
-    const openResult = await signAndBroadcastVenueTransaction({
-      transactionBase64: preview.transactionBase64,
-      signer,
-      logScope: "flashtrade:open-position",
+    const depositSignature = await depositToFlashTradeLedger({
+      executionClient: flashExecutionClient,
+      resolvedMarket,
+      amount: new BN(principalBaseUnits.toString()),
     });
-    const openedPosition = await findOpenedPosition({
-      owner: signer.address,
-      venueMarketSymbol,
-      direction,
-      beforePositionKeys,
+    const openResult = await openFlashTradePositionV2({
+      executionClient: flashExecutionClient,
+      resolvedMarket,
+      collateralAmount: new BN(principalBaseUnits.toString()),
+      leverage,
+      slippagePercentage,
+    });
+    const openedPosition = await waitForFlashTradePositionSnapshot({
+      executionClient: flashExecutionClient,
+      resolvedMarket,
     });
 
     await ctx.runMutation(internal.flashtradeStore.patchExecutionRecord, {
       executionId: executionRecord._id,
       status: "open",
+      preview: {
+        newEntryPrice:
+          openedPosition?.entryPriceUi ??
+          ("entryPrice" in openResult.quote &&
+          openResult.quote.entryPrice
+            ? String(openResult.quote.entryPrice.price)
+            : undefined),
+        newLeverage: openedPosition?.leverageUi ?? leverage.toString(),
+        newLiquidationPrice:
+          openedPosition?.liquidationPriceUi ??
+          ("liquidationPrice" in openResult.quote &&
+          openResult.quote.liquidationPrice
+            ? String(openResult.quote.liquidationPrice.price)
+            : undefined),
+        youPayUsdUi: principalAmountUi,
+      },
       venueOpenSignature: openResult.signature,
-      venuePositionKey: openedPosition?.key,
+      venuePositionKey:
+        openedPosition?.venuePositionKey ?? resolvedMarket.market.toBase58(),
       positionSnapshot: toPositionSnapshot(openedPosition),
       openedAt: Date.now(),
       updatedAt: Date.now(),
@@ -496,12 +449,19 @@ async function openFlashTradeExecution(
       fundingTokenAccount: ata.ataAddress,
       executionId: executionRecord._id,
       vaultConsumeSignature: consume.signature,
+      flashSetupSignature:
+        setupResult.delegateSignature ??
+        setupResult.basketSignature ??
+        setupResult.depositLedgerSignature,
+      flashDepositSignature: depositSignature,
       venueOpenSignature: openResult.signature,
-      venuePositionKey: openedPosition?.key ?? null,
+      venuePositionKey:
+        openedPosition?.venuePositionKey ?? resolvedMarket.market.toBase58(),
+      venueMarketSymbol: resolvedMarket.targetSymbol,
       preview: {
-        entryPrice: preview.newEntryPrice ?? null,
-        leverage: preview.newLeverage ?? null,
-        liquidationPrice: preview.newLiquidationPrice ?? null,
+        entryPrice: openedPosition?.entryPriceUi ?? null,
+        leverage: openedPosition?.leverageUi ?? leverage.toString(),
+        liquidationPrice: openedPosition?.liquidationPriceUi ?? null,
       },
     };
   } catch (error) {
@@ -596,11 +556,19 @@ export const closeFlashTradePosition: ReturnType<typeof action> = action({
       },
     )) as ResolvedExecutionContext;
 
+    if (!context.activeExecution) {
+      const vaultClose = await executeServerUpdateTickerCloseTrade(
+        args.walletAddress,
+        args.agentName,
+      );
+
+      return {
+        clearedTickerOnly: true,
+        vaultCloseSignature: vaultClose.signature,
+      };
+    }
     if (!context.wallet) {
       throw new Error("Execution wallet not found.");
-    }
-    if (!context.activeExecution) {
-      throw new Error("No active FlashTrade execution found for this agent.");
     }
 
     const execution = context.activeExecution;
@@ -609,21 +577,22 @@ export const closeFlashTradePosition: ReturnType<typeof action> = action({
       encryptionSalt: context.wallet.encryptionSalt,
     });
     const signer = await createExecutionWalletSignerFromSeed(decryptedSeed);
-    const positions = await listFlashTradePositions(signer.address);
-    const activePosition =
-      positions.find((position) => position.key === execution.venuePositionKey) ??
-      positions.find(
-        (position) =>
-          position.marketSymbol === execution.venueMarketSymbol &&
-          position.sideUi?.toLowerCase() === execution.direction,
-      ) ??
-      null;
+    const flashExecutionClient = createFlashTradeExecutionClient(decryptedSeed);
+    const resolvedMarket = resolveFlashTradeMarket({
+      targetSymbol: execution.venueMarketSymbol,
+      direction: execution.direction,
+    });
+    const activePosition = await readFlashTradePositionSnapshot({
+      executionClient: flashExecutionClient,
+      resolvedMarket,
+    });
 
-    if (!activePosition) {
-      throw new Error("No matching live FlashTrade position found to close.");
-    }
-    if (!activePosition.sizeUsdUi) {
-      throw new Error("FlashTrade position size is missing.");
+    if (
+      !activePosition ||
+      (execution.venuePositionKey &&
+        activePosition.venuePositionKey !== execution.venuePositionKey)
+    ) {
+      throw new Error("No matching live FlashTrade v2 position found to close.");
     }
 
     await ctx.runMutation(internal.flashtradeStore.patchExecutionRecord, {
@@ -634,24 +603,9 @@ export const closeFlashTradePosition: ReturnType<typeof action> = action({
 
     try {
       await assertExecutionWalletHasGas(signer.address);
-      const closePreview = await buildFlashTradeClosePosition({
-        positionKey: activePosition.key,
-        inputUsdUi: activePosition.sizeUsdUi,
-        withdrawTokenSymbol: "USDC",
-        slippagePercentage: execution.slippagePercentage,
-      });
-
-      if (closePreview.err) {
-        throw new Error(closePreview.err);
-      }
-      if (!closePreview.transactionBase64) {
-        throw new Error("FlashTrade did not return a close transaction.");
-      }
-
-      const closeResult = await signAndBroadcastVenueTransaction({
-        transactionBase64: closePreview.transactionBase64,
-        signer,
-        logScope: "flashtrade:close-position",
+      const closeResult = await closeFlashTradePositionV2({
+        executionClient: flashExecutionClient,
+        resolvedMarket,
       });
       const vaultClose = await executeServerUpdateTickerCloseTrade(
         args.walletAddress,
@@ -664,8 +618,8 @@ export const closeFlashTradePosition: ReturnType<typeof action> = action({
         settlementStatus: "blocked_program_constraint",
         venueCloseSignature: closeResult.signature,
         vaultCloseSignature: vaultClose.signature,
-        returnedAmountUi: closePreview.receiveTokenAmountUi ?? undefined,
-        realizedPnlUi: closePreview.settledPnl ?? undefined,
+        returnedAmountUi: activePosition.collateralUsdUi,
+        realizedPnlUi: activePosition.pnlWithFeeUsdUi,
         closedAt: Date.now(),
         updatedAt: Date.now(),
       });
@@ -678,8 +632,8 @@ export const closeFlashTradePosition: ReturnType<typeof action> = action({
         executionId: execution._id,
         venueCloseSignature: closeResult.signature,
         vaultCloseSignature: vaultClose.signature,
-        returnedAmountUi: closePreview.receiveTokenAmountUi ?? null,
-        realizedPnlUi: closePreview.settledPnl ?? null,
+        returnedAmountUi: activePosition.collateralUsdUi ?? null,
+        realizedPnlUi: activePosition.pnlWithFeeUsdUi ?? null,
         settlementStatus: "blocked_program_constraint" as const,
       };
     } catch (error) {
@@ -703,7 +657,7 @@ export const syncFlashTradePosition: ReturnType<typeof action> = action({
     privyUserId: v.string(),
     agentName: v.string(),
   },
-  handler: async (ctx, args): Promise<FlashTradePosition | null> => {
+  handler: async (ctx, args): Promise<ReturnType<typeof toPositionSnapshot> | null> => {
     const context = (await ctx.runQuery(
       internal.flashtradeStore.resolveExecutionContext,
       {
@@ -717,17 +671,19 @@ export const syncFlashTradePosition: ReturnType<typeof action> = action({
     }
 
     const execution = context.activeExecution;
-    const positions = await listFlashTradePositions(
-      context.wallet.executionWalletAddress,
-    );
-    const position =
-      positions.find((item) => item.key === execution.venuePositionKey) ??
-      positions.find(
-        (item) =>
-          item.marketSymbol === execution.venueMarketSymbol &&
-          item.sideUi?.toLowerCase() === execution.direction,
-      ) ??
-      null;
+    const decryptedSeed = decryptExecutionWalletSecret({
+      encryptedPrivateKey: context.wallet.encryptedPrivateKey,
+      encryptionSalt: context.wallet.encryptionSalt,
+    });
+    const flashExecutionClient = createFlashTradeExecutionClient(decryptedSeed);
+    const resolvedMarket = resolveFlashTradeMarket({
+      targetSymbol: execution.venueMarketSymbol,
+      direction: execution.direction,
+    });
+    const position = await readFlashTradePositionSnapshot({
+      executionClient: flashExecutionClient,
+      resolvedMarket,
+    });
 
     await ctx.runMutation(internal.flashtradeStore.patchExecutionRecord, {
       executionId: execution._id,
@@ -745,6 +701,6 @@ export const syncFlashTradePosition: ReturnType<typeof action> = action({
       updatedAt: Date.now(),
     });
 
-    return position;
+    return toPositionSnapshot(position) ?? null;
   },
 });

@@ -13,6 +13,7 @@ import type * as agentVaultCelo from "../agentVaultCelo.js";
 import type * as arena from "../arena.js";
 import type * as flashtrade from "../flashtrade.js";
 import type * as flashtradeStore from "../flashtradeStore.js";
+import type * as flashtrade_capabilities from "../flashtrade_capabilities.js";
 
 import type {
   ApiFromModules,
@@ -26,6 +27,7 @@ declare const fullApi: ApiFromModules<{
   arena: typeof arena;
   flashtrade: typeof flashtrade;
   flashtradeStore: typeof flashtradeStore;
+  flashtrade_capabilities: typeof flashtrade_capabilities;
 }>;
 
 /**

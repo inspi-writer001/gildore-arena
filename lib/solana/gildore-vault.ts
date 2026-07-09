@@ -19,7 +19,9 @@ import {
 } from "@solana/kit";
 import { decodeBase64, encodeBase64 } from "../base64";
 
-const PROGRAM_ADDRESS = address("2Xefp1aBUabU12QNDPxpj3ieU7MjZzcS6uD7x4e9qye9");
+export const PROGRAM_ADDRESS = address(
+  "2Xefp1aBUabU12QNDPxpj3ieU7MjZzcS6uD7x4e9qye9",
+);
 const SYSTEM_PROGRAM_ADDRESS = address("11111111111111111111111111111111");
 const TOKEN_PROGRAM_ADDRESS = address(
   "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
@@ -76,6 +78,8 @@ export type UserVaultSnapshot = {
   mint: Address;
   decimals: number;
   userStateAddress: Address;
+  userStateVaultAddress: Address;
+  vaultBalance: bigint;
   userState: UserState | null;
   tickerAddress: Address;
   ticker: TickerState | null;
@@ -564,9 +568,14 @@ export async function fetchUserVaultSnapshot(
     fundingToken.mint,
     agentAddress,
   );
+  const userStateVaultAddress = await deriveAssociatedTokenAddress(
+    userStateAddress,
+    fundingToken.mint,
+  );
   const tickerAddress = await deriveTickerAddress(agentId, userAddress);
-  const [userStateAccount, tickerAccount] = await Promise.all([
+  const [userStateAccount, userStateVaultAccount, tickerAccount] = await Promise.all([
     fetchEncodedAccount(rpc, userStateAddress),
+    fetchEncodedAccount(rpc, userStateVaultAddress),
     fetchEncodedAccount(rpc, tickerAddress),
   ]);
 
@@ -574,6 +583,10 @@ export async function fetchUserVaultSnapshot(
     mint: fundingToken.mint,
     decimals: fundingToken.decimals,
     userStateAddress,
+    userStateVaultAddress,
+    vaultBalance: userStateVaultAccount.exists
+      ? decodeSplTokenAccountAmount(userStateVaultAccount.data)
+      : BigInt(0),
     userState: userStateAccount.exists
       ? decodeUserStateAccount(userStateAccount.data)
       : null,

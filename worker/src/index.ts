@@ -89,7 +89,11 @@ async function runAnalysisJob(client: ConvexHttpClient) {
     const snapshot = await client.query(api.arena.getArenaSnapshot, {});
     const activeSetup =
       snapshot.strategySetups.find(
-        (setup) =>
+        (setup: {
+          agentSlug: string;
+          marketSymbol: string;
+          isActive: boolean;
+        }) =>
           setup.agentSlug === claimed.agentSlug &&
           setup.marketSymbol === claimed.marketSymbol &&
           setup.isActive,

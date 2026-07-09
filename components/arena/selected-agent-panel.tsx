@@ -121,8 +121,16 @@ const newsToneDot: Record<ConfluenceState, string> = {
 
 function formatVaultAmount(raw: string | null, decimals: number): string {
   if (raw == null) return "—";
-  const n = Number(BigInt(raw)) / 10 ** decimals;
-  return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const scale = BigInt(10) ** BigInt(decimals);
+  const value = BigInt(raw);
+  const whole = value / scale;
+  const fraction = value % scale;
+  const cents =
+    decimals >= 2
+      ? fraction / (BigInt(10) ** BigInt(decimals - 2))
+      : fraction * (BigInt(10) ** BigInt(2 - decimals));
+  const centsText = cents.toString().padStart(2, "0");
+  return `$${whole.toString()}.${centsText}`;
 }
 
 // ── Vault control surface ─────────────────────────────────────────────────────
@@ -130,6 +138,8 @@ function formatVaultAmount(raw: string | null, decimals: number): string {
 type VaultControlSurfaceProps = {
   // vault stats
   vaultBalance: string | null;
+  executionWalletBalance: string | null;
+  totalWithdrawableBalance: string | null;
   vaultAllowance: string | null;
   isInPosition: boolean | null;
   vaultDecimals: number;
@@ -150,6 +160,7 @@ type VaultControlSurfaceProps = {
   isWithdrawing: boolean;
   withdrawError: string | null;
   lastWithdrawSignature: string | null;
+  lastWithdrawSummary: string | null;
   // position actions
   onClosePosition: () => void;
   isClosingPosition: boolean;
@@ -162,6 +173,8 @@ type VaultControlSurfaceProps = {
     vaultConsumeSignature: string | null;
     venueOpenSignature: string | null;
     venuePositionKey: string | null;
+    venueMarketSymbol?: string | null;
+    flashDepositSignature?: string | null;
     executionWalletAddress: string;
   } | null;
   // performance
@@ -207,6 +220,8 @@ function VaultStatCell({
 
 function VaultControlSurface({
   vaultBalance,
+  executionWalletBalance,
+  totalWithdrawableBalance,
   vaultAllowance,
   isInPosition,
   vaultDecimals,
@@ -225,6 +240,7 @@ function VaultControlSurface({
   isWithdrawing,
   withdrawError,
   lastWithdrawSignature,
+  lastWithdrawSummary,
   onClosePosition,
   isClosingPosition,
   showFlashTradeDevnetTest,
@@ -236,7 +252,12 @@ function VaultControlSurface({
   winRate,
   openPositions,
 }: VaultControlSurfaceProps) {
-  const formattedBalance = formatVaultAmount(vaultBalance, vaultDecimals);
+  const formattedBalance = formatVaultAmount(totalWithdrawableBalance, vaultDecimals);
+  const formattedVaultBalance = formatVaultAmount(vaultBalance, vaultDecimals);
+  const formattedExecutionWalletBalance = formatVaultAmount(
+    executionWalletBalance,
+    vaultDecimals,
+  );
   const formattedAllowance = formatVaultAmount(vaultAllowance, vaultDecimals);
 
   const positionLabel =
@@ -253,7 +274,7 @@ function VaultControlSurface({
       {/* Vault stats strip */}
       <div className="grid grid-cols-3 gap-3 p-[16px_18px]">
         <VaultStatCell
-          label="Vault balance"
+          label="Total withdrawable"
           value={formattedBalance}
           loading={isLoadingVault}
         />
@@ -315,14 +336,20 @@ function VaultControlSurface({
               {isWithdrawing ? "Sending…" : "Withdraw"}
             </button>
           </div>
+          <p className="m-0 font-barlow text-[11px] text-[rgba(245,245,245,0.48)]">
+            Vault {formattedVaultBalance} · Recovery {formattedExecutionWalletBalance}
+          </p>
           {withdrawError && (
             <p className="m-0 font-barlow text-[11px] font-semibold text-[#8a2d2d]">
               {withdrawError}
             </p>
           )}
-          {lastWithdrawSignature && !withdrawError && (
+          {lastWithdrawSummary && !withdrawError && (
             <p className="m-0 font-barlow text-[11px] font-semibold text-[#2e7d52]">
-              Withdrawn · sig {lastWithdrawSignature.slice(0, 8)}…
+              {lastWithdrawSummary}
+              {lastWithdrawSignature
+                ? ` · sig ${lastWithdrawSignature.slice(0, 8)}…`
+                : ""}
             </p>
           )}
         </form>
@@ -361,12 +388,17 @@ function VaultControlSurface({
             {lastFlashTradeTestResult ? (
               <div className="grid gap-1 font-barlow text-[11px] text-[rgba(245,245,245,0.68)]">
                 <span>
-                  Spend ${lastFlashTradeTestResult.principalAmountUi} via{" "}
+                  Spend ${lastFlashTradeTestResult.principalAmountUi} on{" "}
+                  {lastFlashTradeTestResult.venueMarketSymbol ?? marketSymbol} via{" "}
                   {lastFlashTradeTestResult.executionWalletAddress.slice(0, 8)}…
                 </span>
                 <span>
                   Consume sig{" "}
                   {lastFlashTradeTestResult.vaultConsumeSignature?.slice(0, 8) ?? "—"}…
+                </span>
+                <span>
+                  Flash deposit{" "}
+                  {lastFlashTradeTestResult.flashDepositSignature?.slice(0, 8) ?? "—"}…
                 </span>
                 <span>
                   Venue sig{" "}
@@ -481,6 +513,8 @@ export function SelectedAgentPanel({
   onMarkAutoRestarted,
   // vault
   vaultBalance,
+  executionWalletBalance,
+  totalWithdrawableBalance,
   vaultAllowance,
   isInPosition,
   vaultDecimals,
@@ -492,6 +526,7 @@ export function SelectedAgentPanel({
   isWithdrawing,
   withdrawError,
   lastWithdrawSignature,
+  lastWithdrawSummary,
   // position
   onClosePosition,
   isClosingPosition,
@@ -538,6 +573,8 @@ export function SelectedAgentPanel({
   onMarkAutoRestarted: () => void;
   // vault
   vaultBalance: string | null;
+  executionWalletBalance: string | null;
+  totalWithdrawableBalance: string | null;
   vaultAllowance: string | null;
   isInPosition: boolean | null;
   vaultDecimals: number;
@@ -549,6 +586,7 @@ export function SelectedAgentPanel({
   isWithdrawing: boolean;
   withdrawError: string | null;
   lastWithdrawSignature: string | null;
+  lastWithdrawSummary: string | null;
   // position
   onClosePosition: () => void;
   isClosingPosition: boolean;
@@ -561,6 +599,8 @@ export function SelectedAgentPanel({
     vaultConsumeSignature: string | null;
     venueOpenSignature: string | null;
     venuePositionKey: string | null;
+    venueMarketSymbol?: string | null;
+    flashDepositSignature?: string | null;
     executionWalletAddress: string;
   } | null;
 }) {
@@ -664,6 +704,8 @@ export function SelectedAgentPanel({
           {/* Vault control surface */}
           <VaultControlSurface
             vaultBalance={vaultBalance}
+            executionWalletBalance={executionWalletBalance}
+            totalWithdrawableBalance={totalWithdrawableBalance}
             vaultAllowance={vaultAllowance}
             isInPosition={isInPosition}
             vaultDecimals={vaultDecimals}
@@ -682,6 +724,7 @@ export function SelectedAgentPanel({
             isWithdrawing={isWithdrawing}
             withdrawError={withdrawError}
             lastWithdrawSignature={lastWithdrawSignature}
+            lastWithdrawSummary={lastWithdrawSummary}
             onClosePosition={onClosePosition}
             isClosingPosition={isClosingPosition}
             showFlashTradeDevnetTest={showFlashTradeDevnetTest}

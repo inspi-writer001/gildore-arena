@@ -6,10 +6,12 @@ import {
   assertIsTransactionWithinSizeLimit,
   address,
   appendTransactionMessageInstruction,
+  appendTransactionMessageInstructionPlan,
   createKeyPairSignerFromBytes,
   createKeyPairSignerFromPrivateKeyBytes,
   createSolanaRpc,
   createTransactionMessage,
+  fetchEncodedAccount,
   getBase58Encoder,
   getCompiledTransactionMessageDecoder,
   getSignatureFromTransaction,
@@ -23,7 +25,9 @@ import {
   setTransactionMessageLifetimeUsingBlockhash,
   type Address,
 } from "@solana/kit";
+import { getTransferToATAInstructionPlanAsync } from "@solana-program/token";
 import {
+  PROGRAM_ADDRESS,
   fetchGlobalState,
   fetchFundingTokenInfo,
   fetchFundingTokenWalletBalance,
@@ -39,11 +43,10 @@ import {
   type PreparedRegisterTickerTransaction,
   type PreparedWithdrawTransaction,
 } from "./gildore-vault";
+import {
+  createExecutionWalletSignerFromSeed,
+} from "./execution-wallet";
 import { decodeBase64, encodeBase64 } from "../base64";
-
-const PROGRAM_ADDRESS = address(
-  "2um3F4vyQwcuhwrGdPHGMwwK5C4K5rFU84cxHPoYNMKg",
-);
 const TOKEN_PROGRAM_ADDRESS = address(
   "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
 );
@@ -225,6 +228,157 @@ async function simulateTransactionAndLog(args: {
   return simulation.value;
 }
 
+function parseUiAmountToBaseUnits(value: string, decimals: number) {
+  const normalized = value.trim();
+  if (!/^\d+(\.\d+)?$/.test(normalized)) {
+    throw new Error("Enter a valid withdraw amount");
+  }
+
+  const [wholePart, fractionalPart = ""] = normalized.split(".");
+  if (fractionalPart.length > decimals) {
+    throw new Error(`Amount supports up to ${decimals} decimal places`);
+  }
+
+  const paddedFractional = fractionalPart.padEnd(decimals, "0");
+  const whole = BigInt(wholePart || "0");
+  const fraction = BigInt(paddedFractional || "0");
+  const scale = BigInt(10) ** BigInt(decimals);
+  return whole * scale + fraction;
+}
+
+function formatUiAmountFromBaseUnits(value: bigint, decimals: number) {
+  const scale = BigInt(10) ** BigInt(decimals);
+  const whole = value / scale;
+  const fraction = value % scale;
+  const fractionText = fraction
+    .toString()
+    .padStart(decimals, "0")
+    .replace(/0+$/, "");
+  return fractionText.length > 0
+    ? `${whole.toString()}.${fractionText}`
+    : whole.toString();
+}
+
+type WithdrawPlanningContext = {
+  mint: Address;
+  decimals: number;
+  vaultBalance: bigint;
+  executionWalletBalance: bigint;
+  totalWithdrawableBalance: bigint;
+};
+
+type WithdrawPlan = WithdrawPlanningContext & {
+  requestedAmountBaseUnits: bigint;
+  vaultWithdrawAmountBaseUnits: bigint;
+  executionWalletWithdrawAmountBaseUnits: bigint;
+};
+
+async function getExecutionWalletFundingBalanceData(
+  executionWalletAddressInput: string,
+) {
+  const rpc = createRpc();
+  const executionWalletAddress = address(executionWalletAddressInput);
+  const fundingToken = await fetchFundingTokenInfo(rpc);
+  const ataAddress = await deriveAssociatedTokenAddress(
+    executionWalletAddress,
+    fundingToken.mint,
+  );
+  const tokenAccount = await fetchEncodedAccount(rpc, ataAddress);
+
+  if (!tokenAccount.exists) {
+    return {
+      executionWalletAddress,
+      ataAddress,
+      mint: fundingToken.mint,
+      decimals: fundingToken.decimals,
+      balance: BigInt(0),
+    };
+  }
+
+  return {
+    executionWalletAddress,
+    ataAddress,
+    mint: fundingToken.mint,
+    decimals: fundingToken.decimals,
+    balance: readU64FromTokenAccount(tokenAccount.data),
+  };
+}
+
+function readU64FromTokenAccount(data: Uint8Array) {
+  if (data.length < 72) {
+    throw new Error(
+      `Configured token account amount layout is invalid (expected at least 72 bytes, got ${data.length}).`,
+    );
+  }
+
+  return new DataView(
+    data.buffer,
+    data.byteOffset,
+    data.byteLength,
+  ).getBigUint64(64, true);
+}
+
+async function getWithdrawPlanningContext(args: {
+  userWalletAddress: string;
+  agentName: string;
+  executionWalletAddress?: string;
+}) {
+  const rpc = createRpc();
+  const snapshot = await fetchUserVaultSnapshot(
+    rpc,
+    args.userWalletAddress,
+    args.agentName,
+  );
+  const executionWalletBalance = args.executionWalletAddress
+    ? (await getExecutionWalletFundingBalanceData(args.executionWalletAddress)).balance
+    : BigInt(0);
+
+  return {
+    mint: snapshot.mint,
+    decimals: snapshot.decimals,
+    vaultBalance: snapshot.vaultBalance,
+    executionWalletBalance,
+    totalWithdrawableBalance: snapshot.vaultBalance + executionWalletBalance,
+  } satisfies WithdrawPlanningContext;
+}
+
+async function buildWithdrawPlan(args: {
+  userWalletAddress: string;
+  agentName: string;
+  amountUi: string;
+  executionWalletAddress?: string;
+}) {
+  const context = await getWithdrawPlanningContext(args);
+  const requestedAmountBaseUnits = parseUiAmountToBaseUnits(
+    args.amountUi,
+    context.decimals,
+  );
+
+  if (requestedAmountBaseUnits <= BigInt(0)) {
+    throw new Error("Enter a withdrawal amount greater than zero.");
+  }
+
+  if (context.totalWithdrawableBalance < requestedAmountBaseUnits) {
+    throw new Error(
+      `Insufficient withdrawable balance. Available: ${context.totalWithdrawableBalance.toString()} base units, requested: ${requestedAmountBaseUnits.toString()}.`,
+    );
+  }
+
+  const vaultWithdrawAmountBaseUnits =
+    context.vaultBalance >= requestedAmountBaseUnits
+      ? requestedAmountBaseUnits
+      : context.vaultBalance;
+  const executionWalletWithdrawAmountBaseUnits =
+    requestedAmountBaseUnits - vaultWithdrawAmountBaseUnits;
+
+  return {
+    ...context,
+    requestedAmountBaseUnits,
+    vaultWithdrawAmountBaseUnits,
+    executionWalletWithdrawAmountBaseUnits,
+  } satisfies WithdrawPlan;
+}
+
 export async function prepareServerFundAgentVaultTransaction(
   userWalletAddress: string,
   agentName: string,
@@ -395,60 +549,209 @@ export async function prepareServerWithdrawTransaction(
   userWalletAddress: string,
   agentName: string,
   amountUi: string,
+  executionWalletAddress?: string,
   logScope = "agent-vault:prepare-withdraw",
 ) {
   const rpc = createRpc();
   const broadcasterSigner = await getBroadcasterSigner();
-  const prepared = await prepareWithdrawTransaction({
-    rpc,
-    userAddressInput: userWalletAddress,
-    payerAddressInput: broadcasterSigner.address,
+  const plan = await buildWithdrawPlan({
+    userWalletAddress,
     agentName,
     amountUi,
+    executionWalletAddress,
   });
-  const partiallySignedTransaction =
-    await partiallySignTransactionMessageWithSigners(
-      setTransactionMessageFeePayerSigner(
-        broadcasterSigner,
-        prepared.transactionMessage as unknown as Parameters<
-          typeof setTransactionMessageFeePayerSigner
-        >[1],
+
+  let prepared: PreparedWithdrawTransaction | null = null;
+  let transactionBase64: string | null = null;
+  if (plan.vaultWithdrawAmountBaseUnits > BigInt(0)) {
+    prepared = await prepareWithdrawTransaction({
+      rpc,
+      userAddressInput: userWalletAddress,
+      payerAddressInput: broadcasterSigner.address,
+      agentName,
+      amountUi: formatUiAmountFromBaseUnits(
+        plan.vaultWithdrawAmountBaseUnits,
+        plan.decimals,
       ),
+    });
+    const partiallySignedTransaction =
+      await partiallySignTransactionMessageWithSigners(
+        setTransactionMessageFeePayerSigner(
+          broadcasterSigner,
+          prepared.transactionMessage as unknown as Parameters<
+            typeof setTransactionMessageFeePayerSigner
+          >[1],
+        ),
+      );
+    const transactionBytes = Uint8Array.from(
+      getTransactionEncoder().encode(partiallySignedTransaction),
     );
-  const transactionBytes = Uint8Array.from(
-    getTransactionEncoder().encode(partiallySignedTransaction),
-  );
-  await simulateTransactionAndLog({
-    rpc,
-    transactionBytes,
-    logScope,
-    stage: "prepare",
-    sigVerify: false,
-  });
-  const transactionBase64 = encodeBase64(transactionBytes);
+    await simulateTransactionAndLog({
+      rpc,
+      transactionBytes,
+      logScope,
+      stage: "prepare",
+      sigVerify: false,
+    });
+    transactionBase64 = encodeBase64(transactionBytes);
+  }
 
   console.log(`[${logScope}] prepared withdraw transaction`, {
     userWalletAddress,
     broadcasterWalletAddress: broadcasterSigner.address,
     agentName,
     amountUi,
-    amountBaseUnits: prepared.amountBaseUnits.toString(),
-    mint: prepared.mint,
+    requestedAmountBaseUnits: plan.requestedAmountBaseUnits.toString(),
+    vaultWithdrawAmountBaseUnits: plan.vaultWithdrawAmountBaseUnits.toString(),
+    executionWalletWithdrawAmountBaseUnits:
+      plan.executionWalletWithdrawAmountBaseUnits.toString(),
+    mint: plan.mint,
   });
 
-  return summarizePreparedTransaction(prepared, transactionBase64);
+  return {
+    transactionBase64,
+    amountBaseUnits: plan.requestedAmountBaseUnits.toString(),
+    mint: plan.mint,
+    decimals: plan.decimals,
+    requiresUserSignature: plan.vaultWithdrawAmountBaseUnits > BigInt(0),
+    vaultWithdrawAmountBaseUnits:
+      plan.vaultWithdrawAmountBaseUnits.toString(),
+    executionWalletWithdrawAmountBaseUnits:
+      plan.executionWalletWithdrawAmountBaseUnits.toString(),
+    totalWithdrawableBalanceBaseUnits:
+      plan.totalWithdrawableBalance.toString(),
+    agentAddress: prepared?.agentAddress ?? null,
+    userStateAddress: prepared?.userStateAddress ?? null,
+    tickerAddress: prepared?.tickerAddress ?? null,
+  };
 }
 
-export async function submitServerWithdrawTransaction(
-  userWalletAddress: string,
-  signedTransactionBase64: string,
-  logScope = "agent-vault:submit-withdraw",
-) {
-  return await submitServerFundAgentVaultTransaction(
-    userWalletAddress,
-    signedTransactionBase64,
-    logScope,
+async function sweepExecutionWalletFundingToUser(args: {
+  executionWalletSigner: Awaited<ReturnType<typeof createExecutionWalletSignerFromSeed>>;
+  userWalletAddress: string;
+  amountBaseUnits: bigint;
+  mint: Address;
+  decimals: number;
+  logScope?: string;
+}) {
+  const rpc = createRpc();
+  const broadcasterSigner = await getBroadcasterSigner();
+  const latestBlockhash = await rpc.getLatestBlockhash().send();
+  const instructionPlan = await getTransferToATAInstructionPlanAsync({
+    payer: broadcasterSigner,
+    mint: args.mint,
+    authority: args.executionWalletSigner,
+    recipient: address(args.userWalletAddress),
+    amount: args.amountBaseUnits,
+    decimals: args.decimals,
+  });
+  const message = pipe(
+    createTransactionMessage({ version: "legacy" }),
+    (transaction) =>
+      setTransactionMessageFeePayerSigner(
+        broadcasterSigner,
+        transaction as Parameters<typeof setTransactionMessageFeePayerSigner>[1],
+      ),
+    (transaction) =>
+      setTransactionMessageLifetimeUsingBlockhash(
+        latestBlockhash.value,
+        transaction,
+      ),
+    (transaction) =>
+      appendTransactionMessageInstructionPlan(instructionPlan, transaction),
   );
+
+  const partiallySignedTransaction =
+    await partiallySignTransactionMessageWithSigners(message);
+  const [executionWalletSignatureDictionary] =
+    await args.executionWalletSigner.signTransactions([
+      partiallySignedTransaction,
+    ]);
+  const signedTransaction = {
+    ...partiallySignedTransaction,
+    signatures: {
+      ...partiallySignedTransaction.signatures,
+      ...executionWalletSignatureDictionary,
+    },
+  } as unknown as typeof partiallySignedTransaction;
+  assertIsFullySignedTransaction(signedTransaction);
+  assertIsTransactionWithinSizeLimit(signedTransaction);
+  const sendTransactionWithoutConfirming =
+    sendTransactionWithoutConfirmingFactory({
+      rpc: rpc as Parameters<
+        typeof sendTransactionWithoutConfirmingFactory
+      >[0]["rpc"],
+    });
+  await sendTransactionWithoutConfirming(signedTransaction, {
+    commitment: "confirmed",
+  });
+  const signature = getSignatureFromTransaction(signedTransaction);
+
+  console.log(`[${args.logScope ?? "execution-wallet:sweep-withdraw"}] swept`, {
+    executionWalletAddress: args.executionWalletSigner.address,
+    userWalletAddress: args.userWalletAddress,
+    amountBaseUnits: args.amountBaseUnits.toString(),
+    signature,
+  });
+
+  return { signature };
+}
+
+export async function submitServerWithdrawTransaction(args: {
+  userWalletAddress: string;
+  agentName: string;
+  amountUi: string;
+  signedTransactionBase64?: string;
+  executionWalletAddress?: string;
+  executionWalletSigner?: Awaited<ReturnType<typeof createExecutionWalletSignerFromSeed>>;
+  logScope?: string;
+}) {
+  const plan = await buildWithdrawPlan({
+    userWalletAddress: args.userWalletAddress,
+    agentName: args.agentName,
+    amountUi: args.amountUi,
+    executionWalletAddress: args.executionWalletAddress,
+  });
+
+  let vaultSignature: string | null = null;
+  if (plan.vaultWithdrawAmountBaseUnits > BigInt(0)) {
+    if (!args.signedTransactionBase64) {
+      throw new Error("Signed vault withdrawal transaction is required.");
+    }
+    const result = await submitServerFundAgentVaultTransaction(
+      args.userWalletAddress,
+      args.signedTransactionBase64,
+      args.logScope ?? "agent-vault:submit-withdraw",
+    );
+    vaultSignature = result.signature;
+  }
+
+  let executionWalletSweepSignature: string | null = null;
+  if (plan.executionWalletWithdrawAmountBaseUnits > BigInt(0)) {
+    if (!args.executionWalletSigner) {
+      throw new Error(
+        "Execution wallet signer is required to sweep recoverable funds.",
+      );
+    }
+    const sweep = await sweepExecutionWalletFundingToUser({
+      executionWalletSigner: args.executionWalletSigner,
+      userWalletAddress: args.userWalletAddress,
+      amountBaseUnits: plan.executionWalletWithdrawAmountBaseUnits,
+      mint: plan.mint,
+      decimals: plan.decimals,
+      logScope: args.logScope,
+    });
+    executionWalletSweepSignature = sweep.signature;
+  }
+
+  return {
+    signature: vaultSignature ?? executionWalletSweepSignature,
+    vaultSignature,
+    executionWalletSweepSignature,
+    vaultWithdrawnBaseUnits: plan.vaultWithdrawAmountBaseUnits.toString(),
+    executionWalletWithdrawnBaseUnits:
+      plan.executionWalletWithdrawAmountBaseUnits.toString(),
+  };
 }
 
 // ── Consume ticker (consume_ticker, discriminator = 5) ────────────────────────
@@ -638,13 +941,23 @@ export async function executeServerUpdateTickerCloseTrade(
 export async function getVaultSnapshotData(
   userWalletAddress: string,
   agentName: string,
+  executionWalletAddress?: string,
 ) {
   const rpc = createRpc();
-  const snapshot = await fetchUserVaultSnapshot(rpc, userWalletAddress, agentName);
+  const [snapshot, planning] = await Promise.all([
+    fetchUserVaultSnapshot(rpc, userWalletAddress, agentName),
+    getWithdrawPlanningContext({
+      userWalletAddress,
+      agentName,
+      executionWalletAddress,
+    }),
+  ]);
   return {
-    decimals: snapshot.decimals,
-    mint: snapshot.mint,
-    vaultBalance: snapshot.userState?.amount.toString() ?? null,
+    decimals: planning.decimals,
+    mint: planning.mint,
+    vaultBalance: planning.vaultBalance.toString(),
+    executionWalletBalance: planning.executionWalletBalance.toString(),
+    totalWithdrawableBalance: planning.totalWithdrawableBalance.toString(),
     vaultAllowance: snapshot.ticker?.amountToSpend.toString() ?? null,
     isInPosition: snapshot.ticker?.isInPosition ?? null,
   };
