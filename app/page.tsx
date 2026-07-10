@@ -5,7 +5,8 @@ import ArenaEnterButton from "@/components/arena-enter-button";
 import { DotGrid, Shader } from "shaders/react";
 
 const VIDEO_URL =
-  "https://res.cloudinary.com/ddlz0zesx/video/upload/v1780665219/arena_firefly_j0fmgx.mp4";
+  "https://res.cloudinary.com/ddlz0zesx/video/upload/v1783642199/comp_arena_firefly_tc5rcz.mp4";
+// "https://res.cloudinary.com/ddlz0zesx/video/upload/v1780665219/arena_firefly_j0fmgx.mp4";
 // "https://res.cloudinary.com/ddlz0zesx/video/upload/v1776959668/bg_fin4_f4lzuw.mp4";
 // "https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260328_083109_283f3553-e28f-428b-a723-d639c617eb2b.mp4";
 
