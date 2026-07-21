@@ -144,6 +144,7 @@ type VaultControlSurfaceProps = {
   isInPosition: boolean | null;
   vaultDecimals: number;
   isLoadingVault: boolean;
+  isCelo?: boolean;
   // market & max spend
   marketSymbol: string;
   spendAmount: string;
@@ -226,6 +227,7 @@ function VaultControlSurface({
   isInPosition,
   vaultDecimals,
   isLoadingVault,
+  isCelo,
   marketSymbol,
   spendAmount,
   onSpendAmountChange,
@@ -289,6 +291,26 @@ function VaultControlSurface({
           loading={isLoadingVault}
           accent={positionAccent}
         />
+      </div>
+
+      <Separator className="bg-white/[0.08]" />
+
+      <div className="px-[18px] py-[12px]">
+        <p className="m-0 rounded-[12px] border border-white/8 bg-white/[0.03] px-3 py-2 font-inter text-[12px] leading-[1.6] text-[rgba(245,245,245,0.56)]">
+          Final received amounts may be lower than displayed after gas, bridge,
+          execution, slippage, and applicable platform fees.{" "}
+          {isCelo
+            ? "Celo-origin funds may be bridged across networks for execution and bridged back for settlement."
+            : "Execution and settlement routes may still introduce external costs."}{" "}
+          <a
+            href="/terms"
+            target="_top"
+            className="text-[rgba(245,245,245,0.74)] underline underline-offset-2 hover:text-[#f5f5f5]"
+          >
+            Terms apply
+          </a>
+          .
+        </p>
       </div>
 
       <Separator className="bg-white/[0.08]" />
@@ -519,6 +541,7 @@ export function SelectedAgentPanel({
   isInPosition,
   vaultDecimals,
   isLoadingVault,
+  isCelo,
   // withdraw
   withdrawAmount,
   onWithdrawAmountChange,
@@ -579,6 +602,7 @@ export function SelectedAgentPanel({
   isInPosition: boolean | null;
   vaultDecimals: number;
   isLoadingVault: boolean;
+  isCelo?: boolean;
   // withdraw
   withdrawAmount: string;
   onWithdrawAmountChange: (value: string) => void;
@@ -710,6 +734,7 @@ export function SelectedAgentPanel({
             isInPosition={isInPosition}
             vaultDecimals={vaultDecimals}
             isLoadingVault={isLoadingVault}
+            isCelo={isCelo}
             marketSymbol={selectedMarketSymbol}
             spendAmount={spendAmount}
             onSpendAmountChange={onSpendAmountChange}

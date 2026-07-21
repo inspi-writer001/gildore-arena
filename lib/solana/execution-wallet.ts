@@ -62,9 +62,9 @@ function parseBroadcasterWalletBytes() {
   return getBase58Encoder().encode(rawValue);
 }
 
-export function createRpc() {
+export function createRpc(rpcUrl = solanaRpcUrl) {
   return createSolanaRpc(
-    solanaRpcUrl as Parameters<typeof createSolanaRpc>[0],
+    rpcUrl as Parameters<typeof createSolanaRpc>[0],
   );
 }
 
@@ -329,8 +329,9 @@ export async function ensureExecutionWalletFundingAta(
 export async function assertExecutionWalletHasGas(
   executionWalletAddressInput: string,
   minimumLamports = BigInt(200_000),
+  rpcUrl = solanaRpcUrl,
 ) {
-  const rpc = createRpc();
+  const rpc = createRpc(rpcUrl);
   const executionWalletAddress = address(executionWalletAddressInput);
   const balance = await rpc.getBalance(executionWalletAddress).send();
   const lamports = balance.value;

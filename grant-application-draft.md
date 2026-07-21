@@ -8,7 +8,7 @@ Grant link: https://superteam.fun/earn/grants/agentic-engineering
 > Gildore Arena
 
 **One Line Description**
-> Gildore Arena is an agentic trading arena on Solana where users inspect, compare, fund, and eventually back transparent trading agents with visible strategy trails.
+> Gildore Arena is a Solana-native agentic trading arena where users inspect transparent trading agents, fund controlled agent vaults, and execute supported perpetual strategies through FlashTrade.
 
 **TG username**
 > t.me/inspiration_gx
@@ -19,52 +19,36 @@ Grant link: https://superteam.fun/earn/grants/agentic-engineering
 ## Step 2: Details
 
 **Project Details**
-> Gildore Arena is building a new consumer trading surface on Solana. Instead of asking users to trust opaque signal groups, fund managers, or black-box bots, it turns trading strategies into transparent agents that compete in public. Each agent leaves a visible trail behind its decisions, including chart structure, setup zones, review state, and reasoning, so users can inspect process before judging outcome.
+> Gildore Arena makes trading agents accountable before users put capital behind them. Rather than asking users to trust opaque signal groups or black-box bots, the arena lets them inspect an agent's market structure, setup zones, entry and invalidation logic, risk parameters, and tracked performance. Agents compete in a public product surface, so discovery is based on visible process and execution discipline rather than personality or screenshots.
 >
-> The current product is already public in beta and getting iterative feedback. Users can enter the arena, inspect named trading agents, compare them on a leaderboard, view strategy-specific chart logic, and interact with a real-time backend that tracks agent state, market state, review sessions, and setup lifecycles. Under the hood, Gildore Arena combines deterministic strategy engines with browser-assisted chart review, which lets the system evaluate structure in a more human-like way while still keeping the workflow disciplined and reproducible.
+> Solana is the execution and settlement layer of the product. Each user can fund an agent-specific SPL-token vault managed by Gildore's onchain vault program. The program derives user and agent state, records net deposits, creates a ticker with a per-agent spend allowance, charges a capped platform fee, and allows the user to withdraw uncommitted funds. When an agent has a valid setup, the execution path consumes only the configured allowance, sends USDC to an execution wallet, initializes the required FlashTrade v2 state, deposits collateral to FlashTrade, and opens the perpetual position. Execution records persist the funding, open, live-position, close, and settlement lifecycle so the arena can show what happened rather than only a final PnL number.
 >
-> On the Solana side, the core DeFi direction is already known and in motion. The app includes embedded Solana wallets via Privy, a dedicated onchain vault program for funding agents and registering spend controls, and a clear path toward execution and deeper financial participation using Solana-native rails such as Flash Trade. The remaining work is not discovering the architecture from scratch; it is tightening the integration and productizing the flow end to end.
+> FlashTrade is central to the product, not a future integration. Gildore's execution client resolves supported markets and direction, derives leverage and take-profit from the agent's entry and stop, validates USDC collateral, initializes the FlashTrade deposit ledger/basket/trade vault/delegation, deposits collateral, opens and later closes the venue position, and syncs position snapshots back to the arena. The current capability layer supports the arena's XAU/USD, XAG/USD, EUR/USD, and GBP/USD strategies through FlashTrade market mappings.
 >
-> This grant would help complete that transition from strong prototype to sharper Solana product: harden the agent funding and spend-control flows, connect the current arena experience more directly to DeFi execution rails, and ship a cleaner end-to-end user experience where transparent agent performance becomes something users can actively participate in on Solana.
+> Gildore is Solana-native while still reducing the friction for users who begin elsewhere. The currently implemented external funding route is precise: Celo-origin USDC is consumed from the user's Celo agent vault, bridged through Squid into Solana USDC for FlashTrade execution, then the settled Solana balance is bridged back to the Celo execution wallet. This gives users a cross-chain entry point while keeping perp execution and settlement accounting anchored to Solana. We are not claiming generic multi-chain support; Celo is the implemented external route today, with Solana as the destination for execution.
 
 **Deadline**
-> 3 July 2026
+> 1 August 2026 (Asia/Kolkata)
 
 **Proof of Work**
 > Live app: https://gildore-arena.vercel.app
 >
-> GitHub repo: github.com/inspi-writer001/gildore-arena
+> GitHub repository: https://github.com/inspi-writer001/gildore-arena
 >
-> Current shipped artifacts:
-> - Live arena interface with leaderboard and selected-agent analysis views
-> - Convex backend managing agents, markets, browser sessions, setup lifecycles, and analysis jobs
-> - Worker process for automated browser-review execution
-> - Playwright-based browser runtime for chart inspection and streamed session playback
-> - Solana vault program under gildore-arena-vault/
-> - Embedded wallet onboarding through Privy
-> - Transaction prep/submission layer for agent funding and ticker registration
+> The product already includes a public arena UI; Convex-backed agent, market, setup, and execution state; a browser-assisted chart-review worker; embedded wallet onboarding; a Solana vault program; FlashTrade v2 execution and position-sync logic; and a Celo-to-Solana USDC route through Squid.
 >
-> Key implementation files:
-> - Arena UI: app/page.tsx, app/arena/page.tsx, components/arena-dashboard.tsx
-> - Browser review runtime: lib/browser-session-runtime.ts
-> - Vision/chart analysis: lib/chart-vision-analysis.ts
-> - Convex orchestration: convex/arena.ts, convex/schema.ts
-> - Worker: worker/src/index.ts
-> - Solana vault program: gildore-arena-vault/src/lib.rs
-> - Solana transaction integration: lib/solana/gildore-vault.ts, lib/solana/server-gildore-vault.ts
+> Verifiable technical artifacts in the repository:
+> - `gildore-arena-vault/`: Solana vault program with agent registration, SPL-token deposits, user withdrawals, per-agent tickers, and spend caps.
+> - `lib/flashtrade/v2.ts` and `convex/flashtrade.ts`: FlashTrade v2 client, collateral deposit, position open/close, lifecycle persistence, and settlement handling.
+> - `lib/squid/client.ts`: Squid routing, deposit-address handling, and route-status polling for the Celo/Solana path.
+> - `convex/flashtradeStore.ts` and `convex/schema.ts`: real-time execution-wallet and FlashTrade-execution records.
+> - `components/arena-dashboard.tsx`: user-facing funding, spend configuration, position state, and withdrawal flows.
 >
-> Recent development history from git:
-> - 5adb191 fix: making changes to agent vision
-> - d2c23b0 fix: removed dangling processes on cron
-> - b0a96d4 fix: making changes to api
-> - f02f3e0 fix: modifying and adding new tracked markets
-> - 4ef1bdf fix: making changes so it doesn't block agent data persistence
-> - 59a0dd1 fix: updating patch for DO
-> - 07f4827 fix: making backend changes
+> Recent Git history demonstrates continued technical delivery, including FlashTrade integration, wallet infrastructure, Celo/EVM execution work, testing, API improvements, agent-vision improvements, and performance work.
 >
-> AI-assisted development transcripts exported to project root:
-> - claude-session.jsonl
-> - codex-session.jsonl
+> AI-assisted development proof exported to the project root:
+> - `claude-session.jsonl`
+> - `codex-session.jsonl`
 
 **Personal X Profile**
 > x.com/inspiration_gx
@@ -73,29 +57,33 @@ Grant link: https://superteam.fun/earn/grants/agentic-engineering
 > github.com/inspi-writer001
 
 **Colosseum Crowdedness Score**
-> [Attach: screenshot from https://colosseum.com/copilot, uploaded as a public Google Drive link]
+> Attach a screenshot from https://colosseum.com/copilot, upload it to publicly accessible storage, and paste the public link here.
 
 **AI Session Transcript**
-> Attached: ./claude-session.jsonl and ./codex-session.jsonl
+> Attach `claude-session.jsonl` and `codex-session.jsonl` from the project root.
 
 ## Step 3: Milestones
 
 **Goals and Milestones**
-> 1. By 26 June 2026, finalize the current Solana agent funding loop so users can reliably create or use their embedded wallet, fund an agent vault, and register per-agent spend controls without friction.
-> 2. By 29 June 2026, connect the existing arena and analysis layer more directly to the chosen DeFi execution rails, including Flash Trade-related integration points and clearer execution-ready state for supported agents.
-> 3. By 1 July 2026, polish the live product flow so users can move cleanly from discovering agents, to inspecting chart logic, to funding and preparing participation on Solana inside one coherent experience.
-> 4. By 3 July 2026, ship a grant-demo-ready version of Gildore Arena at gildore-arena.vercel.app that demonstrates transparent agent analysis plus working Solana funding and execution-oriented infrastructure.
+> 1. By 23 July 2026, finish production hardening of the Solana agent-vault flow: embedded wallet onboarding, SPL-token deposits, per-agent spend configuration, onchain vault reads, and safe user withdrawals.
+>
+> 2. By 27 July 2026, complete the end-to-end FlashTrade execution lifecycle for supported arena strategies: setup validation, USDC collateral deposit, perpetual position open/close, live position synchronization, and persisted execution/settlement records.
+>
+> 3. By 30 July 2026, validate and polish the Celo-origin USDC route through Squid into Solana for FlashTrade execution, including return bridging after close and clear pending-settlement/error states.
+>
+> 4. By 1 August 2026, publish a grant-demo-ready Gildore Arena release where a user can discover a transparent agent, inspect its strategy trail, fund its controlled vault, configure its allowance, and follow the resulting FlashTrade execution lifecycle.
 
 **Primary KPI**
-> Number of successful onchain user funding actions completed for agent vaults in Gildore Arena.
+> Number of agent-funded FlashTrade positions successfully opened and settled end-to-end.
+>
+> Secondary adoption metric: number of successful user deposits into agent vaults.
 
 **Final tranche checkbox**
-> To receive the final tranche: submit the Colosseum project link, GitHub repo, and AI subscription receipt.
+> To receive the final tranche, submit the Colosseum project link, GitHub repository, and AI subscription receipt.
 
-## Submission Notes
+## Submission Checklist
 
-Files to have ready:
-- claude-session.jsonl
-- codex-session.jsonl
-- Crowdedness Score screenshot link
-- This application text
+- Attach `claude-session.jsonl` and `codex-session.jsonl`.
+- Add a public Colosseum Crowdedness Score screenshot link.
+- Paste the application fields above into the grant form.
+- Attach the AI subscription receipt and GitHub repository for the final tranche.

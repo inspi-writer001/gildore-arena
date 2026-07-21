@@ -4,3 +4,12 @@ overrides:
 
 onlyBuiltDependencies:
   - "@solana/web3.js"
+
+allowBuilds:
+  '@reown/appkit': true
+  bigint-buffer: true
+  bufferutil: true
+  esbuild: true
+  keccak: true
+  sharp: true
+  utf-8-validate: true

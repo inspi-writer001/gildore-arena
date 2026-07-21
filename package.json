@@ -2,7 +2,7 @@
   "name": "gildore-arena",
   "version": "0.1.0",
   "private": true,
-  "packageManager": "pnpm@10.30.3",
+  "packageManager": "pnpm@11.11.0",
   "scripts": {
     "dev": "next dev",
     "worker": "tsx worker/src/index.ts",
@@ -11,10 +11,6 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit"
-  },
-  "engines": {
-    "node": "22.x",
-    "pnpm": "10.30.3"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",

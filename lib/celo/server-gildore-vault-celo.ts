@@ -1,7 +1,17 @@
-import { createPublicClient, createWalletClient, http } from "viem";
+import { createPublicClient, createWalletClient, http, type Address } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { GILDORE_VAULT_CELO_ABI } from "./gildore-vault-celo";
+import {
+  CELO_DEPOSIT_TOKEN_ADDRESS,
+  CELO_DEPOSIT_TOKEN_DECIMALS,
+  GILDORE_VAULT_CELO_ABI,
+  MINIMAL_ERC20_ABI,
+} from "./gildore-vault-celo";
 import { getCeloChainFromUrl } from "../ecosystem";
+import {
+  createCeloExecutionWalletClientsFromSeed,
+  getCeloExecutionWalletTokenBalance,
+  transferFromCeloExecutionWallet,
+} from "./execution-wallet";
 
 function getContractAddress(): `0x${string}` {
   const addr =
@@ -53,6 +63,7 @@ async function resolveAgentId(
 export async function getCeloVaultSnapshotData(
   userWalletAddress: string,
   agentName: string,
+  executionWalletAddress?: string,
 ) {
   const contractAddress = getContractAddress();
   const publicClient = createReadClient();
@@ -80,9 +91,20 @@ export async function getCeloVaultSnapshotData(
   ]);
 
   const [amountToSpend, isInPosition] = ticker as readonly [bigint, boolean];
+  const executionWalletBalance =
+    executionWalletAddress && CELO_DEPOSIT_TOKEN_ADDRESS
+      ? await getCeloExecutionWalletTokenBalance({
+          publicClient,
+          executionWalletAddress: executionWalletAddress as `0x${string}`,
+          tokenAddress: CELO_DEPOSIT_TOKEN_ADDRESS,
+        })
+      : BigInt(0);
+  const vaultBalance = balance as bigint;
   return {
     decimals: Number(decimals),
-    vaultBalance: (balance as bigint).toString(),
+    vaultBalance: vaultBalance.toString(),
+    executionWalletBalance: executionWalletBalance.toString(),
+    totalWithdrawableBalance: (vaultBalance + executionWalletBalance).toString(),
     vaultAllowance: amountToSpend.toString(),
     isInPosition,
   };
@@ -129,4 +151,104 @@ export async function executeServerConsumeTickerCelo(
   });
 
   return { txHash };
+}
+
+function parseCeloUiAmountToBaseUnits(value: string) {
+  const normalized = value.trim();
+  if (!/^\d+(\.\d+)?$/.test(normalized)) {
+    throw new Error("Enter a valid withdraw amount");
+  }
+
+  const [wholePart, fractionalPart = ""] = normalized.split(".");
+  if (fractionalPart.length > CELO_DEPOSIT_TOKEN_DECIMALS) {
+    throw new Error(
+      `Amount supports up to ${CELO_DEPOSIT_TOKEN_DECIMALS} decimal places`,
+    );
+  }
+
+  const paddedFractional = fractionalPart.padEnd(
+    CELO_DEPOSIT_TOKEN_DECIMALS,
+    "0",
+  );
+  const whole = BigInt(wholePart || "0");
+  const fraction = BigInt(paddedFractional || "0");
+  const scale = BigInt(10) ** BigInt(CELO_DEPOSIT_TOKEN_DECIMALS);
+  return whole * scale + fraction;
+}
+
+export async function sweepCeloExecutionWalletToUser(args: {
+  seedBytes: Uint8Array;
+  userWalletAddress: string;
+  amountUi: string;
+}) {
+  if (!CELO_DEPOSIT_TOKEN_ADDRESS) {
+    throw new Error("CELO_DEPOSIT_TOKEN_ADDRESS is not configured.");
+  }
+
+  const clients = createCeloExecutionWalletClientsFromSeed(args.seedBytes);
+  const requestedAmount = parseCeloUiAmountToBaseUnits(args.amountUi);
+  const availableBalance = await getCeloExecutionWalletTokenBalance({
+    publicClient: clients.publicClient,
+    executionWalletAddress: clients.account.address,
+    tokenAddress: CELO_DEPOSIT_TOKEN_ADDRESS,
+  });
+
+  if (availableBalance === BigInt(0)) {
+    return {
+      txHash: null,
+      withdrawnBaseUnits: "0",
+    };
+  }
+
+  const amount =
+    requestedAmount > availableBalance ? availableBalance : requestedAmount;
+  const txHash = await transferFromCeloExecutionWallet({
+    walletClient: clients.walletClient,
+    tokenAddress: CELO_DEPOSIT_TOKEN_ADDRESS,
+    recipient: args.userWalletAddress as Address,
+    amount,
+  });
+
+  return {
+    txHash,
+    withdrawnBaseUnits: amount.toString(),
+  };
+}
+
+export async function getCeloExecutionWalletBalanceData(
+  executionWalletAddress: string,
+) {
+  if (!CELO_DEPOSIT_TOKEN_ADDRESS) {
+    throw new Error("CELO_DEPOSIT_TOKEN_ADDRESS is not configured.");
+  }
+
+  const publicClient = createReadClient();
+  const balance = await getCeloExecutionWalletTokenBalance({
+    publicClient,
+    executionWalletAddress: executionWalletAddress as `0x${string}`,
+    tokenAddress: CELO_DEPOSIT_TOKEN_ADDRESS,
+  });
+
+  return {
+    executionWalletAddress,
+    balance: balance.toString(),
+  };
+}
+
+export async function getCeloWalletTokenBalance(
+  userWalletAddress: string,
+) {
+  if (!CELO_DEPOSIT_TOKEN_ADDRESS) {
+    throw new Error("CELO_DEPOSIT_TOKEN_ADDRESS is not configured.");
+  }
+
+  const publicClient = createReadClient();
+  const balance = (await publicClient.readContract({
+    address: CELO_DEPOSIT_TOKEN_ADDRESS,
+    abi: MINIMAL_ERC20_ABI,
+    functionName: "balanceOf",
+    args: [userWalletAddress as `0x${string}`],
+  })) as bigint;
+
+  return balance;
 }

@@ -15,22 +15,49 @@ import {
   createExecutionWalletSignerFromSeed,
   ensureExecutionWalletFundingAta,
 } from "../lib/solana/execution-wallet";
+import {
+  ensureSolanaTokenAta,
+  getSolanaTokenWalletBalance,
+  transferSolanaSplFromExecutionWallet,
+} from "../lib/solana/token-wallet";
 import { fetchUserVaultSnapshot } from "../lib/solana/gildore-vault";
 import {
   executeServerConsumeTicker,
   executeServerUpdateTickerCloseTrade,
 } from "../lib/solana/server-gildore-vault";
 import {
+  executeServerConsumeTickerCelo,
+  executeServerUpdateTickerCloseTradeCelo,
+  getCeloVaultSnapshotData,
+} from "../lib/celo/server-gildore-vault-celo";
+import {
+  approveCeloExecutionWalletToken,
+  createCeloExecutionWalletClientsFromSeed,
+} from "../lib/celo/execution-wallet";
+import {
   closeFlashTradePositionV2,
   createFlashTradeExecutionClient,
   depositToFlashTradeLedger,
   ensureFlashTradeSetup,
+  getFlashTradeCluster,
+  getFlashTradeSolanaRpcUrl,
   openFlashTradePosition as openFlashTradePositionV2,
   readFlashTradePositionSnapshot,
   resolveFlashTradeMarket,
   waitForFlashTradePositionSnapshot,
 } from "../lib/flashtrade/v2";
+import {
+  getSquidDepositAddress,
+  getSquidRoute,
+  pollSquidStatus,
+  type SquidTransactionRequest,
+} from "../lib/squid/client";
 import { BN } from "@coral-xyz/anchor";
+
+const CELO_CHAIN_ID = "42220";
+const SOLANA_MAINNET_CHAIN_ID = "solana-mainnet-beta";
+const SOLANA_MAINNET_USDC_MINT =
+  "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
 const CLOSED_EXECUTION_STATUSES = new Set([
   "closed",
@@ -43,6 +70,18 @@ function isDevnetRpc() {
     process.env.NEXT_PUBLIC_SOLANA_RPC_URL ??
     "https://api.devnet.solana.com";
   return rpcUrl.includes("devnet");
+}
+
+function getCeloDepositTokenAddress() {
+  const tokenAddress = process.env.NEXT_PUBLIC_CELO_DEPOSIT_TOKEN_ADDRESS?.trim();
+  if (!tokenAddress) {
+    throw new Error("NEXT_PUBLIC_CELO_DEPOSIT_TOKEN_ADDRESS is not configured.");
+  }
+  return tokenAddress as `0x${string}`;
+}
+
+function isSuccessfulSquidStatus(status: string) {
+  return status === "success" || status === "partial_success";
 }
 
 function formatUiAmountFromBaseUnits(value: bigint, decimals: number) {
@@ -141,6 +180,7 @@ type ResolvedExecutionContext = {
   activeExecution: {
     _id: Id<"flashtradeExecutions">;
     status: string;
+    originEcosystem?: "solana" | "celo";
     slippagePercentage: string;
     venuePositionKey?: string;
     venueMarketSymbol: string;
@@ -177,6 +217,10 @@ type OpenFlashTradeExecutionArgs = {
   isManualTest?: boolean;
   testEnvironment?: "devnet";
 };
+
+function isEvmAddress(value: string) {
+  return value.startsWith("0x");
+}
 
 async function ensureExecutionWalletRecord(
   ctx: ActionCtx,
@@ -242,6 +286,156 @@ async function ensureExecutionWalletRecord(
     executionWalletAddress: record.executionWalletAddress,
     created: true,
   };
+}
+
+async function bridgeCeloExecutionWalletToSolana(args: {
+  seedBytes: Uint8Array;
+  amountBaseUnits: bigint;
+  solanaDestinationWalletAddress: string;
+}) {
+  const celoClients = createCeloExecutionWalletClientsFromSeed(args.seedBytes);
+  const celoDepositTokenAddress = getCeloDepositTokenAddress();
+  const routeResult = await getSquidRoute({
+    fromAddress: celoClients.account.address,
+    fromChain: CELO_CHAIN_ID,
+    fromToken: celoDepositTokenAddress,
+    fromAmount: args.amountBaseUnits.toString(),
+    toChain: SOLANA_MAINNET_CHAIN_ID,
+    toToken: SOLANA_MAINNET_USDC_MINT,
+    toAddress: args.solanaDestinationWalletAddress,
+    quoteOnly: false,
+  });
+
+  if (!routeResult.route.transactionRequest) {
+    throw new Error("Squid did not return a transaction request for the Celo bridge.");
+  }
+
+  const transactionRequest = routeResult.route.transactionRequest;
+  if (!("target" in transactionRequest) || !transactionRequest.target) {
+    throw new Error(
+      "Squid returned a non-EVM transaction request for the Celo-origin bridge.",
+    );
+  }
+  const evmTransactionRequest = transactionRequest as {
+    target: `0x${string}`;
+    data: `0x${string}`;
+    value?: string;
+    gasLimit?: string;
+  };
+
+  await approveCeloExecutionWalletToken({
+    walletClient: celoClients.walletClient,
+    tokenAddress: celoDepositTokenAddress,
+    spender: evmTransactionRequest.target,
+    amount: args.amountBaseUnits,
+  });
+
+  const sourceTxHash = await celoClients.walletClient.sendTransaction({
+    account: celoClients.account,
+    to: evmTransactionRequest.target,
+    data: evmTransactionRequest.data,
+    value: BigInt(evmTransactionRequest.value ?? "0"),
+    gas: evmTransactionRequest.gasLimit
+      ? BigInt(evmTransactionRequest.gasLimit)
+      : undefined,
+  });
+
+  if (!routeResult.requestId) {
+    throw new Error("Squid route requestId is missing.");
+  }
+  if (!routeResult.route.quoteId) {
+    throw new Error("Squid route quoteId is missing.");
+  }
+
+  const status = await pollSquidStatus({
+    params: {
+      transactionId: sourceTxHash,
+      requestId: routeResult.requestId,
+      quoteId: routeResult.route.quoteId,
+      fromChainId: CELO_CHAIN_ID,
+      toChainId: SOLANA_MAINNET_CHAIN_ID,
+    },
+  });
+
+  if (!isSuccessfulSquidStatus(status.squidTransactionStatus)) {
+    throw new Error(
+      `Squid Celo-to-Solana bridge finished with ${status.squidTransactionStatus}.`,
+    );
+  }
+
+  return {
+    sourceExecutionWalletAddress: celoClients.account.address,
+    routeRequestId: routeResult.requestId,
+    routeQuoteId: routeResult.route.quoteId,
+    sourceTxHash,
+    status: status.squidTransactionStatus,
+  };
+}
+
+async function bridgeSolanaExecutionWalletToCelo(args: {
+  seedBytes: Uint8Array;
+  amountBaseUnits: bigint;
+  celoDestinationWalletAddress: `0x${string}`;
+}) {
+  const sourceSigner = await createExecutionWalletSignerFromSeed(args.seedBytes);
+  const routeResult = await getSquidRoute({
+    fromAddress: sourceSigner.address,
+    fromChain: SOLANA_MAINNET_CHAIN_ID,
+    fromToken: SOLANA_MAINNET_USDC_MINT,
+    fromAmount: args.amountBaseUnits.toString(),
+    toChain: CELO_CHAIN_ID,
+    toToken: getCeloDepositTokenAddress(),
+    toAddress: args.celoDestinationWalletAddress,
+    quoteOnly: false,
+  });
+
+  if (!routeResult.route.transactionRequest) {
+    throw new Error("Squid did not return a transaction request for the Solana bridge.");
+  }
+
+  const transactionRequest = routeResult.route
+    .transactionRequest as SquidTransactionRequest;
+
+  if (transactionRequest.type === "CHAINFLIP_DEPOSIT_ADDRESS") {
+    const deposit = await getSquidDepositAddress(
+      transactionRequest as Record<string, unknown>,
+    );
+    const transfer = await transferSolanaSplFromExecutionWallet({
+      seedBytes: args.seedBytes,
+      sourceMintAddress: SOLANA_MAINNET_USDC_MINT,
+      destinationTokenAccount: deposit.depositAddress,
+      amount: BigInt(deposit.amount),
+      decimals: 6,
+      rpcUrl: getFlashTradeSolanaRpcUrl(),
+    });
+
+    const status = await pollSquidStatus({
+      params: {
+        transactionId: deposit.chainflipStatusTrackingId,
+        fromChainId: SOLANA_MAINNET_CHAIN_ID,
+        toChainId: CELO_CHAIN_ID,
+        bridgeType: "chainflipmultihop",
+      },
+    });
+
+    if (!isSuccessfulSquidStatus(status.squidTransactionStatus)) {
+      throw new Error(
+        `Squid Solana-to-Celo bridge finished with ${status.squidTransactionStatus}.`,
+      );
+    }
+
+    return {
+      sourceTxHash: transfer.signature,
+      bridgeTrackingId: deposit.chainflipStatusTrackingId,
+      routeRequestId: routeResult.requestId,
+      routeQuoteId: routeResult.route.quoteId ?? null,
+      status: status.squidTransactionStatus,
+    };
+  }
+
+  throw new Error(
+    `Unsupported Squid Solana-source transaction request type: ${transactionRequest.type ?? "unknown"}.`,
+  );
 }
 
 async function openFlashTradeExecution(
@@ -367,7 +561,14 @@ async function openFlashTradeExecution(
     });
     const signer = await createExecutionWalletSignerFromSeed(decryptedSeed);
     const flashExecutionClient = createFlashTradeExecutionClient(decryptedSeed);
-    const ata = await ensureExecutionWalletFundingAta(signer.address);
+    const executionWalletFundingAta =
+      args.originEcosystem === "solana"
+        ? await ensureExecutionWalletFundingAta(signer.address)
+        : null;
+    const celoExecutionWallet =
+      args.originEcosystem === "celo"
+        ? createCeloExecutionWalletClientsFromSeed(decryptedSeed)
+        : null;
 
     await ctx.runMutation(internal.flashtradeStore.patchExecutionRecord, {
       executionId: executionRecord._id,
@@ -375,21 +576,100 @@ async function openFlashTradeExecution(
       updatedAt: Date.now(),
     });
 
-    await assertExecutionWalletHasGas(signer.address);
+    if (
+      args.originEcosystem === "celo" &&
+      getFlashTradeCluster() !== "mainnet-beta"
+    ) {
+      throw new Error(
+        "Celo-to-FlashTrade execution requires FlashTrade mainnet-beta configuration.",
+      );
+    }
+
+    await assertExecutionWalletHasGas(
+      signer.address,
+      BigInt(200_000),
+      args.originEcosystem === "celo"
+        ? getFlashTradeSolanaRpcUrl()
+        : undefined,
+    );
     const setupResult = await ensureFlashTradeSetup(
       flashExecutionClient,
       resolvedMarket,
     );
-    const consume = await executeServerConsumeTicker(
-      args.walletAddress,
-      args.agentName,
-      ata.ataAddress,
-    );
+
+    let vaultConsumeSignature: string | null = null;
+    let fundingTokenAccount: string | null = executionWalletFundingAta
+      ? String(executionWalletFundingAta.ataAddress)
+      : null;
+    if (args.originEcosystem === "solana") {
+      if (!executionWalletFundingAta) {
+        throw new Error("Execution wallet funding ATA was not prepared.");
+      }
+      const consume = await executeServerConsumeTicker(
+        args.walletAddress,
+        args.agentName,
+        executionWalletFundingAta.ataAddress,
+      );
+      vaultConsumeSignature = consume.signature;
+    } else {
+      if (!celoExecutionWallet) {
+        throw new Error("Celo execution wallet was not prepared.");
+      }
+
+      const celoVaultSnapshot = await getCeloVaultSnapshotData(
+        args.walletAddress,
+        args.agentName,
+        celoExecutionWallet.account.address,
+      );
+      const celoPrincipalBaseUnits = computeExpectedPrincipal({
+        vaultBalance: BigInt(celoVaultSnapshot.vaultBalance),
+        amountToSpend: BigInt(celoVaultSnapshot.vaultAllowance),
+        decimals: celoVaultSnapshot.decimals,
+      });
+
+      if (celoPrincipalBaseUnits !== principalBaseUnits) {
+        throw new Error(
+          `Celo principal mismatch. Expected ${principalBaseUnits.toString()} base units, got ${celoPrincipalBaseUnits.toString()}.`,
+        );
+      }
+
+      const consume = await executeServerConsumeTickerCelo(
+        args.walletAddress,
+        args.agentName,
+        celoExecutionWallet.account.address,
+      );
+      vaultConsumeSignature = consume.txHash;
+
+      await bridgeCeloExecutionWalletToSolana({
+        seedBytes: decryptedSeed,
+        amountBaseUnits: principalBaseUnits,
+        solanaDestinationWalletAddress: signer.address,
+      });
+
+      const solanaFundingAta = await ensureSolanaTokenAta({
+        ownerAddress: signer.address,
+        mintAddress: SOLANA_MAINNET_USDC_MINT,
+        rpcUrl: getFlashTradeSolanaRpcUrl(),
+        logScope: "flashtrade:celo-open",
+      });
+      fundingTokenAccount = solanaFundingAta.ataAddress;
+
+      const bridgedBalance = await getSolanaTokenWalletBalance({
+        ownerAddress: signer.address,
+        mintAddress: SOLANA_MAINNET_USDC_MINT,
+        rpcUrl: getFlashTradeSolanaRpcUrl(),
+      });
+      if (bridgedBalance.balance < principalBaseUnits) {
+        throw new Error(
+          `Squid bridge delivered ${bridgedBalance.balance.toString()} base units to the Solana execution wallet, below the ${principalBaseUnits.toString()} required for FlashTrade.`,
+        );
+      }
+    }
 
     await ctx.runMutation(internal.flashtradeStore.patchExecutionRecord, {
       executionId: executionRecord._id,
       status: "open_submitted",
-      vaultConsumeSignature: consume.signature,
+      vaultConsumeSignature: vaultConsumeSignature ?? undefined,
       updatedAt: Date.now(),
     });
     const depositSignature = await depositToFlashTradeLedger({
@@ -446,9 +726,9 @@ async function openFlashTradeExecution(
       principalAmountUi,
       leverage,
       takeProfit,
-      fundingTokenAccount: ata.ataAddress,
+      fundingTokenAccount,
       executionId: executionRecord._id,
-      vaultConsumeSignature: consume.signature,
+      vaultConsumeSignature,
       flashSetupSignature:
         setupResult.delegateSignature ??
         setupResult.basketSignature ??
@@ -514,6 +794,25 @@ export const openFlashTradePosition: ReturnType<typeof action> = action({
   },
 });
 
+export const openFlashTradePositionCelo: ReturnType<typeof action> = action({
+  args: {
+    privyUserId: v.string(),
+    walletAddress: v.string(),
+    agentName: v.string(),
+    marketSymbol: v.string(),
+    direction: v.optional(v.union(v.literal("long"), v.literal("short"))),
+    entryPrice: v.optional(v.number()),
+    stopLoss: v.optional(v.number()),
+    slippagePercentage: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<unknown> => {
+    return await openFlashTradeExecution(ctx, {
+      ...args,
+      originEcosystem: "celo",
+    });
+  },
+});
+
 export const runFlashTradeDevnetTest: ReturnType<typeof action> = action({
   args: {
     privyUserId: v.string(),
@@ -557,14 +856,20 @@ export const closeFlashTradePosition: ReturnType<typeof action> = action({
     )) as ResolvedExecutionContext;
 
     if (!context.activeExecution) {
-      const vaultClose = await executeServerUpdateTickerCloseTrade(
-        args.walletAddress,
-        args.agentName,
-      );
+      const vaultClose = isEvmAddress(args.walletAddress)
+        ? await executeServerUpdateTickerCloseTradeCelo(
+            args.walletAddress,
+            args.agentName,
+          )
+        : await executeServerUpdateTickerCloseTrade(
+            args.walletAddress,
+            args.agentName,
+          );
 
       return {
         clearedTickerOnly: true,
-        vaultCloseSignature: vaultClose.signature,
+        vaultCloseSignature:
+          "signature" in vaultClose ? vaultClose.signature : vaultClose.txHash,
       };
     }
     if (!context.wallet) {
@@ -572,6 +877,7 @@ export const closeFlashTradePosition: ReturnType<typeof action> = action({
     }
 
     const execution = context.activeExecution;
+    const originEcosystem = execution.originEcosystem ?? "solana";
     const decryptedSeed = decryptExecutionWalletSecret({
       encryptedPrivateKey: context.wallet.encryptedPrivateKey,
       encryptionSalt: context.wallet.encryptionSalt,
@@ -602,24 +908,72 @@ export const closeFlashTradePosition: ReturnType<typeof action> = action({
     });
 
     try {
-      await assertExecutionWalletHasGas(signer.address);
+      await assertExecutionWalletHasGas(
+        signer.address,
+        BigInt(200_000),
+        originEcosystem === "celo" ? getFlashTradeSolanaRpcUrl() : undefined,
+      );
       const closeResult = await closeFlashTradePositionV2({
         executionClient: flashExecutionClient,
         resolvedMarket,
       });
-      const vaultClose = await executeServerUpdateTickerCloseTrade(
-        args.walletAddress,
-        args.agentName,
-      );
+      const vaultClose = originEcosystem === "celo"
+        ? await executeServerUpdateTickerCloseTradeCelo(
+            args.walletAddress,
+            args.agentName,
+          )
+        : await executeServerUpdateTickerCloseTrade(
+            args.walletAddress,
+            args.agentName,
+          );
+
+      let settlementStatus:
+        | "blocked_program_constraint"
+        | "settled"
+        | "pending" = originEcosystem === "celo"
+        ? "settled"
+        : "blocked_program_constraint";
+      let status: "closed" | "closed_pending_settlement" =
+        originEcosystem === "celo" ? "closed" : "closed_pending_settlement";
+      let failureReason: string | undefined;
+
+      if (originEcosystem === "celo") {
+        try {
+          const celoExecutionWallet =
+            createCeloExecutionWalletClientsFromSeed(decryptedSeed);
+          const solanaBalance = await getSolanaTokenWalletBalance({
+            ownerAddress: signer.address,
+            mintAddress: SOLANA_MAINNET_USDC_MINT,
+            rpcUrl: getFlashTradeSolanaRpcUrl(),
+          });
+
+          if (solanaBalance.balance > BigInt(0)) {
+            await bridgeSolanaExecutionWalletToCelo({
+              seedBytes: decryptedSeed,
+              amountBaseUnits: solanaBalance.balance,
+              celoDestinationWalletAddress: celoExecutionWallet.account.address,
+            });
+          }
+        } catch (bridgeError) {
+          settlementStatus = "pending";
+          status = "closed_pending_settlement";
+          failureReason =
+            bridgeError instanceof Error
+              ? bridgeError.message
+              : "Failed to bridge settled collateral back to the Celo execution wallet.";
+        }
+      }
 
       await ctx.runMutation(internal.flashtradeStore.patchExecutionRecord, {
         executionId: execution._id,
-        status: "closed_pending_settlement",
-        settlementStatus: "blocked_program_constraint",
+        status,
+        settlementStatus,
         venueCloseSignature: closeResult.signature,
-        vaultCloseSignature: vaultClose.signature,
+        vaultCloseSignature:
+          "signature" in vaultClose ? vaultClose.signature : vaultClose.txHash,
         returnedAmountUi: activePosition.collateralUsdUi,
         realizedPnlUi: activePosition.pnlWithFeeUsdUi,
+        failureReason,
         closedAt: Date.now(),
         updatedAt: Date.now(),
       });
@@ -631,10 +985,11 @@ export const closeFlashTradePosition: ReturnType<typeof action> = action({
       return {
         executionId: execution._id,
         venueCloseSignature: closeResult.signature,
-        vaultCloseSignature: vaultClose.signature,
+        vaultCloseSignature:
+          "signature" in vaultClose ? vaultClose.signature : vaultClose.txHash,
         returnedAmountUi: activePosition.collateralUsdUi ?? null,
         realizedPnlUi: activePosition.pnlWithFeeUsdUi ?? null,
-        settlementStatus: "blocked_program_constraint" as const,
+        settlementStatus,
       };
     } catch (error) {
       await ctx.runMutation(internal.flashtradeStore.patchExecutionRecord, {

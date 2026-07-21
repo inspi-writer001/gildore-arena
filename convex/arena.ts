@@ -48,6 +48,25 @@ function latestByKey<T>(
   return Array.from(latest.values());
 }
 
+function latestRowsByKey<T>(
+  rows: T[],
+  getKey: (row: T) => string,
+  getCreatedAt: (row: T) => number,
+) {
+  const latest = new Map<string, T>();
+
+  for (const row of rows) {
+    const key = getKey(row);
+    const current = latest.get(key);
+
+    if (!current || getCreatedAt(row) > getCreatedAt(current)) {
+      latest.set(key, row);
+    }
+  }
+
+  return latest;
+}
+
 function latestTradeEventBatches<
   T extends {
     agentSlug: string;
@@ -584,6 +603,21 @@ export const getArenaSnapshot = query({
       ctx.db.query("analysisJobs").collect(),
     ]);
 
+    const latestBrowserSessions = latestByKey(
+      browserSessions,
+      (row) => `${row.agentSlug}:${row.marketSymbol}`,
+      (row) => row._creationTime,
+    );
+    const latestBrowserSessionIds = new Set(
+      latestBrowserSessions.map((row) => String(row._id)),
+    );
+    const filteredBrowserSessionEvents = browserSessionEvents
+      .filter((row) => latestBrowserSessionIds.has(String(row.sessionId)))
+      .sort(
+        (a, b) =>
+          a._creationTime - b._creationTime || a.sequence - b.sequence,
+      );
+
     return {
       agents: agents.sort((a, b) => b.score - a.score),
       markets: markets.sort((a, b) => a.symbol.localeCompare(b.symbol)),
@@ -613,15 +647,8 @@ export const getArenaSnapshot = query({
         (row) => `${row.agentSlug}:${row.marketSymbol}`,
         (row) => row._creationTime,
       ),
-      browserSessions: latestByKey(
-        browserSessions,
-        (row) => `${row.agentSlug}:${row.marketSymbol}`,
-        (row) => row._creationTime,
-      ),
-      browserSessionEvents: browserSessionEvents.sort(
-        (a, b) =>
-          a._creationTime - b._creationTime || a.sequence - b.sequence,
-      ),
+      browserSessions: latestBrowserSessions,
+      browserSessionEvents: filteredBrowserSessionEvents,
       leaderboardSnapshots: leaderboardSnapshots.sort(
         (a, b) => b.capturedAt - a.capturedAt,
       ),

@@ -37,7 +37,6 @@ import {
   GILDORE_VAULT_CELO_ABI,
   GILDORE_VAULT_CELO_ADDRESS,
   MINIMAL_ERC20_ABI,
-  fetchCeloVaultSnapshot,
   parseCeloDepositAmount,
 } from "@/lib/celo/gildore-vault-celo";
 import { formatUnits } from "viem";
@@ -529,8 +528,10 @@ export default function ArenaDashboard() {
   const closeFlashTradePosition = useAction(
     api.flashtrade.closeFlashTradePosition,
   );
-  const closePositionActionCelo = useAction(api.agentVaultCelo.updateTickerCloseTradeCelo);
   const getVaultSnapshotCelo = useAction(api.agentVaultCelo.getVaultSnapshotCelo);
+  const recoverExecutionWalletFundsCelo = useAction(
+    api.agentVaultCelo.recoverExecutionWalletFundsCelo,
+  );
   const [isStartingBrowserSession, setIsStartingBrowserSession] =
     useState(false);
   const [revealedConjureSelectionKey, setRevealedConjureSelectionKey] =
@@ -1011,27 +1012,69 @@ export default function ArenaDashboard() {
       const feeCurrencyArgs = eco.isMiniPay
         ? { feeCurrency: CELO_USDC_FEE_CURRENCY_ADDRESS }
         : {};
-      const { request: withdrawRequest } = await eco.celoPublicClient.simulateContract({
-        address: GILDORE_VAULT_CELO_ADDRESS,
-        abi: GILDORE_VAULT_CELO_ABI,
-        functionName: "withdraw",
-        args: [agentId, amountBaseUnits],
-        account: celoAddress as `0x${string}`,
-      });
-      const txHash = await walletClient.writeContract({
-        ...withdrawRequest,
-        ...feeCurrencyArgs,
-      } as Parameters<typeof walletClient.writeContract>[0]);
+      const vaultBalanceBaseUnits = BigInt(celoVaultSnapshot?.vaultBalance ?? "0");
+      const vaultWithdrawAmountBaseUnits =
+        amountBaseUnits > vaultBalanceBaseUnits
+          ? vaultBalanceBaseUnits
+          : amountBaseUnits;
+      const recoverAmountBaseUnits =
+        amountBaseUnits > vaultWithdrawAmountBaseUnits
+          ? amountBaseUnits - vaultWithdrawAmountBaseUnits
+          : BigInt(0);
 
-      setLastWithdrawSignature(txHash);
+      let txHash: string | null = null;
+      if (vaultWithdrawAmountBaseUnits > BigInt(0)) {
+        const { request: withdrawRequest } = await eco.celoPublicClient.simulateContract({
+          address: GILDORE_VAULT_CELO_ADDRESS,
+          abi: GILDORE_VAULT_CELO_ABI,
+          functionName: "withdraw",
+          args: [agentId, vaultWithdrawAmountBaseUnits],
+          account: celoAddress as `0x${string}`,
+        });
+        txHash = await walletClient.writeContract({
+          ...withdrawRequest,
+          ...feeCurrencyArgs,
+        } as Parameters<typeof walletClient.writeContract>[0]);
+      }
+
+      let recoveryTxHash: string | null = null;
+      let recoveredBaseUnits = BigInt(0);
+      if (recoverAmountBaseUnits > BigInt(0)) {
+        if (!privyUserId) {
+          throw new Error("Privy session is required to recover backend funds.");
+        }
+        const recovery = (await recoverExecutionWalletFundsCelo({
+          privyUserId,
+          walletAddress: celoAddress,
+          agentName: selectedAgent.name.toLowerCase(),
+          amountUi: formatUnits(
+            recoverAmountBaseUnits,
+            CELO_DEPOSIT_TOKEN_DECIMALS,
+          ),
+        })) as { txHash: string | null; withdrawnBaseUnits: string };
+        recoveryTxHash = recovery.txHash;
+        recoveredBaseUnits = BigInt(recovery.withdrawnBaseUnits);
+      }
+
+      setLastWithdrawSignature(txHash ?? recoveryTxHash);
+      const vaultAmount = parseFloat(
+        formatUnits(vaultWithdrawAmountBaseUnits, CELO_DEPOSIT_TOKEN_DECIMALS),
+      ).toFixed(2);
+      const recoveredAmount = parseFloat(
+        formatUnits(recoveredBaseUnits, CELO_DEPOSIT_TOKEN_DECIMALS),
+      ).toFixed(2);
+      setLastWithdrawSummary(
+        `$${vaultAmount} from vault · $${recoveredAmount} recovered`,
+      );
       setWithdrawAmount("");
-      if (eco.isMiniPay) {
+      if (eco.isMiniPay && txHash) {
         window.open(miniPayReceiptUrl(txHash), "_top");
       }
       console.log("[withdraw-celo] Withdrew from vault:", {
         agentId: selectedAgent.id,
         amountBaseUnits: amountBaseUnits.toString(),
         txHash,
+        recoveryTxHash,
       });
     } catch (error) {
       console.error("[withdraw-celo] failed", {
@@ -1186,14 +1229,14 @@ export default function ArenaDashboard() {
     queryKey: celoVaultSnapshotKeys.snapshot(
       celoSnapshotAddress ?? "",
       vaultSnapshotAgentSlug ?? "",
+      privyUserId ?? "",
     ),
     queryFn: () =>
-      fetchCeloVaultSnapshot(
-        eco.celoPublicClient,
-        GILDORE_VAULT_CELO_ADDRESS!,
-        celoSnapshotAddress! as `0x${string}`,
-        resolvedAgentName,
-      ),
+      getVaultSnapshotCelo({
+        walletAddress: celoSnapshotAddress!,
+        agentName: resolvedAgentName,
+        privyUserId: privyUserId ?? undefined,
+      }),
     enabled:
       isCelo &&
       eco.isConnected &&
@@ -1243,8 +1286,9 @@ export default function ArenaDashboard() {
     try {
       if (isCelo) {
         const celoAddress = eco.address;
-        if (!eco.isConnected || !celoAddress) return;
-        await closePositionActionCelo({
+        if (!eco.isConnected || !celoAddress || !privyUserId) return;
+        await closeFlashTradePosition({
+          privyUserId,
           walletAddress: celoAddress,
           agentName: selectedAgent.name.toLowerCase(),
         });
@@ -2146,6 +2190,7 @@ export default function ArenaDashboard() {
                               isInPosition={vaultSnapshot?.isInPosition ?? null}
                               vaultDecimals={vaultSnapshot?.decimals ?? 6}
                               isLoadingVault={isLoadingVault}
+                              isCelo={isCelo}
                               withdrawAmount={withdrawAmount}
                               onWithdrawAmountChange={setWithdrawAmount}
                               onSubmitWithdraw={handleWithdrawSubmit}
@@ -2198,6 +2243,7 @@ export default function ArenaDashboard() {
       {selectedAgent ? (
         <AgentFundingModal
           agentName={selectedAgent.name}
+          isCelo={isCelo}
           isOpen={isSubscribeModalOpen}
           isConnected={isCelo ? eco.isConnected : isConnected}
           depositAmount={depositAmount}
