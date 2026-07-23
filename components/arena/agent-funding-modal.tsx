@@ -1,5 +1,6 @@
 "use client";
 
+import { FeeDisclaimerNotice } from "@/components/arena/fee-disclaimer-notice";
 import { LiquidActionButton } from "@/components/arena/arena-shared";
 
 export function AgentFundingModal({
@@ -92,22 +93,13 @@ export function AgentFundingModal({
                 This funds your personal vault for {agentName}. You can specify
                 how much to spend per ticker / market by clicking on each market.
               </p>
-              <p className="m-0 rounded-[14px] border border-[rgba(255,223,153,0.12)] bg-[rgba(255,255,255,0.03)] px-3 py-2 font-inter text-[12px] leading-[1.6] text-[rgba(255,245,222,0.56)]">
-                Deposits, withdrawals, executions, and settlements may return
-                less than displayed after gas, bridge, execution, slippage, and
-                applicable platform fees.{" "}
-                {isCelo
-                  ? "Celo-origin funds may be bridged across networks before execution and back again for settlement."
-                  : "Execution and settlement costs may still reduce final returned amounts."}{" "}
-                <a
-                  href="/terms"
-                  target="_top"
-                  className="text-[rgba(255,245,222,0.74)] underline underline-offset-2 hover:text-[#fff5de]"
-                >
-                  Read terms
-                </a>
-                .
-              </p>
+              <FeeDisclaimerNotice
+                isCelo={isCelo}
+                className="rounded-[14px] border border-[rgba(255,223,153,0.12)] bg-[rgba(255,255,255,0.03)] px-3 py-2"
+                textClassName="m-0 flex-1 font-inter text-[12px] leading-[1.6] text-[rgba(255,245,222,0.56)]"
+                linkClassName="text-[rgba(255,245,222,0.74)] underline underline-offset-2 hover:text-[#fff5de]"
+                buttonClassName="shrink-0 rounded-full border border-[rgba(255,223,153,0.12)] bg-[rgba(255,255,255,0.04)] px-2 py-1 font-barlow text-[10px] font-semibold uppercase tracking-[0.12em] text-[rgba(255,245,222,0.58)] transition hover:bg-[rgba(255,255,255,0.08)] hover:text-[#fff5de]"
+              />
             </div>
 
             {/* Not connected notice */}

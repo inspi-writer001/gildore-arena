@@ -34,6 +34,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
+import {
+  FeeDisclaimerNotice,
+  useFeeDisclaimerVisible,
+} from "@/components/arena/fee-disclaimer-notice";
 import type {
   ActiveStrategySetup,
   BrowserSession,
@@ -270,6 +274,7 @@ function VaultControlSurface({
       : isInPosition
         ? ("active" as const)
         : ("positive" as const);
+  const [isFeeDisclaimerVisible] = useFeeDisclaimerVisible();
 
   return (
     <div className="grid gap-0 rounded-[18px] border border-white/10 bg-[rgba(255,255,255,0.04)] shadow-[0_18px_40px_rgba(0,0,0,0.24)]">
@@ -293,27 +298,23 @@ function VaultControlSurface({
         />
       </div>
 
-      <Separator className="bg-white/[0.08]" />
+      {isFeeDisclaimerVisible ? (
+        <>
+          <Separator className="bg-white/[0.08]" />
 
-      <div className="px-[18px] py-[12px]">
-        <p className="m-0 rounded-[12px] border border-white/8 bg-white/[0.03] px-3 py-2 font-inter text-[12px] leading-[1.6] text-[rgba(245,245,245,0.56)]">
-          Final received amounts may be lower than displayed after gas, bridge,
-          execution, slippage, and applicable platform fees.{" "}
-          {isCelo
-            ? "Celo-origin funds may be bridged across networks for execution and bridged back for settlement."
-            : "Execution and settlement routes may still introduce external costs."}{" "}
-          <a
-            href="/terms"
-            target="_top"
-            className="text-[rgba(245,245,245,0.74)] underline underline-offset-2 hover:text-[#f5f5f5]"
-          >
-            Terms apply
-          </a>
-          .
-        </p>
-      </div>
+          <div className="px-[18px] py-[12px]">
+            <FeeDisclaimerNotice
+              isCelo={isCelo}
+              className="rounded-[12px] border border-white/8 bg-white/[0.03] px-3 py-2"
+              textClassName="m-0 flex-1 font-inter text-[12px] leading-[1.6] text-[rgba(245,245,245,0.56)]"
+              linkClassName="text-[rgba(245,245,245,0.74)] underline underline-offset-2 hover:text-[#f5f5f5]"
+              buttonClassName="shrink-0 rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 font-barlow text-[10px] font-semibold uppercase tracking-[0.12em] text-[rgba(245,245,245,0.58)] transition hover:bg-white/[0.08] hover:text-[#f5f5f5]"
+            />
+          </div>
 
-      <Separator className="bg-white/[0.08]" />
+          <Separator className="bg-white/[0.08]" />
+        </>
+      ) : null}
 
       {/* Max spend + Withdraw — side by side on sm+, stacked on mobile */}
       <div className="flex flex-col divide-y divide-white/[0.08] sm:flex-row sm:divide-x sm:divide-y-0">

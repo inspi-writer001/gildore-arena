@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import ArenaEnterButton from "@/components/arena-enter-button";
 import { ArenaBentoSection } from "@/components/home/arena-bento-section";
+import { ArenaFooter } from "@/components/home/arena-footer";
 
 const VIDEO_URL =
   "https://res.cloudinary.com/ddlz0zesx/video/upload/v1783642199/comp_arena_firefly_tc5rcz.mp4";
@@ -103,6 +104,7 @@ export default function Home() {
       </section>
 
       <ArenaBentoSection />
+      <ArenaFooter />
     </main>
   );
 }

@@ -373,7 +373,7 @@ a:focus-visible {
   gap: 12px;
   padding: 6px 6px 6px 20px;
   border: 0;
-  border-radius: 14px;
+  /* border-radius: 14px; */
   background: #eddfc0;
   box-shadow: 0 1px 3px rgba(45, 21, 7, 0.12);
   cursor: pointer;
@@ -406,7 +406,7 @@ a:focus-visible {
   justify-content: center;
   width: 35px;
   height: 35px;
-  border-radius: 8px;
+  /* border-radius: 8px; */
   background: #2d1507;
   color: #f0dfc8;
   flex-shrink: 0;

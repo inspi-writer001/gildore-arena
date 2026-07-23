@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Gildore Arena — Investor Deck</title>
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=DM+Mono:wght@400;500&family=Inter:wght@400;600;700;900&display=swap");
+
+      :root {
+        --black: #000;
+        --white: #fff;
+        --gray: #a6a6a6;
+        --line: #fff;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        background: var(--black);
+      }
+      body {
+        overflow: hidden;
+        color: var(--white);
+        font-family: Inter, Arial, sans-serif;
+      }
+      .slide {
+        display: none;
+        position: relative;
+        width: 100vw;
+        height: 100vh;
+        min-height: 620px;
+        padding: 7vh 7vw;
+        overflow: hidden;
+        background: var(--black);
+        color: var(--white);
+      }
+      .slide.active {
+        display: flex;
+        flex-direction: column;
+      }
+      .light {
+        background: var(--white);
+        color: var(--black);
+      }
+      .kicker {
+        margin: 0;
+        font:
+          500 11px/1.1 "DM Mono",
+          monospace;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .title {
+        max-width: 1100px;
+        margin: 0;
+        font-family: "Archivo Black", Impact, sans-serif;
+        font-size: clamp(50px, 7.1vw, 116px);
+        font-weight: 400;
+        line-height: 0.84;
+        letter-spacing: -0.075em;
+        text-transform: uppercase;
+      }
+      .display {
+        max-width: 1060px;
+        margin: 0;
+        font-family: "Archivo Black", Impact, sans-serif;
+        font-size: clamp(38px, 5.1vw, 80px);
+        font-weight: 400;
+        line-height: 0.91;
+        letter-spacing: -0.07em;
+        text-transform: uppercase;
+      }
+      .body {
+        max-width: 730px;
+        margin: 0;
+        font-size: clamp(17px, 1.55vw, 25px);
+        line-height: 1.32;
+        letter-spacing: -0.035em;
+      }
+      .muted {
+        color: var(--gray);
+      }
+      .block {
+        border: 2px solid currentColor;
+        padding: 18px 20px;
+      }
+      .block p + p {
+        margin-top: 11px;
+      }
+      .grid {
+        display: grid;
+        gap: 0;
+        margin-top: 34px;
+        border: 2px solid currentColor;
+      }
+      .grid.two {
+        grid-template-columns: repeat(2, 1fr);
+      }
+      .grid.three {
+        grid-template-columns: repeat(3, 1fr);
+      }
+      .grid > div {
+        min-height: 178px;
+        padding: 20px;
+        border-left: 2px solid currentColor;
+      }
+      .grid > div:first-child {
+        border-left: 0;
+      }
+      .grid b {
+        display: block;
+        margin-bottom: 18px;
+        font:
+          500 11px "DM Mono",
+          monospace;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .grid strong {
+        display: block;
+        font-family: "Archivo Black", Impact, sans-serif;
+        font-size: clamp(24px, 2.8vw, 43px);
+        line-height: 0.94;
+        letter-spacing: -0.07em;
+        text-transform: uppercase;
+      }
+      .grid span {
+        display: block;
+        margin-top: 14px;
+        font-size: 15px;
+        line-height: 1.35;
+      }
+      .big-number {
+        font-family: "Archivo Black", Impact, sans-serif;
+        font-size: clamp(84px, 14vw, 230px);
+        line-height: 0.72;
+        letter-spacing: -0.1em;
+      }
+      .formula {
+        display: grid;
+        grid-template-columns: 1fr 76px 1fr 76px 1fr;
+        align-items: stretch;
+        max-width: 1120px;
+        margin-top: 39px;
+        border: 2px solid currentColor;
+      }
+      .formula > div {
+        padding: 22px;
+        min-height: 176px;
+      }
+      .formula .operator {
+        display: grid;
+        place-items: center;
+        padding: 0;
+        border-left: 2px solid currentColor;
+        font:
+          400 clamp(34px, 4vw, 70px)/1 "DM Mono",
+          monospace;
+      }
+      .formula .cell {
+        border-left: 2px solid currentColor;
+      }
+      .formula .cell:first-child {
+        border-left: 0;
+      }
+      .formula b {
+        font:
+          500 11px "DM Mono",
+          monospace;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .formula p {
+        margin-top: 28px;
+        font-size: clamp(19px, 2vw, 31px);
+        font-weight: 700;
+        line-height: 1.1;
+        letter-spacing: -0.045em;
+      }
+      .image {
+        width: 100%;
+        margin-top: 31px;
+        border: 2px solid currentColor;
+      }
+      .image img {
+        display: block;
+        width: 100%;
+        height: 45vh;
+        object-fit: cover;
+        object-position: 50% 0;
+        /* filter: grayscale(1) contrast(1.4); */
+      }
+      .source {
+        margin-top: 20px;
+        font:
+          400 10px/1.35 "DM Mono",
+          monospace;
+      }
+      .footer {
+        position: absolute;
+        right: 7vw;
+        bottom: 4.5vh;
+        font:
+          500 10px "DM Mono",
+          monospace;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+      }
+      .page {
+        position: absolute;
+        left: 7vw;
+        bottom: 4.5vh;
+        font:
+          500 10px "DM Mono",
+          monospace;
+      }
+      .controls {
+        position: fixed;
+        z-index: 10;
+        right: 18px;
+        bottom: 18px;
+        display: flex;
+        gap: 0;
+        border: 1px solid #fff;
+      }
+      .controls button {
+        width: 40px;
+        height: 40px;
+        border: 0;
+        border-left: 1px solid #fff;
+        background: #000;
+        color: #fff;
+        font:
+          500 16px "DM Mono",
+          monospace;
+        cursor: pointer;
+      }
+      .controls button:first-child {
+        border-left: 0;
+      }
+      @media (max-width: 760px) {
+        .slide {
+          min-height: 100vh;
+          padding: 8vh 7vw;
+          overflow-y: auto;
+        }
+        .grid.two,
+        .grid.three {
+          grid-template-columns: 1fr;
+        }
+        .grid > div {
+          min-height: auto;
+          border-left: 0;
+          border-top: 2px solid currentColor;
+        }
+        .grid > div:first-child {
+          border-top: 0;
+        }
+        .formula {
+          grid-template-columns: 1fr;
+        }
+        .formula .cell,
+        .formula .operator {
+          border-left: 0;
+          border-top: 2px solid currentColor;
+        }
+        .formula .cell:first-child {
+          border-top: 0;
+        }
+        .formula .operator {
+          min-height: 50px;
+        }
+        .image img {
+          height: 28vh;
+        }
+      }
+      @page {
+        size: 13.333in 7.5in;
+        margin: 0;
+      }
+      @media print {
+        body {
+          overflow: visible;
+        }
+        .slide {
+          display: flex !important;
+          width: 13.333in;
+          height: 7.5in;
+          min-height: 0;
+          page-break-after: always;
+        }
+        .controls {
+          display: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="slide active" data-title="Title">
+        <p class="kicker">Gildore Arena / Pre-seed / July 2026</p>
+        <div style="margin: auto 0">
+          <h1 class="title">Fire<br />your<br />fund manager.</h1>
+          <p class="body" style="margin-top: 35px; max-width: 535px">
+            Gildore turns trading agents into public records users can inspect
+            before they fund them.
+          </p>
+        </div>
+        <span class="page">01 / 11</span
+        ><span class="footer">gildore-arena.vercel.app</span>
+      </section>
+
+      <section class="slide light" data-title="Problem">
+        <p class="kicker">The present</p>
+        <div style="margin: auto 0">
+          <h2 class="display">
+            The market rewards<br />the claim.<br />Not the record.
+          </h2>
+          <div class="grid three">
+            <div>
+              <b>What users see</b><strong>WIN SCREENSHOTS</strong
+              ><span>Entries and wins with no complete history.</span>
+            </div>
+            <div>
+              <b>What users miss</b><strong>RISK / LOSSES / PROCESS</strong
+              ><span>No way to inspect discipline before capital moves.</span>
+            </div>
+            <div>
+              <b>What happens</b><strong>FOMO BECOMES FUNDING</strong
+              ><span
+                >People follow late, get scammed, or back inconsistency.</span
+              >
+            </div>
+          </div>
+        </div>
+        <span class="page">02 / 11</span
+        ><span class="footer">Unverifiable performance is the problem</span>
+      </section>
+
+      <section class="slide" data-title="Answer">
+        <p class="kicker">The answer</p>
+        <div style="margin: auto 0">
+          <h2 class="display">
+            A TRADE SHOULD<br />LEAVE A TRAIL<br />BEFORE IT LEAVES A PNL.
+          </h2>
+          <div class="formula">
+            <div class="cell">
+              <b>01 / Agent</b>
+              <p>Shows the setup, entry, stop, and invalidation.</p>
+            </div>
+            <div class="operator">+</div>
+            <div class="cell">
+              <b>02 / User</b>
+              <p>Inspects the record and sets the spending limit.</p>
+            </div>
+            <div class="operator">=</div>
+            <div class="cell">
+              <b>03 / Result</b>
+              <p>Funding and execution are visible.</p>
+            </div>
+          </div>
+        </div>
+        <span class="page">03 / 11</span
+        ><span class="footer">A record, not a signal</span>
+      </section>
+
+      <section class="slide light" data-title="Product">
+        <p class="kicker">The product is live</p>
+        <h2 class="display" style="margin-top: 18px">
+          SEE THE AGENT<br />BEFORE YOU BACK IT.
+        </h2>
+        <div class="image">
+          <img src="/landing_seo.png" alt="Gildore Arena product" />
+        </div>
+        <span class="page">04 / 11</span
+        ><span class="footer"
+          >Live product / edit this image source in the HTML</span
+        >
+      </section>
+
+      <section class="slide" data-title="Execution">
+        <p class="kicker">Where the money moves</p>
+        <div style="margin: auto 0">
+          <h2 class="display">
+            THE USER SETS<br />THE LIMIT.<br />THE AGENT DOESN'T.
+          </h2>
+          <div class="grid three">
+            <div>
+              <b>Vault</b><strong>USER FUNDS</strong
+              ><span
+                >Agent-specific Solana vaults hold the user's deposit.</span
+              >
+            </div>
+            <div>
+              <b>Control</b><strong>SPEND ALLOWANCE</strong
+              ><span
+                >A configured ticker limits eligible execution capital.</span
+              >
+            </div>
+            <div>
+              <b>Venue</b><strong>FLASHTRADE</strong
+              ><span
+                >USDC collateral and perp position lifecycle settle on
+                Solana.</span
+              >
+            </div>
+          </div>
+        </div>
+        <span class="page">05 / 11</span
+        ><span class="footer">Solana vault → FlashTrade → settlement</span>
+      </section>
+
+      <section class="slide light" data-title="Why now">
+        <p class="kicker">The rail is already there</p>
+        <div style="margin: auto 0">
+          <div class="big-number">$360M</div>
+          <h2 class="display" style="margin-top: 25px">
+            FLASH TRADE 30-DAY<br />PERP VOLUME.
+          </h2>
+          <p class="body" style="margin-top: 25px">
+            Solana has $15.15B of stablecoin supply. The trading rail exists;
+            Gildore is building the layer that makes agent performance
+            inspectable.
+          </p>
+          <p class="source">
+            DefiLlama, accessed 23 Jul 2026. FlashTrade 30-day perp volume:
+            $360.08M; Solana stablecoin supply: $15.153B. These are market
+            metrics, not Gildore metrics.
+          </p>
+        </div>
+        <span class="page">06 / 11</span
+        ><span class="footer">The venue exists. The trust layer does not.</span>
+      </section>
+
+      <section class="slide" data-title="Early signal">
+        <p class="kicker">What has moved already</p>
+        <div style="margin: auto 0">
+          <div class="big-number">100+</div>
+          <h2 class="display" style="margin-top: 25px">
+            TELEGRAM MEMBERS<br />FROM ONE PROMO VIDEO.
+          </h2>
+          <p class="body" style="margin-top: 25px">
+            This is early attention, people can't wait to use this.
+          </p>
+        </div>
+        <span class="page">07 / 11</span>
+        <!-- <span class="footer">No invented traction</span> -->
+      </section>
+
+      <section class="slide light" data-title="Wedge">
+        <p class="kicker">Start here</p>
+        <div style="margin: auto 0">
+          <h2 class="display">PEOPLE WHO<br />ALREADY FOLLOW<br />SIGNALS.</h2>
+          <div class="grid two">
+            <div>
+              <b>First use case</b><strong>METALS + FX AGENTS</strong
+              ><span
+                >XAU, XAG, EUR, and GBP strategies map to supported FlashTrade
+                markets.</span
+              >
+            </div>
+            <div>
+              <b>First conversion</b><strong>WATCH → VERIFY → FUND</strong>
+            </div>
+          </div>
+        </div>
+        <span class="page">08 / 11</span
+        ><span class="footer">A wedge, not a made-up TAM</span>
+      </section>
+
+      <section class="slide" data-title="What compounds">
+        <p class="kicker">What gets stronger with use</p>
+        <div style="margin: auto 0">
+          <h2 class="display">
+            THE NEXT FUNDING<br />DECISION GETS<br />EASIER TO JUDGE.
+          </h2>
+          <div class="grid two">
+            <div>
+              <b>Record</b><strong>SETUPS + RISK + OUTCOMES</strong
+              ><span
+                >Each trade adds a public data point to an agent's
+                history.</span
+              >
+            </div>
+            <div>
+              <b>Control</b><strong>VAULT + ALLOWANCE</strong
+              ><span
+                >Each user can decide how much capital a specific agent is
+                eligible to use.</span
+              >
+            </div>
+          </div>
+        </div>
+        <span class="page">09 / 11</span
+        ><span class="footer">History changes the next decision</span>
+      </section>
+
+      <section class="slide light" data-title="Ask">
+        <p class="kicker">The raise</p>
+        <div style="margin: auto 0">
+          <div class="big-number">$100K</div>
+          <h2 class="display" style="margin-top: 26px">
+            TO PROVE THE<br />WHOLE LOOP.
+          </h2>
+          <div class="grid three">
+            <div>
+              <b>Terms</b><strong>$5M POST-MONEY SAFE</strong
+              ><span
+                >Equity only. No token allocation, rights, warrants, TGE, or
+                vesting.</span
+              >
+            </div>
+            <div>
+              <b>Use</b><strong>HARDEN + ACTIVATE</strong
+              ><span
+                >Product and protocol reliability; early-user activation;
+                infrastructure, security, and legal.</span
+              >
+            </div>
+            <div>
+              <b>Proof</b><strong>FUNDED → EXECUTED → SETTLED</strong
+              ><span
+                >Measure completed agent-funded FlashTrade positions with real
+                users.</span
+              >
+            </div>
+          </div>
+        </div>
+        <span class="page">10 / 11</span
+        ><span class="footer">Fund the proof loop</span>
+      </section>
+
+      <section class="slide" data-title="Close">
+        <p class="kicker">Gildore Arena</p>
+        <div style="margin: auto 0">
+          <h1 class="title">LET THE<br />TRAIL<br />SPEAK.</h1>
+          <p class="body" style="margin-top: 36px; max-width: 590px">
+            A public arena for trading agents that must show their work before
+            users fund their execution.
+          </p>
+          <p class="source">
+            t.me/inspiration_gx &nbsp; / &nbsp; x.com/inspiration_gx &nbsp; /
+            &nbsp; github.com/inspi-writer001
+          </p>
+        </div>
+        <span class="page">11 / 11</span
+        ><span class="footer">← → Navigate </span>
+      </section>
+    </main>
+    <div class="controls">
+      <button type="button" id="prev" aria-label="Previous slide">←</button
+      ><button type="button" id="next" aria-label="Next slide">→</button>
+    </div>
+    <script>
+      const slides = [...document.querySelectorAll(".slide")];
+      let current = 0;
+      function render() {
+        slides.forEach((slide, index) =>
+          slide.classList.toggle("active", index === current),
+        );
+        document.title = `Gildore Arena — ${slides[current].dataset.title}`;
+      }
+      function move(delta) {
+        current = (current + delta + slides.length) % slides.length;
+        render();
+      }
+      document.querySelector("#prev").addEventListener("click", () => move(-1));
+      document.querySelector("#next").addEventListener("click", () => move(1));
+      document.addEventListener("keydown", (event) => {
+        if (["ArrowRight", "PageDown", " "].includes(event.key)) {
+          event.preventDefault();
+          move(1);
+        }
+        if (["ArrowLeft", "PageUp"].includes(event.key)) {
+          event.preventDefault();
+          move(-1);
+        }
+      });
+    </script>
+  </body>
+</html>
